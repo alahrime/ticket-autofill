@@ -146,27 +146,30 @@ class App(tk.Tk):
             self.markup.set(str(DEFAULT_MARKUP))
         self.tree.delete(*self.tree.get_children())
         self.lines = []
+        seen = {}
         for it, code, side in self.items:
             for ln in lines_for(it, code, self.make, CATALOG, self.overrides, markup, side):
-                key = (code, ln.desc, bool(ln.labor))
+                k = (code, ln.desc, bool(ln.labor))
+                key = k + (seen.get(k, 0),)
+                seen[k] = key[3] + 1
                 if key in self.deleted:
                     continue
                 ln.price = self.edits.get(key, ln.price)
                 cost = "" if ln.labor or it.cost is None else f"{it.cost:.2f}"
                 iid = self.tree.insert("", "end", values=(ln.code, ln.desc, cost, f"{ln.price:.2f}"))
-                self.lines.append((iid, ln, code))
+                self.lines.append((iid, ln, code, key))
 
     def edit_price(self, event):
         iid = self.tree.identify_row(event.y)
         hit = next((x for x in self.lines if x[0] == iid), None)
         if not hit:
             return
-        _, ln, code = hit
+        _, ln, code, key = hit
         new = simpledialog.askfloat("Price", ln.desc, initialvalue=ln.price, minvalue=0, parent=self)
         if new is None:
             return
         ln.price = new
-        self.edits[(code, ln.desc, bool(ln.labor))] = new
+        self.edits[key] = new
         self.tree.set(iid, "price", f"{new:.2f}")
         kind = "labor" if ln.labor else "part"
         if messagebox.askyesno("Keep price?", f"Keep ${new:.2f} {kind} for {code} on {self.make or 'unknown make'}?"):
@@ -176,14 +179,14 @@ class App(tk.Tk):
         for iid in self.tree.selection():
             hit = next((x for x in self.lines if x[0] == iid), None)
             if hit:
-                self.deleted.add((hit[2], hit[1].desc, bool(hit[1].labor)))
+                self.deleted.add(hit[3])
             self.tree.delete(iid)
         self.lines = [x for x in self.lines if self.tree.exists(x[0])]
 
     def do_fill(self):
         fields = {k: v.get().strip() for k, v in self.vars.items() if v.get().strip()}
         try:
-            fill.fill(fields, [ln for _, ln, _ in self.lines])
+            fill.fill(fields, [x[1] for x in self.lines])
         except Exception as e:
             return messagebox.showerror("Fill stopped", str(e))
         note = self.note.get("1.0", "end").strip()
