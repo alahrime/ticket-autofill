@@ -1,5 +1,5 @@
 """Always-on-top helper next to InvoMax: photo -> review -> Fill."""
-import os, sys, traceback, tkinter as tk
+import os, sys, threading, traceback, tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from read import parse, Job
 from prices import (load_catalog, load_overrides, save_override, match, position, lines_for,
@@ -23,6 +23,15 @@ def note_text(it):
     return s
 
 
+def read_page(path):
+    """Photo -> (jobs, error message or None). Runs off the Tk thread; never touches widgets."""
+    from ocr import ocr_lines
+    try:
+        return parse(ocr_lines(path)), None
+    except Exception as e:
+        return [], str(e)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -35,8 +44,10 @@ class App(tk.Tk):
 
         bar = ttk.Frame(self)
         bar.pack(fill="x")
-        ttk.Button(bar, text="Open photo", command=self.open_photo).pack(side="left")
-        ttk.Button(bar, text="Paste photo", command=self.paste_photo).pack(side="left")
+        self.photo_btns = [ttk.Button(bar, text="Open photo", command=self.open_photo),
+                           ttk.Button(bar, text="Paste photo", command=self.paste_photo)]
+        for b in self.photo_btns:
+            b.pack(side="left")
         self.job_box = ttk.Combobox(bar, state="readonly", width=28)
         self.job_box.pack(side="left")
         self.job_box.bind("<<ComboboxSelected>>", lambda e: self.show_job(self.job_box.current()))
@@ -87,12 +98,23 @@ class App(tk.Tk):
         self.load(p)
 
     def load(self, path):
-        from ocr import ocr_lines
-        try:
-            self.jobs = parse(ocr_lines(path))
-        except Exception as e:
-            self.jobs = []
-            messagebox.showwarning("Couldn't read page", str(e))
+        # Reading can take minutes on a CPU-only PC: do it on a worker thread, poll from Tk.
+        result = []
+        threading.Thread(target=lambda: result.append(read_page(path)), daemon=True).start()
+        for b in self.photo_btns:
+            b.state(["disabled"])
+        self.title("Ticket Autofill — reading photo…")
+        self.after(200, self.finish_load, path, result)
+
+    def finish_load(self, path, result):
+        if not result:
+            return self.after(200, self.finish_load, path, result)
+        for b in self.photo_btns:
+            b.state(["!disabled"])
+        self.title("Ticket Autofill")
+        self.jobs, err = result[0]
+        if err:
+            messagebox.showwarning("Couldn't read page", err)
         if not self.jobs:  # nothing read: show the photo and empty fields for manual entry
             if sys.platform == "win32" and os.path.exists(path):
                 os.startfile(path)
