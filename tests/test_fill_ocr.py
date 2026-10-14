@@ -1,19 +1,26 @@
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import fill
-from ocr import group_lines
+from ocr import load_image, text_lines
 from prices import Line
 
 
-def box(x, y, w=50, h=20):
-    return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def test_group_lines_merges_rows_left_to_right():
-    result = [[box(200, 102), "2T1BR32614C809083", .9], [box(10, 100), "VIN:-", .9],
-              [box(10, 140), "TAG:-", .9], [box(200, 143), "XKS4827", .9]]
-    assert group_lines(result) == ["VIN:- 2T1BR32614C809083", "TAG:- XKS4827"]
-    assert group_lines([]) == []
+def test_text_lines_drops_fences_and_blanks():
+    assert text_lines("```\nVIN:- 2T1BR32614C809083\n\n  TAG:- XKS4827 \n```") == [
+        "VIN:- 2T1BR32614C809083", "TAG:- XKS4827"]
+    assert text_lines("") == []
+
+
+def test_load_image():
+    assert load_image(os.path.join(HERE, "samples", "page1.jpg"))[:2] == b"\xff\xd8"  # JPEG bytes
+    try:
+        load_image(__file__)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "JPG or PNG" in str(e)
 
 
 def test_row_keys_escapes_specials():

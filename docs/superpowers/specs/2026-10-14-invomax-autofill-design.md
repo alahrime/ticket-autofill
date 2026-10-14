@@ -14,14 +14,20 @@ Cut hand-entry of repair/inspection tickets into InvoMax (Windows desktop billin
 | File | Job |
 |---|---|
 | `app.py` | Tkinter always-on-top window: load/paste photo, pick job, review/edit fields and lines, **Fill** button |
-| `ocr.py` | Offline handwriting OCR → text lines (kept apart so `read.py` tests run without the model) |
+| `ocr.py` | Photo → text lines via a local vision model (Qwen2.5-VL 7B on Ollama, offline) (kept apart so `read.py` tests run without the model) |
 | `read.py` | Split text into jobs; extract fields and items |
 | `prices.py` | Look up item code + part/labor price from `parts.csv` and `overrides.csv` |
 | `fill.py` | Write values into InvoMax via pywinauto; keystroke fallback |
 | `parts.csv` | Placeholder catalog (code, description, aliases, sided, part_price, labor_price). Replaced by shop's InvoMax export |
 | `overrides.csv` | Prices staff chose to keep, per code + make |
 
-OCR engine choice (e.g. TrOCR-handwritten vs PaddleOCR) is decided in the implementation plan by testing against sample pages; it is isolated in `ocr.py`.
+OCR engine (decided 2026-10-14 by testing on the sample page): **Qwen2.5-VL 7B served by Ollama** on the same PC, asked to transcribe the page line by line; the text then goes through `read.py` unchanged. Results on `tests/samples/page1.jpg`:
+- RapidOCR: failed (jobs merged, VIN one char off, items unreadable).
+- TrOCR-small-handwritten: failed (worse).
+- Qwen2.5-VL 3B: fast (~4 s) but dropped date lines (jobs merged), lost the `$81` cost, misread a plate.
+- **Qwen2.5-VL 7B: every field and item correct; ~9 s/page warm on an M3 Pro Mac.** Speed on the shop PC depends on its GPU; a CPU-only PC may take 1–3 min/page.
+
+Still fully offline: the model (~6 GB) is downloaded once; photos go only to `127.0.0.1`. The model name is one constant in `ocr.py` (switch to the 3B there if the shop PC is too slow and accuracy holds on its pages).
 
 ## Reading a page
 Observed notebook format (sample 2026-10-14):
@@ -70,7 +76,8 @@ Checks (failures highlighted, never auto-filled silently):
 - Fill: manual test on the shop PC against a scratch invoice.
 
 ## Open items (non-blocking)
-- More sample pages to tune OCR and parsing.
+- More sample pages to confirm the 7B model's accuracy across handwriting styles.
+- Shop PC specs (CPU/GPU/RAM) to confirm reading speed.
 - InvoMax parts/labor export → replaces `parts.csv`.
 - Access to the shop PC (remote or in person) to build the control map.
 - Real markup rule (flat ×, tiered by cost, or per part) — ×2.5 placeholder until confirmed.

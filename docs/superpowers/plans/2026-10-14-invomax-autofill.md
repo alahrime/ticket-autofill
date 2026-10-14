@@ -6,7 +6,7 @@
 
 **Architecture:** Five small Python files. `read.py` (text lines → jobs) and `prices.py` (item → InvoMax part + labor lines) are pure and fully tested. `ocr.py` wraps the offline OCR engine. `fill.py` writes into InvoMax with pywinauto. `app.py` is the Tkinter window that ties them together.
 
-**Tech Stack:** Python 3.11+ (Windows), Tkinter (stdlib), Pillow, numpy, rapidocr-onnxruntime (offline OCR), pywinauto (Windows only). Tests are plain `assert` scripts run with `python tests/<file>.py`, so no test framework is needed.
+**Tech Stack:** Python 3.11+ (Windows), Tkinter (stdlib), Pillow, Ollama + Qwen2.5-VL 7B (offline OCR; see update below), pywinauto (Windows only). Tests are plain `assert` scripts run with `python tests/<file>.py`, so no test framework is needed.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-invomax-autofill-design.md`
 
@@ -517,6 +517,8 @@ git commit -m "feat: catalog match, tiers, markup, part+labor lines"
 ---
 
 ### Task 3: Offline OCR (`ocr.py`) and fill helpers (`fill.py`)
+
+> **Update 2026-10-14:** both engines below failed Step 6's pass bar. `ocr.py` now sends the photo to Qwen2.5-VL 7B via a local Ollama server and returns its line-by-line transcription; it passed the bar with every field and item correct. RapidOCR, numpy and the TrOCR fallback are gone. The code below is kept as the record of what was tried; see the spec's OCR section for results.
 
 These share one test file because both pure helpers are tiny. `fill.fill()` itself is only exercised on the shop PC (Task 6).
 
