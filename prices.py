@@ -75,7 +75,7 @@ def position(desc):
 
 
 def markup_price(cost, markup=DEFAULT_MARKUP):
-    return math.ceil(cost * markup / 5) * 5
+    return math.ceil(round(cost * markup, 2) / 5) * 5
 
 
 def lines_for(item, code, make, catalog, overrides, markup=DEFAULT_MARKUP, side=None):

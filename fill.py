@@ -37,7 +37,8 @@ def fill(fields, lines):
         win = Application(backend="win32").connect(title_re=".*InvoMax.*", timeout=3).top_window()
     except Exception as e:
         raise RuntimeError("InvoMax isn't open. Open an invoice first.") from e
-    win.restore()
+    if win.is_minimized():
+        win.restore()
     win.set_focus()
     for key, spec, value in field_writes(fields):
         try:
@@ -53,4 +54,5 @@ def fill(fields, lines):
             try:
                 send_keys(row_keys(line), with_spaces=True, pause=0.03)
             except Exception as e:
-                raise RuntimeError(f"Stopped at line {n} ({line.code}): {e}") from e
+                done = f" Lines 1-{n - 1} were already entered; check the invoice before filling again." if n > 1 else ""
+                raise RuntimeError(f"Stopped at line {n} ({line.code}): {e}.{done}") from e

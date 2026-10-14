@@ -73,6 +73,23 @@ def test_garbage_does_not_crash():
     assert j.fields["year_make"] == "Honda" and j.fields["make"] == "honda"
 
 
+def test_price_needs_dollar_or_space():
+    from read import parse_item
+    assert parse_item("*Oil change 5W30")[0].price is None
+    it = parse_item("*Tire 205/55R16")[0]
+    assert it.price is None and it.desc == "Tire 205/55R16"
+    it = parse_item("*Bulb 194")[0]
+    assert it.price == 194 and it.unsure and it.desc == "Bulb"
+    it = parse_item("*oil chng. 30$")[0]
+    assert it.price == 30 and not it.unsure
+
+
+def test_guessed_name_flagged():
+    j = parse(["John Smith", "VIN: x"])[0]
+    assert j.fields["first"] == "John" and "first" in j.flags and "last" in j.flags
+    assert "first" not in parse(["Name: John Smith"])[0].flags
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

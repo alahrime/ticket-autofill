@@ -14,7 +14,7 @@ LABELS = {
 }
 LABEL_RE = re.compile(r"^\s*([a-z]+)\s*[:;.\-–°]+[\s:;\-–.]*(.+)$", re.I)
 DATE_RE = re.compile(r"^\s*\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{2,4}\s*$")
-PRICE_RE = re.compile(r"^(.*?)[\s.,]*(\d+(?:\.\d{1,2})?)\s*\$?\s*$")
+PRICE_RE = re.compile(r"^(.*?)(?:[\s.,]*(\d+(?:\.\d{1,2})?)\s*\$|[\s.,]+(\d+(?:\.\d{1,2})?))\s*$")
 COST_RE = re.compile(r"\$\s*(\d+(?:\.\d{1,2})?)")
 
 # VIN transliteration and weights (49 CFR 565)
@@ -46,6 +46,7 @@ class Item:
     desc: str
     price: float | None = None
     cost: float | None = None
+    unsure: bool = False  # written price had no $
 
 
 @dataclass
@@ -66,11 +67,15 @@ def parse_item(line):
     cost = COST_RE.search(left)
     note = COST_RE.sub("", left).strip()
     m = PRICE_RE.match(right.strip())
-    desc, price = (m.group(1), m.group(2)) if m and m.group(1).strip() else (right, None)
-    return Item(desc.strip(" .,-"), _num(price), _num(cost.group(1)) if cost else None), note
+    if m and m.group(1).strip():
+        desc, price = m.group(1), m.group(2) or m.group(3)
+    else:
+        desc, price = right, None
+    return Item(desc.strip(" .,-"), _num(price), _num(cost.group(1)) if cost else None,
+                bool(m and price and not m.group(2))), note
 
 
-def _set(job, key, value):
+def _set(job, key, value, guessed=False):
     value = value.strip(" .,")
     if key == "vin":
         value, ok = fix_vin(value)
@@ -99,6 +104,8 @@ def _set(job, key, value):
     elif key == "name":
         parts = value.split()
         job.fields["first"], job.fields["last"] = parts[0], " ".join(parts[1:])
+        if guessed:
+            job.flags["first"] = job.flags["last"] = "guessed from first line"
         return
     job.fields[key] = value
 
@@ -128,7 +135,7 @@ def parse(lines):
         if key:
             _set(job, key, m.group(2))
         elif not job.fields and not job.items and re.fullmatch(r"[A-Za-z'\-]+(\s+[A-Za-z'\-]+)+", line):
-            _set(job, "name", line)  # unlabelled first line = customer name
+            _set(job, "name", line, True)  # unlabelled first line = customer name
         else:
             job.notes.append(line)
     return jobs

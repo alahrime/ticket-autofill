@@ -1,5 +1,5 @@
 """Always-on-top helper next to InvoMax: photo -> review -> Fill."""
-import os, sys, tkinter as tk
+import os, sys, traceback, tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from read import parse, Job
 from prices import (load_catalog, load_overrides, save_override, match, position, lines_for,
@@ -7,21 +7,31 @@ from prices import (load_catalog, load_overrides, save_override, match, position
 import fill
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CATALOG = load_catalog(os.path.join(HERE, "parts.csv"))
+CATALOG = {}  # loaded in __main__ so a bad parts.csv shows a dialog
 OV_PATH = os.path.join(HERE, "overrides.csv")
 FIELDS = [("first", "First"), ("last", "Last"), ("phone", "Phone"), ("year_make", "Year Make"),
           ("plate", "Plate"), ("vin", "VIN"), ("odometer", "Odometer"), ("tech", "Tech")]
 FLAG_BG = "#fff3b0"
 
 
+def note_text(it):
+    s = it.desc
+    if it.price is not None:
+        s += f" {it.price:g}$"
+    if it.cost is not None:
+        s += f" (cost ${it.cost:g})"
+    return s
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("InvoMax Autofill")
+        self.title("Ticket Autofill")
         self.attributes("-topmost", True)
         self.overrides = load_overrides(OV_PATH)
         self.jobs, self.items, self.lines, self.make = [], [], [], ""
         self.edits, self.deleted = {}, set()
+        self.filled = False
 
         bar = ttk.Frame(self)
         bar.pack(fill="x")
@@ -101,16 +111,17 @@ class App(tk.Tk):
         self.make = job.fields.get("make", "")
         self.items = []
         self.edits, self.deleted = {}, set()
+        self.filled = False
         for it in job.items:
             code = match(it.desc, CATALOG) or self.ask_code(it.desc)
             if not code:
-                notes.append(it.desc)
+                notes.append(note_text(it))
                 continue
             side = None
             if CATALOG[code].sided and position(it.desc)[1] is None:
                 side = self.ask_side(it.desc)
                 if not side:
-                    notes.append(it.desc)
+                    notes.append(note_text(it))
                     continue
             self.items.append((it, code, side))
         self.note.delete("1.0", "end")
@@ -135,6 +146,9 @@ class App(tk.Tk):
             if s.strip().upper() in ("LEFT", "RIGHT", "BOTH"):
                 return s.strip().upper()
 
+    def report_callback_exception(self, *exc):
+        messagebox.showerror("Error", "".join(traceback.format_exception_only(exc[0], exc[1])))
+
     # --- lines
     def reprice(self, _event=None):
         try:
@@ -156,7 +170,8 @@ class App(tk.Tk):
                     continue
                 ln.price = self.edits.get(key, ln.price)
                 cost = "" if ln.labor or it.cost is None else f"{it.cost:.2f}"
-                iid = self.tree.insert("", "end", values=(ln.code, ln.desc, cost, f"{ln.price:.2f}"))
+                q = "?" if it.unsure and it.price is not None and not ln.labor else ""
+                iid = self.tree.insert("", "end", values=(ln.code, ln.desc, cost, f"{ln.price:.2f}{q}"))
                 self.lines.append((iid, ln, code, key))
 
     def edit_price(self, event):
@@ -185,10 +200,16 @@ class App(tk.Tk):
 
     def do_fill(self):
         fields = {k: v.get().strip() for k, v in self.vars.items() if v.get().strip()}
+        if self.filled and not messagebox.askyesno("Already filled", "Already filled - fill again?"):
+            return
+        self.withdraw()
         try:
             fill.fill(fields, [x[1] for x in self.lines])
         except Exception as e:
             return messagebox.showerror("Fill stopped", str(e))
+        finally:
+            self.deiconify()
+        self.filled = True
         note = self.note.get("1.0", "end").strip()
         if note:
             self.clipboard_clear()
@@ -197,4 +218,11 @@ class App(tk.Tk):
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    try:
+        CATALOG.update(load_catalog(os.path.join(HERE, "parts.csv")))
+        app = App()
+    except Exception as e:
+        tk.Tk().withdraw()
+        messagebox.showerror("Couldn't start", str(e))
+        sys.exit(1)
+    app.mainloop()

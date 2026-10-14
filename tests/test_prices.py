@@ -77,6 +77,10 @@ def test_make_casing_is_normalized():
     assert lines_for(Item("Left front Axle", 200), "AXL", " SUBARU ", CAT, load_overrides(path))[1].price == 280
 
 
+def test_markup_price_float_edge():
+    assert markup_price(25, 2.2) == 55
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
