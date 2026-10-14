@@ -44,6 +44,7 @@ def load_overrides(path):
 
 
 def save_override(path, overrides, code, make, kind, price):
+    make = (make or "").lower().strip()
     overrides[(code, make, kind)] = price
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
@@ -80,6 +81,7 @@ def markup_price(cost, markup=DEFAULT_MARKUP):
 def lines_for(item, code, make, catalog, overrides, markup=DEFAULT_MARKUP, side=None):
     """item: read.Item. side: 'LEFT'/'RIGHT'/'BOTH' chosen in the UI when the text has none."""
     p = catalog[code]
+    make = (make or "").lower().strip()
     fr, text_side = position(item.desc)
     side = text_side or side
     t = tier(make)
@@ -90,7 +92,7 @@ def lines_for(item, code, make, catalog, overrides, markup=DEFAULT_MARKUP, side=
     else:
         price = overrides.get((code, make, "part"), round(p.part_price * t))
     labor = overrides.get((code, make, "labor"), round(p.labor_price * t))
-    sides = ["LEFT", "RIGHT"] if side == "BOTH" else [side]
+    sides = ["LEFT", "RIGHT"] if side == "BOTH" and p.sided else [side]
     out = []
     for s in sides:
         tag = "/".join(x for x in (fr, s) if x) if p.sided else ""

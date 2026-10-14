@@ -63,6 +63,20 @@ def test_overrides_round_trip():
     assert load_overrides(path) == {("AXL", "subaru", "labor"): 275.0}
 
 
+def test_both_on_non_sided_part_is_single_pass():
+    lines = lines_for(Item("both front brake pads", 100), "FBP", "honda", CAT, {}, side="BOTH")
+    assert [l.code for l in lines] == ["FBP", "INSTALL-PART"] and len(lines) == 2
+
+
+def test_make_casing_is_normalized():
+    path = os.path.join(tempfile.mkdtemp(), "overrides.csv")
+    ov = load_overrides(path)
+    save_override(path, ov, "AXL", "Subaru", "labor", 275.0)
+    assert lines_for(Item("Left front Axle", 200), "AXL", "subaru", CAT, load_overrides(path))[1].price == 275
+    save_override(path, ov, "AXL", "subaru", "labor", 280.0)
+    assert lines_for(Item("Left front Axle", 200), "AXL", " SUBARU ", CAT, load_overrides(path))[1].price == 280
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
