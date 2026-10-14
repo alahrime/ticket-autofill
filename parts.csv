@@ -1,0 +1,48 @@
+code,description,aliases,sided,part_price,labor_price
+FBP,FRONT BRAKE PADS,front brake pads|front pads|fbp,no,100,100
+RBP,REAR BRAKE PADS,rear brake pads|rear pads|rbp,no,100,100
+FROT,FRONT BRAKE ROTORS,front rotors|front brake rotors,no,140,80
+RROT,REAR BRAKE ROTORS,rear rotors|rear brake rotors,no,140,80
+CAL,BRAKE CALIPER,caliper|brake caliper,yes,120,90
+BFL,BRAKE FLUID FLUSH,brake flush|brake fluid,no,25,80
+AXL,AXLE ASSEMBLY,axle|cv axle|axle assembly|front axle,yes,250,250
+TRE,TIE ROD END,tie rod|tie rod end|outer tie rod,yes,45,90
+BJ,BALL JOINT,ball joint|lower ball joint,yes,60,120
+CA,CONTROL ARM,control arm|lower control arm,yes,120,130
+SBL,SWAY BAR LINK,sway bar link|stabilizer link|endlink,yes,35,60
+STR,STRUT ASSEMBLY,strut|front strut|strut assembly,yes,150,150
+SHK,SHOCK ABSORBER,shock|rear shock,yes,70,80
+WB,WHEEL BEARING HUB,wheel bearing|hub bearing|hub,yes,120,150
+OIL,OIL CHANGE,oil change|oil chng|oil,no,30,0
+OFL,OIL FILTER,oil filter,no,10,0
+AFL,ENGINE AIR FILTER,air filter|engine filter,no,20,10
+CFL,CABIN AIR FILTER,cabin filter|cabin air filter,no,20,15
+SPK,SPARK PLUGS,spark plugs|plugs,no,40,90
+COIL,IGNITION COIL,coil|ignition coil,no,60,40
+BAT,BATTERY,battery,no,160,20
+ALT,ALTERNATOR,alternator,no,350,200
+STRT,STARTER,starter,no,250,180
+WP,WATER PUMP,water pump,no,120,300
+TSTAT,THERMOSTAT,thermostat,no,35,100
+RAD,RADIATOR,radiator,no,180,180
+RHOS,RADIATOR HOSE,radiator hose|upper hose|lower hose,no,35,60
+CLNT,COOLANT FLUSH,coolant|coolant flush|antifreeze,no,30,80
+SBELT,SERPENTINE BELT,serpentine belt|belt|drive belt,no,40,60
+TBELT,TIMING BELT KIT,timing belt|timing kit,no,250,450
+O2S,OXYGEN SENSOR,o2 sensor|oxygen sensor,no,70,60
+CAT,CATALYTIC CONVERTER,catalytic converter|cat,no,600,200
+MUF,MUFFLER,muffler,no,120,90
+EXP,EXHAUST PIPE,exhaust pipe|flex pipe,no,90,100
+WIP,WIPER BLADES,wipers|wiper blades,no,30,0
+HBLB,HEADLIGHT BULB,headlight bulb|headlight|head lamp,yes,20,15
+BBLB,BRAKE LIGHT BULB,brake light|brake light bulb|tail light bulb,yes,8,10
+TBLB,TURN SIGNAL BULB,turn signal|signal bulb|blinker,yes,8,10
+HLA,HEADLIGHT ASSEMBLY,headlight assembly,yes,180,70
+MIR,SIDE MIRROR,mirror|side mirror|front mirror,yes,90,60
+TIRE,TIRE,tire,yes,120,25
+ALN,WHEEL ALIGNMENT,alignment|wheel alignment,no,0,100
+ROT,TIRE ROTATION,rotation|tire rotation,no,0,25
+ACR,A/C RECHARGE,ac recharge|a/c recharge|freon,no,60,90
+SINSP,STATE SAFETY INSPECTION,safety inspection|state inspection|inspection,no,20,0
+EINSP,EMISSIONS INSPECTION,emissions|emission test|emissions inspection,no,17,0
+DIAG,DIAGNOSTIC,diagnostic|check engine|scan,no,0,100

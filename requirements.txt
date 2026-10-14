@@ -1,0 +1,4 @@
+pillow
+numpy
+rapidocr-onnxruntime
+pywinauto; sys_platform == "win32"
