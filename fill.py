@@ -28,11 +28,11 @@ def field_writes(fields):
 
 
 def fill(fields, lines):
+    if not FIELD_MAP or GRID_START is None:
+        raise RuntimeError("InvoMax control map isn't set up yet (fill.py FIELD_MAP / GRID_START).")
     from pywinauto import Application
     from pywinauto.keyboard import send_keys
 
-    if not FIELD_MAP or GRID_START is None:
-        raise RuntimeError("InvoMax control map isn't set up yet (fill.py FIELD_MAP / GRID_START).")
     try:
         win = Application(backend="win32").connect(title_re=".*InvoMax.*", timeout=3).top_window()
     except Exception as e:

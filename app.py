@@ -21,6 +21,7 @@ class App(tk.Tk):
         self.attributes("-topmost", True)
         self.overrides = load_overrides(OV_PATH)
         self.jobs, self.items, self.lines, self.make = [], [], [], ""
+        self.edits, self.deleted = {}, set()
 
         bar = ttk.Frame(self)
         bar.pack(fill="x")
@@ -31,8 +32,11 @@ class App(tk.Tk):
         self.job_box.bind("<<ComboboxSelected>>", lambda e: self.show_job(self.job_box.current()))
         ttk.Label(bar, text=" Markup ×").pack(side="left")
         self.markup = tk.StringVar(value=str(DEFAULT_MARKUP))
-        ttk.Spinbox(bar, from_=1, to=5, increment=0.1, width=4, textvariable=self.markup,
-                    command=self.reprice).pack(side="left")
+        sp = ttk.Spinbox(bar, from_=1, to=5, increment=0.1, width=4, textvariable=self.markup,
+                         command=self.reprice)
+        sp.pack(side="left")
+        sp.bind("<Return>", self.reprice)
+        sp.bind("<FocusOut>", self.reprice)
 
         form = ttk.Frame(self)
         form.pack(fill="x")
@@ -96,6 +100,7 @@ class App(tk.Tk):
         notes = list(job.notes)
         self.make = job.fields.get("make", "")
         self.items = []
+        self.edits, self.deleted = {}, set()
         for it in job.items:
             code = match(it.desc, CATALOG) or self.ask_code(it.desc)
             if not code:
@@ -104,6 +109,9 @@ class App(tk.Tk):
             side = None
             if CATALOG[code].sided and position(it.desc)[1] is None:
                 side = self.ask_side(it.desc)
+                if not side:
+                    notes.append(it.desc)
+                    continue
             self.items.append((it, code, side))
         self.note.delete("1.0", "end")
         self.note.insert("1.0", "\n".join(notes))
@@ -128,16 +136,22 @@ class App(tk.Tk):
                 return s.strip().upper()
 
     # --- lines
-    def reprice(self):
+    def reprice(self, _event=None):
         try:
             markup = float(self.markup.get())
+            if markup <= 0:
+                raise ValueError
         except ValueError:
             markup = DEFAULT_MARKUP
-        # ponytail: repricing drops unsaved manual price edits; only markup changes trigger it
+            self.markup.set(str(DEFAULT_MARKUP))
         self.tree.delete(*self.tree.get_children())
         self.lines = []
         for it, code, side in self.items:
             for ln in lines_for(it, code, self.make, CATALOG, self.overrides, markup, side):
+                key = (code, ln.desc, bool(ln.labor))
+                if key in self.deleted:
+                    continue
+                ln.price = self.edits.get(key, ln.price)
                 cost = "" if ln.labor or it.cost is None else f"{it.cost:.2f}"
                 iid = self.tree.insert("", "end", values=(ln.code, ln.desc, cost, f"{ln.price:.2f}"))
                 self.lines.append((iid, ln, code))
@@ -152,6 +166,7 @@ class App(tk.Tk):
         if new is None:
             return
         ln.price = new
+        self.edits[(code, ln.desc, bool(ln.labor))] = new
         self.tree.set(iid, "price", f"{new:.2f}")
         kind = "labor" if ln.labor else "part"
         if messagebox.askyesno("Keep price?", f"Keep ${new:.2f} {kind} for {code} on {self.make or 'unknown make'}?"):
@@ -159,6 +174,9 @@ class App(tk.Tk):
 
     def delete_line(self, _event):
         for iid in self.tree.selection():
+            hit = next((x for x in self.lines if x[0] == iid), None)
+            if hit:
+                self.deleted.add((hit[2], hit[1].desc, bool(hit[1].labor)))
             self.tree.delete(iid)
         self.lines = [x for x in self.lines if self.tree.exists(x[0])]
 
