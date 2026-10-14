@@ -30,20 +30,7 @@ def group_lines(result):
 
 def ocr_lines(path):
     global _engine
-    from PIL import Image
     from rapidocr_onnxruntime import RapidOCR
-    from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-    if _engine is None:
-        name = "microsoft/trocr-small-handwritten"
-        _engine = (RapidOCR(), TrOCRProcessor.from_pretrained(name), VisionEncoderDecoderModel.from_pretrained(name))
-    det, proc, model = _engine
-    arr = load_image(path)
-    boxes = det(arr)[0] or []  # reuse RapidOCR boxes, replace their text
-    img = Image.fromarray(arr)
-    result = []
-    for b, _, score in boxes:
-        xs, ys = [p[0] for p in b], [p[1] for p in b]
-        crop = img.crop((min(xs), min(ys), max(xs), max(ys)))
-        ids = model.generate(proc(images=crop, return_tensors="pt").pixel_values, max_new_tokens=32)
-        result.append([b, proc.batch_decode(ids, skip_special_tokens=True)[0], score])
-    return group_lines(result)
+    _engine = _engine or RapidOCR()
+    result, _ = _engine(load_image(path))
+    return group_lines(result or [])
