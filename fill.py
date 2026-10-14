@@ -23,29 +23,34 @@ def row_keys(line):
 
 
 def field_writes(fields):
-    """[(spec, value)] for mapped fields that have a value. Blank -> untouched in InvoMax."""
-    return [(spec, fields[k]) for k, specs in FIELD_MAP.items() if fields.get(k) for spec in specs]
+    """[(key, spec, value)] for mapped fields that have a value. Blank -> untouched in InvoMax."""
+    return [(k, spec, fields[k]) for k, specs in FIELD_MAP.items() if fields.get(k) for spec in specs]
 
 
 def fill(fields, lines):
     from pywinauto import Application
-    from pywinauto.findwindows import ElementNotFoundError
     from pywinauto.keyboard import send_keys
 
     if not FIELD_MAP or GRID_START is None:
         raise RuntimeError("InvoMax control map isn't set up yet (fill.py FIELD_MAP / GRID_START).")
     try:
         win = Application(backend="win32").connect(title_re=".*InvoMax.*", timeout=3).top_window()
-    except (ElementNotFoundError, TimeoutError) as e:
+    except Exception as e:
         raise RuntimeError("InvoMax isn't open. Open an invoice first.") from e
     win.restore()
     win.set_focus()
-    for spec, value in field_writes(fields):
+    for key, spec, value in field_writes(fields):
         try:
             win.child_window(**spec).set_edit_text(value)
         except Exception as e:  # stop at the first failure, report which field
-            raise RuntimeError(f"Couldn't set {spec}: {e}") from e
+            raise RuntimeError(f"Couldn't set {key}: {e}") from e
     if lines:
-        win.click_input(coords=GRID_START)
-        for line in lines:
-            send_keys(row_keys(line), with_spaces=True, pause=0.03)
+        try:
+            win.click_input(coords=GRID_START)
+        except Exception as e:
+            raise RuntimeError(f"Couldn't click the InvoMax item grid: {e}") from e
+        for n, line in enumerate(lines, 1):
+            try:
+                send_keys(row_keys(line), with_spaces=True, pause=0.03)
+            except Exception as e:
+                raise RuntimeError(f"Stopped at line {n} ({line.code}): {e}") from e

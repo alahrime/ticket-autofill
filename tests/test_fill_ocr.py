@@ -22,10 +22,15 @@ def test_row_keys_escapes_specials():
 
 
 def test_blank_fields_untouched():
+    old = fill.FIELD_MAP
     fill.FIELD_MAP = {"plate": [{"auto_id": "p"}], "first": [{"auto_id": "f"}],
                       "odometer": [{"auto_id": "o1"}, {"auto_id": "o2"}]}
-    writes = fill.field_writes({"plate": "XKS4827", "first": "", "odometer": "98431"})
-    assert writes == [({"auto_id": "p"}, "XKS4827"), ({"auto_id": "o1"}, "98431"), ({"auto_id": "o2"}, "98431")]
+    try:
+        writes = fill.field_writes({"plate": "XKS4827", "first": "", "odometer": "98431"})
+    finally:
+        fill.FIELD_MAP = old
+    assert writes == [("plate", {"auto_id": "p"}, "XKS4827"), ("odometer", {"auto_id": "o1"}, "98431"),
+                      ("odometer", {"auto_id": "o2"}, "98431")]
 
 
 if __name__ == "__main__":
