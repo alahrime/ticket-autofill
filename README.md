@@ -12,4 +12,6 @@ Reads a photo of a handwritten notebook page and fills the open InvoMax invoice.
 Double-click `run.bat` (starts Ollama if it isn't running, then the app). Open or paste a photo, pick the job, check yellow fields and prices, click **Fill InvoMax**.
 
 ## Tests
+Test data is made up. Real sample photos go in `tests/samples/` (git-ignored, never committed).
+
 `python tests/test_read.py`, `python tests/test_prices.py`, `python tests/test_fill_ocr.py` — each prints `ok`.

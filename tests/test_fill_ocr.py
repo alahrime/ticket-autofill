@@ -5,7 +5,6 @@ from ocr import load_image, text_lines
 from prices import Line
 
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def test_text_lines_drops_fences_and_blanks():
@@ -15,7 +14,11 @@ def test_text_lines_drops_fences_and_blanks():
 
 
 def test_load_image():
-    assert load_image(os.path.join(HERE, "samples", "page1.jpg"))[:2] == b"\xff\xd8"  # JPEG bytes
+    import tempfile
+    from PIL import Image
+    path = os.path.join(tempfile.mkdtemp(), "page.png")
+    Image.new("RGB", (3000, 2000), "white").save(path)
+    assert load_image(path)[:2] == b"\xff\xd8"  # downscaled JPEG bytes
     try:
         load_image(__file__)
         assert False, "expected ValueError"

@@ -21,7 +21,7 @@ Cut hand-entry of repair/inspection tickets into InvoMax (Windows desktop billin
 | `parts.csv` | Placeholder catalog (code, description, aliases, sided, part_price, labor_price). Replaced by shop's InvoMax export |
 | `overrides.csv` | Prices staff chose to keep, per code + make |
 
-OCR engine (decided 2026-10-14 by testing on the sample page): **Qwen2.5-VL 7B served by Ollama** on the same PC, asked to transcribe the page line by line; the text then goes through `read.py` unchanged. Results on `tests/samples/page1.jpg`:
+OCR engine (decided 2026-10-14 by testing on the sample page): **Qwen2.5-VL 7B served by Ollama** on the same PC, asked to transcribe the page line by line; the text then goes through `read.py` unchanged. Results on a real notebook page (kept out of this public repo because it holds customer data; tests use made-up values):
 - RapidOCR: failed (jobs merged, VIN one char off, items unreadable).
 - TrOCR-small-handwritten: failed (worse).
 - Qwen2.5-VL 3B: fast (~4 s) but dropped date lines (jobs merged), lost the `$81` cost, misread a plate.

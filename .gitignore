@@ -4,3 +4,4 @@ overrides.csv
 .superpowers/
 .venv/
 invomax_controls.txt
+tests/samples/
