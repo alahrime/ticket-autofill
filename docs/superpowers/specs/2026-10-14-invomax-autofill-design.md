@@ -75,7 +75,67 @@ Checks (failures highlighted, never auto-filled silently):
 - `test_prices.py`: tier math, sided expansion, override precedence.
 - Fill: manual test on the shop PC against a scratch invoice.
 
+## Revision 2026-10-26: overlay on InvoMax, multi-step entry, shop Wi-Fi sync
+Decided with the shop owner on 2026-10-26, after looking at two final printed InvoMax bills. Those bills are kept out of the repo because they contain customer data.
+
+**Input is unchanged.** The photo is still a handwritten notebook page. The printed bill shows what InvoMax should end up holding. It is not something the app reads.
+
+### What a finished InvoMax invoice holds (from the printed bills)
+- **Header:** customer name, street address, up to two phones, Year Make (e.g. "2005 Toyota Camry LE"), Engine ("V6 3.0L"), License, MLG in/out (one odometer value in both boxes), VIN, and a three-letter code under VIN (meaning unknown). There are also Date, Schedule date, time and the invoice number. InvoMax supplies those last four.
+- **Labor table:** description, HRS (left blank) and price. It holds two kinds of row:
+  - Priced labor rows, such as "Remove & Install: AXLE ASSEMBLY F/LEFT 150.00" or "BLEED, FLUSH BRAKE FLUID 100.00".
+  - Unpriced remark rows. Some are free text that wraps over several lines, such as "SERVICE RECOMENDED F/RIGHT AXLE $550.00 AND F/LEFT AXLE $400.00". Others name the job, such as "REPLACE FRONT ENGINE MOUNT, RIGHT 550.00", which is one labor price covering several parts.
+- **Parts table:** description, QTY (can be more than 1, e.g. spark plugs 4.00), unit price and total.
+- **Totals:** InvoMax computes these, and the tool never types them. Labor, Parts & Lubricants, SHOP SUPPLY 20.00, Sub Total, Sales Tax, TOTAL. On both bills the sales tax is 6% of (parts + shop supply), e.g. (250.00 + 20.00) × 6% = 16.20. The overlay shows its expected total so staff can check InvoMax's total against it.
+- Signature, Charge and Print happen after this tool's work and are out of scope.
+
+What changes in the line model:
+- A part and its labor are not always one-to-one. One labor row can cover several parts, and a labor row can exist with no part (fluid flush). The current part → `INSTALL-PART` pairing stays the default, and staff can merge labor rows in the overlay.
+- Parts carry `qty`.
+- Remark rows are a third line type with no price.
+
+### Overlay drawn over InvoMax
+- A see-through, always-on-top, click-through Tk window covers the InvoMax window. It uses Windows `-transparentcolor` and stays aligned with InvoMax's window rectangle, polled every 200 ms.
+- For every field the tool knows about, it draws a marker on the InvoMax box:
+  - Green: filled and matches.
+  - Yellow: read but flagged (VIN check digit, plate S/5).
+  - Red: missing (no VIN, no plate, a labor row with no price).
+- The marker positions come from pywinauto's `rectangle()` of each mapped control, not from fixed coordinates. That way they follow window moves and resizes. If InvoMax's controls can't be addressed (Task 5 decides this), markers fall back to positions relative to the window, and a size change shows a warning instead of misplaced markers.
+- Clicking a marker opens a small input next to it. Enter puts the value into the draft and carries out the matching InvoMax action. A docked list (the current side window) shows every open question in order: "VIN missing", "Labor price for Remove & Install: AXLE F/LEFT?" and so on. Staff can work through it without hunting for markers.
+- The overlay hides itself while a fill step is running, so its clicks and keys reach InvoMax.
+
+### Multi-step InvoMax actions ("recipes")
+Adding a labor charge takes several modal dialogs in InvoMax, and so may a part or a note. Each action is a recipe: a list of steps kept as data in `fill.py`, so changing it doesn't touch the logic. The step types are:
+- `click(control)`
+- `wait_dialog(title)`, which times out with a clear message.
+- `set(control, value)`
+- `select(list_control, text)`
+- `press(button)`, but never Done, Charge, Print or Clear.
+
+After each step the recipe checks the expected dialog or value, and stops at the first mismatch. The error names the step, so staff can finish by hand. The same recipe drives both the overlay's single-field fill and the full Fill. The labor, part and remark recipes are written from InvoMax screenshots and checked on a scratch invoice on the shop PC.
+
+### Phone edits over shop Wi-Fi
+- The shop PC runs a small web page, built on stdlib `http.server`, so there are no new dependencies. It listens on the shop LAN only. Nothing goes to the internet, and the offline rule stands.
+- Staff sign in with a name and a PIN. PINs are stored hashed in a local file, and a session cookie keeps them signed in.
+- The page shows the current draft: header fields, lines and open questions. Staff can answer questions or edit values from a phone.
+- Phone edits update the draft. They appear on the overlay marked "from <name>", and InvoMax isn't touched until someone presses Apply on the PC. That keeps a phone edit from typing into InvoMax while someone is using the keyboard.
+- **History:** a stdlib `sqlite3` file keeps one row per change (time, who, device, field, old value, new value) for the PC and phones alike. Each draft has its own history view. Drafts and history stay on the shop PC.
+- The page uses plain HTTP inside the LAN. Shops whose Wi-Fi is shared with customers need a separate staff network, or HTTPS with a self-signed certificate (open item).
+
+### Order of work
+1. **InvoMax screenshots** (coming from the owner). They show the main invoice screen, each labor and part dialog in order, and where totals appear. They are used to write the recipes and the field list.
+2. **Line model update** (qty, remark rows, merged labor) plus the expected-total check, with tests.
+3. **Recipe runner** in `fill.py`, unit-tested with a fake window. Recipes for header fields, part, labor and remark.
+4. **Overlay** on `app.py`.
+5. **Draft store + history** (`sqlite3`), then the **Wi-Fi page**.
+6. Shop PC: control map (Task 5) and acceptance (Task 6), extended to recipes and the overlay.
+
 ## Open items (non-blocking)
+- Meaning of the three-letter code under VIN on printed bills (e.g. "ABD", "EDG"): tech initials, or something else?
+- Is the Engine field ("V6 3.0L") written in the notebook, or filled by InvoMax's VIN lookup?
+- Is shop supply always 20.00, and is tax always 6% of parts + shop supply?
+- Is the shop Wi-Fi shared with customers? This decides plain HTTP or a self-signed certificate for the phone page.
+- Should a phone edit ever go into InvoMax without someone pressing Apply on the PC? (Default: no.)
 - More sample pages to confirm the 7B model's accuracy across handwriting styles.
 - Shop PC specs (CPU/GPU/RAM) to confirm reading speed.
 - InvoMax parts/labor export → replaces `parts.csv`.
