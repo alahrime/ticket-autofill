@@ -94,7 +94,9 @@ What changes in the line model:
 - Parts carry `qty`.
 - Remark rows are a third line type with no price.
 
-### Overlay drawn over InvoMax
+### Overlay drawn over InvoMax — superseded
+> **Superseded 2026-10-26** by `2026-10-26-invomax-overlay-design.md`: a floating side panel of questions, no markers drawn over InvoMax. Kept for history.
+
 - A see-through, always-on-top, click-through Tk window covers the InvoMax window. It uses Windows `-transparentcolor` and stays aligned with InvoMax's window rectangle, polled every 200 ms.
 - For every field the tool knows about, it draws a marker on the InvoMax box:
   - Green: filled and matches.
@@ -105,6 +107,8 @@ What changes in the line model:
 - The overlay hides itself while a fill step is running, so its clicks and keys reach InvoMax.
 
 ### Multi-step InvoMax actions ("recipes")
+> **Refined 2026-10-26** in `2026-10-26-invomax-overlay-design.md` (step types `click`, `double_click`, `wait_dialog`, `set`, `select_row`, `choose_menu_item`, `press`; recipes in `recipes.py`, driver in `invomax.py`).
+
 Adding a labor charge takes several modal dialogs in InvoMax, and so may a part or a note. Each action is a recipe: a list of steps kept as data in `fill.py`, so changing it doesn't touch the logic. The step types are:
 - `click(control)`
 - `wait_dialog(title)`, which times out with a clear message.
@@ -126,7 +130,7 @@ After each step the recipe checks the expected dialog or value, and stops at the
 1. **InvoMax screenshots** (coming from the owner). They show the main invoice screen, each labor and part dialog in order, and where totals appear. They are used to write the recipes and the field list.
 2. **Line model update** (qty, remark rows, merged labor) plus the expected-total check, with tests.
 3. **Recipe runner** in `fill.py`, unit-tested with a fake window. Recipes for header fields, part, labor and remark.
-4. **Overlay** on `app.py`.
+4. **Side panel** (`panel.py`), see `2026-10-26-invomax-overlay-design.md`.
 5. **Draft store + history** (`sqlite3`), then the **Wi-Fi page**.
 6. Shop PC: control map (Task 5) and acceptance (Task 6), extended to recipes and the overlay.
 
