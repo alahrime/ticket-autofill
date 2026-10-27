@@ -22,6 +22,8 @@ KEYS = {0x0D: "Enter", 0x09: "Tab", 0x1B: "Esc"}  # only these keys are logged, 
 MAX_TEXT = 200
 SNAP_EVERY = 0.2  # seconds between full reads
 TICK = 0.03       # seconds between mouse/key checks
+SHOT_CLASSES = ("Tchoicebox", "Tmsgs", "#32768")  # windows whose contents can't be read: save a picture
+SHOT_DELAY = 0.4  # seconds after a window opens, so it has finished drawing
 
 WM_GETTEXT, BM_GETCHECK, MN_GETHMENU = 0x0D, 0xF0, 0x01E1
 LB_GETCURSEL, LB_GETTEXT, LB_GETTEXTLEN, LB_GETCOUNT = 0x188, 0x189, 0x18A, 0x18B
@@ -111,7 +113,10 @@ def top_windows(pid):
 
 
 def win_key(h):
-    return f"{text(h) or '(no title)'} [{cls(h)}]"
+    c = cls(h)
+    if c == MAIN_CLASS:  # its title blanks for a moment on every redraw; keep one name
+        return f"InvoMax [{c}]"
+    return f"{text(h) or '(no title)'} [{c}]"
 
 
 def rect_rel(h, top):
@@ -197,6 +202,19 @@ def snapshot(pid):
     return state, names
 
 
+def save_picture(h, folder):
+    """Picture of one window (screen pixels inside its rectangle) -> file name, or None if it's gone."""
+    from PIL import ImageGrab
+    u = _user32()
+    r = wintypes.RECT()
+    if not u.IsWindowVisible(h) or not u.GetWindowRect(h, ctypes.byref(r)) or r.right <= r.left:
+        return None
+    os.makedirs(folder, exist_ok=True)
+    name = time.strftime("%H%M%S") + f"-{cls(h).strip('#')}.png"
+    ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).save(os.path.join(folder, name))
+    return name
+
+
 def map_lines(top):
     lines = [f"WINDOW {win_key(top)} rect={rect_rel(top, top)}"]
     for key, h, c in controls(top):
@@ -229,6 +247,8 @@ class Watcher:
         self.log = open(path, "a", encoding="utf-8")
         self.prev, self.names, self.pid, self.last, self.down = {}, {}, None, 0.0, {}
         self.count = 0
+        self.shots = []  # (due time, hwnd) of windows to picture once drawn
+        self.shot_dir = os.path.join(os.path.dirname(path), "shots")
 
     def write(self, line):
         self.log.write(f"{_stamp()}  {line}\n")
@@ -255,12 +275,19 @@ class Watcher:
                     cur = self.prev
                 for line in diff(self.prev, cur):
                     self.write(line)
-                    if line.startswith("+ window ") and "[#32768]" not in line:
+                    if line.startswith("+ window "):
                         top = next((h for h, n in self.names.items() if line.startswith(f"+ window {n} =")), None)
-                        if top:
+                        if top and cls(top) in SHOT_CLASSES:
+                            self.shots.append((now + SHOT_DELAY, top))
+                        elif top and "[#32768]" not in line:
                             for m in map_lines(top):
                                 self.write("    " + m)
                 self.prev = cur
+            for due, h in [x for x in self.shots if x[0] <= now]:
+                self.shots.remove((due, h))
+                name = save_picture(h, self.shot_dir)
+                if name:
+                    self.write(f"picture: shots/{name}")
         if not self.pid:
             return
         fg = u.GetForegroundWindow()

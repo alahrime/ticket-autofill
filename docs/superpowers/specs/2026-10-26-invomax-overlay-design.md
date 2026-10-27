@@ -150,6 +150,9 @@ A pywinauto look at the running InvoMax (no clicks, no keys) found:
 - There is a menu bar (File, Edit, Customers, Suppliers, Reports, Inventory, Setup, **Print**, CheckBook, Help, Service Reminders). The tool never opens it.
 - Hidden helper windows exist ("InvoMax / CARFAX Integration", an "Invomax" internet warning). The driver ignores windows that aren't visible.
 - Which `TLMDEdit` is which box is mapped by the probe (section 5.8).
+- **What can be read back (probe, 2026-10-27).** Readable: the Name boxes (`TEdit`), every box in Customer Information, the Vehicles dropdowns and its button captions, the Parts & Labor window's captions, the Parts Cost value, and the grid cell being edited (`TInplaceEdit`). **Not readable**: the 15 `TLMDEdit` header boxes (Plate, VIN, Year Make, Eng Specs, Odometer, Phones) answer neither `WM_GETTEXT` nor UI Automation, and the lists drawn as grids (Customers list, Parts & Labor list, the item grid, the untitled Labor choice box) don't expose rows. So:
+  - a `set` on a `TLMDEdit` is checked by **copy-back**: select all, copy, read the clipboard, then put the staff member's clipboard back as it was;
+  - a pick from a drawn list is checked by its **effect** (the dialog closes, a readable box fills, the grid cell shows the code), never by reading the list.
 
 ### Step types
 Each step does one thing, then **polls its check every 50 ms** until it passes or the step's timeout (default 5 s, 10 s for dialogs) runs out. No fixed sleeps, so a recipe runs as fast as InvoMax lets it.
@@ -176,6 +179,8 @@ Each step does one thing, then **polls its check every 50 ms** until it passes o
 - **Never double-click Plate or VIN** (confirmed 2026-10-27). The runner refuses `double_click` on `plate` and `vin`.
 - **Allow list:** `press`/`choose_menu_item` only accept captions that appear in some recipe in `RECIPES`. Anything else (Cash Sale, Estimating, Schedule, See Last Invoice, Profit, Fast Quote, Continue…) is refused until a recipe needs it and the owner confirms it. **Change** (Customers) and **Custom Vehicle** (Vehicles) are not needed and stay refused. **Add New** is allowed only inside `customer_new` (5.3), once the probe confirms that is how the Customer Information window opens.
 - The runner stops if InvoMax shows a dialog it didn't expect, or if the window size differs from the control map's for a `rel` locator.
+- **Positions that are always refused** (from the probe's click log, window-relative, InvoMax maximized): the **Clear** button at about x 90–160, y 335–365 (it asks "Yes/No" and empties the invoice). **Done** (hint "File this job or quit the transaction") is at about x 1280–1350, y 335–370; it files the invoice. On a filed invoice the same spot becomes a menu (Make Changes / Change The Transaction Date / Void / Erase This Transaction…), which is refused too. The button row is one panel (x 10–1926, y 322–374); a `rel` click there is allowed only on a mapped Labor/Parts/Note position.
+- In **Parts & Labor**, `Change` and `Delete` edit the shop's catalog and are refused. **Added Vehicles** (reached through Custom Vehicle) creates a vehicle record and is refused. A Yes/No box (`Tmsgs`) the runner didn't open on purpose is answered with nothing: the runner stops.
 - One recipe at a time. Phone edits never start a recipe.
 
 ### Recipe format
@@ -216,7 +221,14 @@ State the driver reports. Button captions can't be read (section 4), so states c
 | `customer_selected` | no modal, Name boxes filled |
 | `dialog:<title>` | any other modal (the runner stops) |
 
+### 5.1a `customer_by_plate(plate)` — the quickest way in (from the probe, 2026-10-27)
+Needs `empty_invoice`. Seen in the log: on an empty invoice a staff member clicked the **Plate** box (`TLMDEdit#6`, hint "License plate (absolutely required always)"), typed the plate and pressed **Enter**; InvoMax loaded that customer straight away (Name and City filled, focus moved to the VIN box) without any Customers window.
+1. `click(plate)` → focus on `plate`.
+2. `set(plate, "{plate}", typed=True, enter=True)` → expect the Name boxes to fill (`TEdit#2` first, `TEdit#1` last) within 3 s.
+3. If they fill, the panel asks the confirm question "Is it JANE DOE?" (the name read from InvoMax). If they stay empty, the plate isn't on file: go to 5.1 by name, then 5.3 for a new customer.
+
 ### 5.1 `customer_search(by, text)` — open the Customers search and filter
+Used when the page has no plate, or the plate isn't on file.
 Needs `empty_invoice`. START is **not** pressed (confirmed 2026-10-26).
 1. `double_click(name.first)` → expect `dialog("Customers")`. *(Confirmed: a double-click opens it, same as click-then-click; the Last Name box does the same.)*
 2. `click(customers.by_<by>)` → expect that radio checked. `by` is `license` when the page has a plate, else `phone` when it has a phone, else `last_name`, else `first_name`. *(Double-clicking an empty Phones box opens the same Customers modal with Phone already checked; the tool still goes through the Name box so there is one way in.)*
@@ -228,26 +240,26 @@ So after step 3 the panel reads the state:
 - **Modal closed and the name boxes are filled** → InvoMax picked the customer itself. Go straight to the checks in 5.2 step 2 (name on the page, if any, must match; if not, the panel says so and nothing else is typed).
 - **Modal still open** → read `rows(customers.list)` and compare plates with dashes and spaces removed. One exact plate → confirm question "Is it JANE DOE (ABC-1234)?", then `customer_pick`. No exact plate → search again by last name (the list rows near the highlight are not offered as matches).
 
-Name search: rows are first name | full name (the third column is unused, confirmed 2026-10-27). Rows whose full name equals first + last (ignoring case and spaces) count as matches. One → confirm question; several → choose question; none → "No customer found — New customer / Search again / I'll pick it in InvoMax". How a new customer is entered without Add New is open (question 3).
+Name search: rows are first name | full name (the third column is unused, confirmed 2026-10-27). The list is a drawn grid (`TStringGrid`) whose rows can't be read (section 4), so the tool doesn't pick rows itself: the panel asks **"Pick the customer in InvoMax, or New customer"** and waits for state `customer_selected` (the Name boxes fill), then confirms the name it reads back. "New customer" runs 5.3.
 
 Backing out: `press("Exit")` → expect `wait_gone("Customers")` closes the search without choosing (confirmed).
 
 ### 5.2 `customer_pick(row)` — choose an existing customer
 Needs `customers_open`.
-1. `select_row(customers.list, row)` → double-click → expect `wait_gone("Customers")`. *(Confirmed: highlighting the row and pressing **Select** works the same. The double-click is the default; `click` row + `press("Select")` is the fallback if double-clicking a list row through pywinauto proves unreliable.)*
-2. check `text(name.first) == row.first` and no modal → state `customer_selected`. If InvoMax shows a list of the customer's cars next, the state is `dialog:<its title>` and `vehicle_pick` (5.6) takes over.
+1. `select_row(customers.list, row)` → double-click → expect `wait_gone("Customers")`. *(Only used where the row position is known, e.g. the highlighted row after a full search. Seen in the log: double-clicking a row fills the Name boxes and moves focus to the Plate box; no list of the customer's cars appeared for that customer.)* *(Confirmed: highlighting the row and pressing **Select** works the same. The double-click is the default; `click` row + `press("Select")` is the fallback if double-clicking a list row through pywinauto proves unreliable.)*
+2. check `text(name.first) == row.first` and no modal → state `customer_selected`. If InvoMax shows a list of the customer's cars next, the state is `dialog:<its title>` and `vehicle_pick` (5.7) takes over.
 
 After this the driver reads Phone, Year Make, Plate, VIN, Odometer from InvoMax into the draft as `source="invomax"`, so later questions can say "InvoMax has (555)010-0000, the notebook says (555)010-0001 — keep which?".
 
 *"I'll pick it in InvoMax"*: the panel waits (no clicks) for state `customer_selected`, then reads the fields the same way.
 
-### 5.3 `customer_new(first, last, phone)` — brand-new customer
-Needs `customers_open` (the search found nobody and staff chose "New customer"). A brand-new customer is entered in the **"Customer Information"** window (confirmed 2026-10-27, from a screenshot): First Name, Last, then Company, Street, ZIP-City-St, Home/Cell phones and Email, and the buttons **Save**, **Exit**, **Cancel**. Only the first two boxes, and the phone, are filled.
-1. `press("Add New")` → expect `wait_dialog("Customer Information")`. *(How the window opens is confirmed by the probe before this recipe is enabled.)*
-2. `set(custinfo.first, "{first}")`, `set(custinfo.last, "{last}")`.
-3. `set(custinfo.home, "{phone}")` when the page has a phone (format `(555)010-0000`).
-4. `press("Save")` → expect `wait_gone("Customer Information")`.
-5. expect state `customer_selected` with the new name, or `customers_open` with the new row, which then goes to `customer_pick`. The probe settles which.
+### 5.3 `customer_new(first, last, phone)` — brand-new customer (from the probe, 2026-10-27)
+Needs `customers_open`. Seen in the log, step by step:
+1. `press("Add New")` (caption-less; at about (137, 475) in the Customers window) → expect `wait_dialog("Customer Information")`. Focus lands in **First Name** (`TEdit#11`).
+2. `set(custinfo.first, "{first}")` → Tab → `set(custinfo.last, "{last}")` (`TEdit#10`). InvoMax copies the last name into a greyed box by itself (`TEdit#6`).
+3. `click(custinfo.home)` (`TMaskEdit#1`, mask `(703)___-____`: area code 703 is pre-filled) → type the 10 digits → read back `(571)555-0100` style.
+4. `press("Save")` (caption-less; about (273, 218) in Customer Information) → expect **both** Customer Information and Customers to close, the Name boxes on the invoice to fill, and **Vehicles to open by itself**.
+5. Continue with 5.5 (the Vehicles window is already open).
 
 ### 5.4 `phone_set(value)` — change the phone number
 Needs `customer_selected`. Only the first phone box is used.
@@ -262,7 +274,9 @@ Format: `(555)010-0000`, as InvoMax shows it and as `read.py` already writes it.
 An **empty** phone box doesn't show the popup; it opens the Customers search with Phone checked. So `phone_set` runs only when InvoMax already holds a number; a customer with no phone gets it through `customer_new`, or by hand. A second phone is never entered (confirmed 2026-10-27).
 
 ### 5.5 `vehicle_add(...)` — choose the car on the Vehicles modal
-Needs `customer_selected`. From a screenshot (2026-10-27): clicking **Year Make** opens a **"Vehicles"** modal with three dropdowns, **Year**, **Make**, **Model** (each narrows the next; Model items read like "2019 Cadillac ATS"), a VIN box labelled "InvoMax subscription enabled VIN decoder — press Enter after typing the VIN", and the buttons **Select**, **Cancel**, **Custom Vehicle**. Choosing Year, Make and Model fills Year Make and Eng Specs on the invoice.
+Needs `customer_selected` (or Vehicles already open after 5.3). Controls from the probe: Year = `TRzComboBox#2`, Make = `#1`, Model = `#0` (each with a readable `Edit` part), VIN box = `TEdit#0`, buttons `TLMDButton` with readable captions. Seen in the log: after Year, choosing a Model item ("2021 Chevrolet EQUINOX") fills Make too; then the window switches to an **engine step** (buttons become "Select Engine Later", "Custom Vehicle", "Select", "Cancel", and a second Year box appears); picking the engine from its dropdown closes Vehicles and moves focus to the Plate box. Dropdown items can be read from the combo (`CB_GETLBTEXT`), so the model and engine choices are read, not guessed.
+
+From a screenshot (2026-10-27): clicking **Year Make** opens a **"Vehicles"** modal with three dropdowns, **Year**, **Make**, **Model** (each narrows the next; Model items read like "2019 Cadillac ATS"), a VIN box labelled "InvoMax subscription enabled VIN decoder — press Enter after typing the VIN", and the buttons **Select**, **Cancel**, **Custom Vehicle**. Choosing Year, Make and Model fills Year Make and Eng Specs on the invoice.
 
 VIN path first when the page's VIN passed its check digit (decoder confirmed working on the shop PC, 2026-10-27); dropdown path otherwise.
 
@@ -271,8 +285,8 @@ Dropdown path:
 2. `pick(vehicles.year, "{year}")`.
 3. `pick(vehicles.make, "{make}")` → the page's make is matched against `combo_items` ignoring case (`chevy` → `Chevrolet` via a small alias table in `draft.py`).
 4. `pick(vehicles.model, "{model_item}")` → `model_item` is the one Model entry that contains the page's model word(s). Several (trims) → the panel asks a choose question with the items read from the dropdown, then reruns from step 4.
-5. `press("Select")` → expect `wait_gone("Vehicles")`.
-6. check `text(year_make)` contains year and make; read `eng_specs` into the draft (`source="invomax"`).
+5. Engine step: `pick(vehicles.engine, "{engine_item}")` when the page names the engine; otherwise the panel shows the engine items as a choose question, with "Select Engine Later" as an answer.
+6. expect `wait_gone("Vehicles")` and focus on `plate`. Year Make isn't readable (section 4), so it is checked by copy-back.
 
 VIN path, replacing steps 2–4:
 - `set(vehicles.vin, "{vin}", enter=True)` → expect Year, Make and Model to be filled. If they stay empty within 10 s (decoder offline or VIN unknown), fall back to the dropdown path.
@@ -283,20 +297,33 @@ Backing out: `press("Cancel")` → `wait_gone("Vehicles")`. `Custom Vehicle` is 
 Needs `customer_selected` and a car chosen. Confirmed 2026-10-27: **single-click** Plate and VIN and type straight into them; **never double-click** them.
 1. `click(plate)` → `set(plate, "{plate}", typed=True)` → read back `ABC-1234`.
 2. `click(vin)` → `set(vin, "{vin}", typed=True)` → read back.
-3. `click(odometer.in)` → `set(odometer.in, "{odometer}", typed=True, enter=True)` → expect `text(odometer.out) == odometer` (InvoMax copies it into the second box on Enter).
-4. Stop. The next Enter leads to the mechanic, which staff type by hand (the panel's last row says so).
+3. `click(odometer.in)` (`TLMDEdit#5`) → `set(odometer.in, "{odometer}", typed=True, enter=True)` → focus moves to the second odometer box (`TLMDEdit#4`, filled by InvoMax). Seen in the log: Enter there moves to the **mechanic** box (`TLMDEdit#2`, about (1659, 283)), and Enter there moves into the grid.
+4. Stop with focus on the mechanic box; staff type the mechanic (the panel's last row says so). The odometer is checked later through the **Mileage** window InvoMax shows when the job is filed (its two boxes are readable), or by copy-back.
 
 Each part runs only if the draft has that value and InvoMax doesn't already hold the same one.
 
-### 5.7 Still to come (recipes left open)
-| Recipe | Needs | What's known | Found by |
-|---|---|---|---|
-| `vehicle_pick` | customer_selected | a "Do Not Show Multiple Vehicles List" option exists, so a list probably appears for customers with several cars | the probe (watch mode) |
-| `part_add(code, desc, qty, price)` | customer_selected | Parts button; grid columns | screenshots + probe |
-| `labor_add(desc, price)` | customer_selected | Labor button | screenshots + probe |
-| `remark_add(text)` | customer_selected | — | screenshots + probe |
-| `note_set(text)` | customer_selected | Note button | screenshots + probe |
-| `totals_read` | customer_selected | totals bar labels | probe (are they readable controls?) |
+### 5.7 Lines: parts, labor and price (from the probe, 2026-10-27)
+Grid columns (window-relative x): Item Code ~10–260, Description ~260–1310, Qty ~1310–1430, Price ~1430–1590, Total ~1590–1760, Tech ~1760–1926. First row at y ~420, rows ~30 px apart. The cell being edited is a readable `TInplaceEdit`, so every grid entry is checked by reading it back.
+
+Seen in the log:
+- **Part typed by code (the fast way).** Click an empty **Item Code** cell, type the code, Enter: InvoMax completes it ("OF" became "OIL FILTER"). Click the **Price** cell, type the price, Enter. A choice box follows (Enter accepts its default), then an **"ACTUAL COST"** window (`Tdriveletter`, one box with a suggested cost, OK/Cancel): the shop's cost goes here, Enter.
+- **Part from the catalog.** Double-clicking an empty Item Code cell opens **"Parts & Labor"** (`Tshowprods`): search box, filters, and Select One / Select More Than One / Change / Delete / Exit. Double-clicking a catalog row puts its code in the cell. Change and Delete are refused.
+- **Changing a part's price.** Clicking the Price cell of a part row opens **"Parts Cost"** (`Tdriveletter`); the number typed there replaces the row's **price** (the cell showed 15.59 and became 7).
+- **Labor.** The **Labor** button (hint "Labor, Sublet, Warranty, options", about (500, 350)) opens an untitled choice box (`Tchoicebox`); after a choice the row's Description starts with `:`, staff type the text (":STATE INSPECTION", ":OIL CHANGE"), then the price is typed straight into the Price cell; a choice box follows on Enter.
+- **Long descriptions.** A row's description can be edited in place and runs long ("MUFFLER LEFT & RIGHT, RESONATOR PIPE, GASKETS & SPRING BOLTS KIT"): that is how a labor row covering several parts is written.
+- **Filing (never done by the tool).** Done → choice boxes → **Mileage** window (odometer in/out, readable) → choice box → **Calendar** (next service date) → filed. Staff do this by hand.
+
+Recipes from this:
+| Recipe | Steps | Still to learn |
+|---|---|---|
+| `part_add(code, qty, price, cost)` | click Item Code cell → type code, Enter → read back the completed code → click Price cell → type price, Enter → accept the choice box → `wait_dialog("ACTUAL COST")` → set cost or keep, Enter | what the choice box after the price asks; the Qty cell |
+| `labor_add(desc, price)` | `press(Labor)` → choice box → **which choice** → type `desc` after the `:`, read back → Price cell → type price, Enter → choice box | the Labor choice box's items (screenshot) |
+| `remark_add(text)` | as labor, without a price | whether InvoMax accepts a row without a price |
+| `note_set(text)` | — | Note window (not used yet) |
+| `vehicle_pick` | — | a customer with several cars (not seen yet) |
+| `totals_read` | — | totals bar controls |
+
+The untitled choice boxes (`Tchoicebox`) can't be read. The probe saves a picture of each one when it opens (5.8), so their choices can be read from the pictures instead of asking staff for screenshots.
 
 ### 5.8 Probe: learning InvoMax without babysitting
 `probe.py` is a separate tool (not part of the panel) that answers "what does InvoMax do when…" by watching it, so the owner doesn't have to QA each step. Everything it writes goes to `probe/` (git-ignored: it sees customer data).
@@ -308,6 +335,10 @@ Each part runs only if the draft has that value and InvoMax doesn't already hold
 - what appears after picking a customer with cars on file (question 5, `vehicle_pick`);
 - how Customer Information opens for a new customer, and what Save leads to;
 - which dialogs Parts, Labor and Note open, in what order.
+
+First probe day (2026-10-27): new customer, vehicle, plate lookup, name lookup, vehicle history, parts, labor, price, odometer → mechanic, and filing (Done) were captured. Findings are in 5.1a, 5.3, 5.5, 5.6, 5.7 and section 4.
+
+**Pictures of unreadable windows.** When a window opens whose contents can't be read (the untitled choice boxes, popup menus), the probe saves a picture of just that window to `probe/shots/` and logs the file name. Pictures stay on this PC like the log.
 
 **Trial mode** (clicks, opt-in per run). Runs one recipe for real against InvoMax and logs every step's check with timings. It only runs recipes whose steps end in a way-out (Exit, Cancel), never Save or Select, and refuses to start unless InvoMax is on an empty invoice. Example: "open Customers, type a plate, observe, Exit". It also measures how long each check took, which sets the step timeouts. If a trial leaves a customer on the invoice, staff clear it (the tool never presses Clear).
 
@@ -324,7 +355,9 @@ Each part runs only if the draft has that value and InvoMax doesn't already hold
 ## 8. Open questions for the owner
 Answered 2026-10-26/27: START isn't needed; a double-click opens Customers (Last Name box too); Select = double-click; License search shows plate | name; plates are typed with the hyphen; the third column is unused; brand-new customers go through the Customer Information window (first two boxes); one phone only, no address/zip/city/state; Year Make opens the Vehicles window and the VIN decoder works; Plate and VIN are single-clicked and typed in place, never double-clicked; Odometer + Enter copies to the second box, then the mechanic is typed by hand; Change, Continue and Fast Quote are never needed; Exit just closes; panel snaps to the four corners, bottom-right first.
 
-Left to the probe instead of the owner: full-plate auto-select behaviour; what appears for a customer with cars on file; how Customer Information opens and what Save does; Parts/Labor/Note dialogs.
+Learned from the probe (2026-10-27): typing a plate into the Plate box + Enter loads the customer; Add New opens Customer Information and Save opens Vehicles; the Vehicles window has an engine step; parts can be typed by code into the grid, then price, then ACTUAL COST; the Parts Cost window sets the price; labor comes from the Labor button's choice box; odometer → second odometer → mechanic; where Done is and what filing asks.
+
+Still for the probe: what the choice boxes offer (pictures); a customer with several cars; the Note window.
 
 Still for the owner:
 Watch mode approved 2026-10-27 ("never save anything, don't delete or edit customer data").
