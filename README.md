@@ -12,7 +12,7 @@ Reads a photo of a handwritten notebook page and fills the open InvoMax invoice.
 Double-click `run.bat` (starts Ollama if it isn't running, then the app). Open or paste a photo, pick the job, check yellow fields and prices, click **Fill InvoMax**.
 
 ## Learning InvoMax (probe)
-Double-click `probe.bat` and use InvoMax as usual. It only watches: it never clicks, types or saves anything in InvoMax. It logs what changes (windows opening, box contents, where clicks land) to `probe/watch-YYYY-MM-DD.log`. The log holds customer data, so `probe/` is git-ignored and stays on this PC. Close its window to stop. `python probe.py map` dumps InvoMax's controls once.
+Double-click `probe.bat`: a small window opens. Click **▶ Start watching**, then use InvoMax as usual; **⏸ Pause** / **▶ Resume** at any time. It only watches: it never clicks, types or saves anything in InvoMax. It logs what changes (windows opening, box contents, where clicks land) to `probe/watch-YYYY-MM-DD.log`. The log holds customer data, so `probe/` is git-ignored and stays on this PC. Close the probe window to stop. `python probe.py map` dumps InvoMax's controls once.
 
 ## Tests
 Test data is made up. Real sample photos go in `tests/samples/` (git-ignored, never committed).

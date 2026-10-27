@@ -5,7 +5,7 @@ file it writes is its own log. It only asks Windows for window
 titles, box texts, list selections, check states, the focused box and where the mouse
 clicked. Logs hold customer data, so they go to probe/ (git-ignored, stays on this PC).
 
-    python probe.py watch    log changes to probe/watch-YYYY-MM-DD.log until Ctrl+C
+    python probe.py watch    window with Start / Pause; logs to probe/watch-YYYY-MM-DD.log
     python probe.py map      dump every InvoMax window's controls to probe/map-*.txt
 """
 from __future__ import annotations
@@ -222,59 +222,114 @@ def do_map():
     print("wrote", path)
 
 
-def do_watch():
-    os.makedirs(OUT, exist_ok=True)
-    u = _user32()
-    path = os.path.join(OUT, time.strftime("watch-%Y-%m-%d.log"))
-    print(f"Watching InvoMax (read-only). Log: {path}\nClose this window or press Ctrl+C to stop.")
-    with open(path, "a", encoding="utf-8") as log:
-        def write(line):
-            log.write(f"{_stamp()}  {line}\n")
-            log.flush()
+class Watcher:
+    """One watch session: step() is called every TICK seconds and logs what changed."""
 
-        write("--- watch started")
-        prev, names, pid, last, down = {}, {}, None, 0.0, {}
-        while True:
-            now = time.monotonic()
-            if now - last >= SNAP_EVERY:
-                last = now
-                main, p = find_invomax()
-                if p != pid:
-                    write("InvoMax found" if p else "InvoMax not open")
-                    pid, prev = p, {}
-                if pid:
-                    try:
-                        cur, names = snapshot(pid)
-                    except OSError:
-                        cur = prev
-                    for line in diff(prev, cur):
-                        write(line)
-                        if line.startswith("+ window ") and "[#32768]" not in line:
-                            top = next((h for h, n in names.items() if line.startswith(f"+ window {n} =")), None)
-                            if top:
-                                for m in map_lines(top):
-                                    write("    " + m)
-                    prev = cur
-            if pid:
-                fg = u.GetForegroundWindow()
-                for vk, label in [(VK_LBUTTON, "click")] + list(KEYS.items()):
-                    is_down = bool(u.GetAsyncKeyState(vk) & 0x8000)
-                    if is_down and not down.get(vk) and pid_of(fg) == pid:
-                        if vk == VK_LBUTTON:
-                            pt = wintypes.POINT()
-                            u.GetCursorPos(ctypes.byref(pt))
-                            h = u.WindowFromPoint(pt)
-                            top = u.GetAncestor(h, GA_ROOT)
-                            if h and pid_of(h) == pid:
-                                tr = wintypes.RECT()
-                                u.GetWindowRect(top, ctypes.byref(tr))
-                                write(f"click at ({pt.x - tr.left},{pt.y - tr.top}) in {names.get(top, win_key(top))}"
-                                      f" on {names.get(h, cls(h))}")
-                        else:
-                            f = focused(pid)
-                            write(f"key {label} in {names.get(f, cls(f)) if f else win_key(fg)}")
-                    down[vk] = is_down
-            time.sleep(TICK)
+    def __init__(self, path):
+        self.log = open(path, "a", encoding="utf-8")
+        self.prev, self.names, self.pid, self.last, self.down = {}, {}, None, 0.0, {}
+        self.count = 0
+
+    def write(self, line):
+        self.log.write(f"{_stamp()}  {line}\n")
+        self.log.flush()
+        self.count += 1
+
+    def close(self):
+        self.write("--- watch stopped")
+        self.log.close()
+
+    def step(self):
+        u = _user32()
+        now = time.monotonic()
+        if now - self.last >= SNAP_EVERY:
+            self.last = now
+            _, p = find_invomax()
+            if p != self.pid:
+                self.write("InvoMax found" if p else "InvoMax not open")
+                self.pid, self.prev = p, {}
+            if self.pid:
+                try:
+                    cur, self.names = snapshot(self.pid)
+                except OSError:
+                    cur = self.prev
+                for line in diff(self.prev, cur):
+                    self.write(line)
+                    if line.startswith("+ window ") and "[#32768]" not in line:
+                        top = next((h for h, n in self.names.items() if line.startswith(f"+ window {n} =")), None)
+                        if top:
+                            for m in map_lines(top):
+                                self.write("    " + m)
+                self.prev = cur
+        if not self.pid:
+            return
+        fg = u.GetForegroundWindow()
+        for vk, label in [(VK_LBUTTON, "click")] + list(KEYS.items()):
+            is_down = bool(u.GetAsyncKeyState(vk) & 0x8000)
+            if is_down and not self.down.get(vk) and pid_of(fg) == self.pid:
+                if vk == VK_LBUTTON:
+                    pt = wintypes.POINT()
+                    u.GetCursorPos(ctypes.byref(pt))
+                    h = u.WindowFromPoint(pt)
+                    top = u.GetAncestor(h, GA_ROOT)
+                    if h and pid_of(h) == self.pid:
+                        tr = wintypes.RECT()
+                        u.GetWindowRect(top, ctypes.byref(tr))
+                        self.write(f"click at ({pt.x - tr.left},{pt.y - tr.top}) in {self.names.get(top, win_key(top))}"
+                                   f" on {self.names.get(h, cls(h))}")
+                else:
+                    f = focused(self.pid)
+                    self.write(f"key {label} in {self.names.get(f, cls(f)) if f else win_key(fg)}")
+            self.down[vk] = is_down
+
+
+def do_watch():
+    """Small always-on-top window: Start, then Pause / Resume. Nothing is logged until Start."""
+    import tkinter as tk
+    from tkinter import ttk
+    path = os.path.join(OUT, time.strftime("watch-%Y-%m-%d.log"))
+    root = tk.Tk()
+    root.title("InvoMax probe")
+    root.attributes("-topmost", True)
+    root.resizable(False, False)
+    status = tk.StringVar(value="Not started. Read-only: never clicks, types or saves in InvoMax.")
+    ttk.Label(root, textvariable=status, wraplength=260).pack(padx=8, pady=(8, 4))
+    btn = ttk.Button(root, text="▶ Start watching")
+    btn.pack(fill="x", padx=8, pady=(0, 8))
+    st = {"w": None, "on": False}
+
+    def toggle():
+        if st["w"] is None:
+            os.makedirs(OUT, exist_ok=True)
+            st["w"] = Watcher(path)
+            st["w"].write("--- watch started")
+        else:
+            st["w"].write("--- resumed" if not st["on"] else "--- paused")
+        st["on"] = not st["on"]
+        btn.config(text="⏸ Pause" if st["on"] else "▶ Resume")
+        if not st["on"]:
+            status.set(f"Paused. {st['w'].count} lines in {os.path.basename(path)}")
+
+    def loop():
+        if st["on"]:
+            try:
+                st["w"].step()
+                status.set(f"Watching… {st['w'].count} lines in {os.path.basename(path)}")
+            except Exception as e:
+                st["w"].write(f"probe error: {e!r}")
+                toggle()
+                status.set(f"Paused after an error: {e}")
+        root.after(int(TICK * 1000), loop)
+
+    def close():
+        if st["w"]:
+            st["w"].close()
+        root.destroy()
+
+    btn.config(command=toggle)
+    root.protocol("WM_DELETE_WINDOW", close)
+    loop()
+    root.mainloop()
 
 
 if __name__ == "__main__":
@@ -282,9 +337,6 @@ if __name__ == "__main__":
     if mode == "map":
         do_map()
     elif mode == "watch":
-        try:
-            do_watch()
-        except KeyboardInterrupt:
-            print("stopped")
+        do_watch()
     else:
         sys.exit(__doc__)
