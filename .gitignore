@@ -6,3 +6,8 @@ overrides.csv
 invomax_controls.txt
 tests/samples/
 probe/
+
+report.json
+phone_pin.txt
+phone.log
+cloudflared.log

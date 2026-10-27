@@ -4,6 +4,8 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 from read import parse, Job
 from prices import (load_catalog, load_overrides, save_override, match, position, lines_for,
                     DEFAULT_MARKUP)
+from inspection import read_receipt
+import report
 import fill
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -58,6 +60,7 @@ class App(tk.Tk):
         sp.pack(side="left")
         sp.bind("<Return>", self.reprice)
         sp.bind("<FocusOut>", self.reprice)
+        ttk.Button(bar, text="Inspection report", command=lambda: ReportWindow(self)).pack(side="right")
 
         form = ttk.Frame(self)
         form.pack(fill="x")
@@ -237,6 +240,119 @@ class App(tk.Tk):
             self.clipboard_clear()
             self.clipboard_append(note)
         messagebox.showinfo("Filled", "Check the invoice in InvoMax." + (" Notes are on the clipboard for the Note box." if note else ""))
+
+
+class ReportWindow(tk.Toplevel):
+    """Inspection receipt photos -> one row each -> Word pages (report.py)."""
+    COLS = (("date", "Date", 95), ("car", "Year Make", 140), ("vin6", "Last 6 VIN", 90),
+            ("miles", "Mileage", 80), ("amount", "Amount", 70))
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Inspection report")
+        self.attributes("-topmost", True)
+        self.rows, self.queue, self.done = {}, [], []  # rows: tree iid -> Row
+        state = report.load_state()
+        bar = ttk.Frame(self)
+        bar.pack(fill="x")
+        self.add_btn = ttk.Button(bar, text="Add photos", command=self.add_photos)
+        self.add_btn.pack(side="left")
+        ttk.Label(bar, text=" Customer").pack(side="left")
+        self.customer = tk.StringVar(value=state.get("customer", "C&G"))
+        ttk.Entry(bar, textvariable=self.customer, width=10).pack(side="left")
+        ttk.Label(bar, text=" Page").pack(side="left")
+        self.page = tk.StringVar(value=str(state.get("page", 0) + 1))
+        ttk.Spinbox(bar, from_=1, to=999, width=4, textvariable=self.page).pack(side="left")
+        self.status = ttk.Label(self, text="Add photos of inspection receipts. Double-click a cell to fix it.")
+        self.status.pack(anchor="w")
+        self.tree = ttk.Treeview(self, columns=[c[0] for c in self.COLS], show="headings", height=20)
+        for c, label, w in self.COLS:
+            self.tree.heading(c, text=label)
+            self.tree.column(c, width=w)
+        self.tree.tag_configure("flag", background=FLAG_BG)
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<Double-1>", self.edit_cell)
+        self.tree.bind("<Delete>", self.delete_rows)
+        ttk.Button(self, text="Save Word file", command=self.save).pack(fill="x")
+
+    def add_photos(self):
+        paths = filedialog.askopenfilenames(parent=self, filetypes=[("Images", "*.jpg *.jpeg *.png *.webp")])
+        if not paths:
+            return
+        self.queue += paths
+        self.add_btn.state(["disabled"])  # one reader thread at a time
+        threading.Thread(target=self.read_all, daemon=True).start()
+        self.after(200, self.poll)
+
+    def read_all(self):  # worker thread: one photo at a time, results handed to Tk via self.done
+        while self.queue:
+            self.done.append(read_receipt(self.queue[0]))
+            self.queue.pop(0)
+
+    def poll(self):
+        reading = bool(self.queue)  # checked first: the worker adds to done before it pops the queue
+        while self.done:
+            row, err = self.done.pop(0)
+            if err:
+                messagebox.showwarning("Couldn't read photo", f"{os.path.basename(row.photo)}\n{err}", parent=self)
+            self.show(row)
+        if reading:
+            self.status.config(text=f"Reading photos… ({len(self.queue)} left)")
+            return self.after(200, self.poll)
+        self.add_btn.state(["!disabled"])
+        self.status.config(text=f"{len(self.rows)} rows. Yellow = check against the receipt.")
+
+    def show(self, row, iid=None):
+        values = [getattr(row, c[0]) for c in self.COLS]
+        tags = ("flag",) if row.flags else ()
+        if iid:
+            self.tree.item(iid, values=values, tags=tags)
+        else:
+            self.rows[self.tree.insert("", "end", values=values, tags=tags)] = row
+
+    def edit_cell(self, event):
+        iid, col = self.tree.identify_row(event.y), self.tree.identify_column(event.x)
+        if iid not in self.rows or not col:
+            return
+        key, label, _ = self.COLS[int(col[1:]) - 1]
+        row = self.rows[iid]
+        why = row.flags.get(key, "")
+        new = simpledialog.askstring(label, f"{os.path.basename(row.photo)}\n{why}".strip(),
+                                     initialvalue=getattr(row, key), parent=self)
+        if new is None:
+            return
+        setattr(row, key, " ".join(new.upper().split()))
+        row.flags.pop(key, None)
+        self.show(row, iid)
+
+    def delete_rows(self, _event):
+        for iid in self.tree.selection():
+            self.rows.pop(iid, None)
+            self.tree.delete(iid)
+
+    def save(self):
+        if self.queue:
+            return messagebox.showinfo("Still reading", "Wait until all photos are read.", parent=self)
+        if not self.rows:
+            return messagebox.showinfo("No rows", "Add photos first.", parent=self)
+        flagged = sum(1 for r in self.rows.values() if r.flags)
+        if flagged and not messagebox.askyesno("Check rows", f"{flagged} yellow rows not checked. Save anyway?", parent=self):
+            return
+        customer = self.customer.get().strip() or "C&G"
+        try:
+            page = int(self.page.get())
+        except ValueError:
+            return messagebox.showerror("Page", "Page must be a number.", parent=self)
+        path = filedialog.asksaveasfilename(parent=self, defaultextension=".docx", initialfile=f"{customer} P{page}.docx",
+                                            filetypes=[("Word", "*.docx")])
+        if not path:
+            return
+        files = report.write_report(list(self.rows.values()), customer, page, path)
+        report.save_state({"customer": customer, "page": page + len(files) - 1})
+        self.page.set(str(page + len(files)))
+        if sys.platform == "win32":
+            os.startfile(files[0])
+        messagebox.showinfo("Saved", "\n".join(os.path.basename(f) for f in files), parent=self)
 
 
 if __name__ == "__main__":

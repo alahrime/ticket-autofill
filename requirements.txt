@@ -1,2 +1,4 @@
 pillow
 pywinauto; sys_platform == "win32"
+python-docx
+winocr; sys_platform == "win32"
