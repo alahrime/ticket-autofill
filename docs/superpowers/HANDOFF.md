@@ -1,59 +1,69 @@
 # Handoff — ticket-autofill
 
-**Updated:** 2026-10-26. **Branch:** `main` at `235f357`, pushed. Spec: `specs/2026-10-14-invomax-autofill-design.md`. Plan: `plans/2026-10-14-invomax-autofill.md`.
+**Updated:** 2026-10-28. **Branch:** `main` at `c673314` (push pending, see Access). This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
+
+Read first:
+- Design: `specs/2026-10-26-invomax-overlay-design.md`. This covers the side panel, the draft model, the step runner and every InvoMax recipe learned so far. It supersedes the overlay part of `specs/2026-10-14-invomax-autofill-design.md`.
+- Refactor plan: `plans/2026-10-26-refactor-before-panel.md` (R1–R5 done).
 
 ## State
-- **Done:** Plan Tasks 1–4: `read.py`, `prices.py`, `ocr.py` (Qwen2.5-VL 7B through local Ollama), `fill.py` helpers, `app.py` and `run.bat`.
-- **Reading off the UI thread:** `app.py` reads the photo on a worker thread (`read_page`). While it reads, Open and Paste are disabled and the title says "reading photo…". The result is polled back on the Tk thread every 200 ms.
-- **Not done:**
-  - Plan Task 5, the InvoMax control map. `fill.FIELD_MAP` and `GRID_START` are empty, and only the shop's Windows PC can fill them in.
-  - Plan Task 6, shop acceptance.
-- **Never run end to end on a real page:** no session has checked the OCR against a real page (the pass bar below). No session has opened the window on a real display either. On the Mac, the system Python 3.9 aborts when Tk starts.
+| Area | Status |
+|---|---|
+| Photo → text → jobs (`ocr.py`, `read.py`) | Done (Qwen2.5-VL 7B on local Ollama; `read.read_photo`). Never checked against a real notebook page. |
+| Pricing (`prices.py`) | Done; placeholder `parts.csv`. |
+| Draft model (`draft.py`) | Done: `Value`, `Line` (part / labor / remark, qty, cost, covers, stable id), `Draft`, `from_job`, `needs`. Not done: `questions()`, `answer()`, `expected_totals()` (spec section 3). |
+| Step runner (`recipes.py`) | Done and tested **against the fake only** (`tests/fake_invomax.py`). The recipes are `customer_by_plate`, `customer_search`, `customer_new`, `customers_exit`, `vehicle_open`, `vehicle_choose`, `phone_set` and `odometer`. |
+| Real driver (`invomax.py`) | **Not built.** It still holds the old `fill()` / `FIELD_MAP` stubs, which the window's Fill button calls ("control map isn't set up yet"). |
+| Parts / labor / remark / note recipes | Steps known from the probe (spec 5.7); not written. They need pictures of the untitled choice boxes. |
+| Side panel (`panel.py`), draft store, Wi-Fi page | Not started. |
+| Probe (`probe.py`, `probe.bat`) | Done. Read-only watch with Start/Pause; it logs to `probe/` and saves pictures of unreadable pop-ups to `probe/shots/` (git-ignored, customer data). |
+| Inspection report (`inspection.py`, `report.py`, `phone.py`) | Added by another session in `6f73778`; separate from InvoMax filling. It adds the `python-docx` and `winocr` dependencies and a Cloudflare tunnel for the phone page. |
 
-## Testing in a cloud session (Linux, no Windows, no InvoMax)
-Run each step in order and stop at the first failure.
+Tests: `python tests/test_<name>.py` for draft, invomax, ocr, phone, prices, probe, read, recipes and report. All 9 print `ok` (checked 2026-10-28).
 
-1. **Unit tests.** Each command prints `ok`.
-   ```bash
-   pip install -r requirements.txt
-   python3 tests/test_read.py && python3 tests/test_prices.py && python3 tests/test_fill_ocr.py
-   ```
-2. **Ollama and the model.** The model is about 6 GB. Without a GPU, one page takes 1–3 minutes, and `ocr.TIMEOUT` is 600 s.
-   ```bash
-   curl -fsSL https://ollama.com/install.sh | sh
-   (ollama serve >/tmp/ollama.log 2>&1 &) ; sleep 3
-   ollama pull qwen2.5vl:7b
-   ```
-3. **A sample page.** Real photos are git-ignored, so the repo has none. The user uploads one, which goes in `tests/samples/page1.jpg`. Without a real photo, only the error paths can be tested.
-4. **OCR pass bar (plan Task 3, Step 6).**
-   ```bash
-   python3 -c "from ocr import ocr_lines; from read import parse; ls=ocr_lines('tests/samples/page1.jpg'); print('\n'.join(ls)); [print(j) for j in parse(ls)]"
-   ```
-   The page passes if:
-   - Two jobs are found.
-   - Job 1's VIN reads `2T1BR32614C809083`, either exactly or flagged with at most one wrong character.
-   - The plate and odometer are correct.
-   - At least 3 of job 1's 4 items match a catalog code.
+## What the probe taught us (details in spec section 4 and 5.x)
+- InvoMax is a Delphi app. The invoice window has class `TINVOICESCREEN`, maximized at 1936 × 1056; its title blanks for a moment on redraws.
+- **Readable:** the Name boxes (`TEdit#2` first, `TEdit#1` last), every box in Customer Information, the Vehicles dropdowns and button captions, the Parts & Labor captions, the Parts Cost / ACTUAL COST / Mileage boxes, and the grid cell being edited (`TInplaceEdit`).
+- **Not readable:** the 15 `TLMDEdit` header boxes, which answer neither `WM_GETTEXT` nor UI Automation. These are Plate `#6`, VIN `#1`, Year Make `#8`, Eng Specs `#7`, Odometer in `#5` / out `#4`, mechanic `#2` and the phones. The drawn lists (Customers, Parts & Labor, item grid, `Tchoicebox`) aren't readable either. The plan: check `TLMDEdit` values by **copy-back** (select all, copy, read, restore the clipboard) and check list picks by their effect.
+- **Caption-less buttons** are located by position in the invoice window. The button row is the panel `TPanel#3` at (10, 322)–(1926, 374). Known spots: Clear ≈ x 90–160, Labor ≈ x 440–500, vehicle history ≈ x 765–785, Done ≈ x 1280–1350, all at y 335–370. Inside dialogs: Add New ≈ (137, 475) in Customers, Save ≈ (273, 218) in Customer Information.
+- The fastest customer lookup is to type the plate (with the hyphen, `ABC-1234`) in the Plate box and press Enter on an empty invoice.
 
-   **If it fails:** save the raw lines as a new case in `tests/test_read.py` and fix the parser or the prompt. Don't add new dependencies.
-5. **Error paths.**
-   - Stop Ollama (`pkill ollama`), then run step 4 again. Expected: "Can't reach Ollama…".
-   - Run `python3 -c "from ocr import load_image; load_image('requirements.txt')"`. Expected: `ValueError … JPG or PNG`.
-6. **The window, headless (plan Task 4, Step 3).**
-   ```bash
-   apt-get install -y python3-tk xvfb
-   xvfb-run -a python3 app.py
-   ```
-   A screenshot needs `xwd` or `import`. Simpler: drive `App` from a script. Call `app.load('tests/samples/page1.jpg')`, then `app.update()` in a loop until the title loses "reading photo…". Then assert on `app.jobs`, the job dropdown and the field values. While a page is reading, the window must keep responding and Open/Paste must be disabled. Clicking Fill must show "control map isn't set up yet".
-   - On Linux, **Paste** (`ImageGrab.grabclipboard`) may not work without `xclip`. That doesn't matter, because the shop PC runs Windows.
+## Next: test the runner on the real InvoMax
+Do these in order and stop at the first surprise. Every stage runs on **an empty invoice** with the owner watching. Anything the tool leaves on the invoice is cleared **by hand**; the tool never presses Clear.
 
-## Can't be tested in the cloud
-- Everything in `fill.fill()`, which needs pywinauto and the InvoMax window.
-- Plan Task 5 (control map) and Task 6 (acceptance), which happen on the shop PC.
-- Real CPU speed on the shop PC.
+1. **Build `invomax.Driver`** with the interface in the `recipes.py` docstring:
+   - Use ctypes reads as in `probe.py` (`WM_GETTEXT`, `BM_GETCHECK`, `CB_GETLBTEXT`, `GetGUIThreadInfo`), plus pywinauto `click_input` / `type_keys` for actions.
+   - `CONTROLS` maps names to a class+index or a window-relative position, taken from `probe/map-*.txt` and the watch log.
+   - `TLMDEdit` reads use copy-back.
+   - Refuse to act if the window isn't maximized at 1936 × 1056.
+   - Unit-test the pure parts: locator lookup and the refused-area math.
+2. **Read-only driver check (no clicks).** With an invoice on screen, compare `dialog()`, `text()` and `focused()` with what the screen shows. Copy-back is the first thing that touches InvoMax (Ctrl+A / Ctrl+C in one box), so ask the owner before trying it.
+3. **Trial mode in `probe.py`** (spec 5.8). It runs one recipe, logs each step's check and timing, and starts only on an empty invoice. Order:
+   1. `customer_search` + `customers_exit`, which opens Customers and backs out.
+   2. `vehicle_open`, then Cancel (needs a small `vehicles_cancel` recipe).
+   3. `customer_by_plate` with a plate the owner gives; staff clear the invoice afterwards.
+   4. `odometer` on that loaded invoice.
+
+   Use the timings to set step timeouts.
+4. **Saving recipes need the owner's OK first.** `customer_new` creates a real customer record and `vehicle_choose` saves a vehicle. Agree on a made-up test customer the owner is happy to keep or delete by hand.
+5. Then: pictures of the choice boxes (run the probe while using Labor), the parts/labor/remark/note recipes, `questions()` / `answer()`, and the side panel.
+
+## Owner decisions on record (2026-10-26/27)
+- START isn't needed. A double-click on the Name box opens Customers. Plates are typed with the hyphen.
+- One phone only. No address, zip, city or state.
+- Plate and VIN are single-clicked and **never double-clicked**. The mechanic is typed by hand.
+- **Never** click: Done, Charge, Print, Clear, Dial Number, Continue, Fast Quote, Change, Delete, Custom Vehicle, Void, Erase.
+- Watch mode is approved; it never saves, edits or deletes. Trial mode needs a go-ahead per stage.
+- The side panel snaps to the four screen corners, bottom-right first.
+- The "Parts Cost" window sets a part's **price**. "ACTUAL COST" is the shop's cost.
+
+## Access and tools
+- **Git push:** credentials are via Git Credential Manager. This PC also has a **MixtureModels** sign-in that can't push to `alahrime/ticket-autofill`. If a push returns 403, run `git credential-manager github login` and sign in as **alahrime**. The sign-in window can open behind other windows.
+- **Phone access:** Remote Control was turned on for the design session. The probe test checklist is at https://claude.ai/artifact/LmrQkF15NFy8eH7wbnnyVX (private).
+- **Shared folder:** other Claude sessions commit in this same folder. Commit only your own files, and run the full test list before committing.
 
 ## Constraints
-- Lightweight and minimal: no new dependencies (`pillow`, and `pywinauto` on Windows only).
-- Fully offline at the shop. Ollama stays on `127.0.0.1`.
+- Python + Tk. The InvoMax tool adds no dependencies beyond `pillow` and `pywinauto`.
+- Fully offline for photos and InvoMax. Ollama stays on `127.0.0.1`.
 - Tests are plain `assert` scripts that print `ok`.
-- Never commit real photos or customer data.
+- Never commit real photos, probe logs or pictures, or customer names. Docs use made-up names (JANE DOE, `(555)010-0000`, `XKS-4827`).
