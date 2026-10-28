@@ -1,7 +1,7 @@
 """Write a reviewed job into the open InvoMax invoice. Never clicks Done, Charge, Print or Clear."""
 from __future__ import annotations
 
-# Filled in on the shop PC (plan Task 4, Step 6) from print_control_identifiers output.
+# Filled in on the shop PC (plan Task 5) from print_control_identifiers output.
 # Each key maps to a list of pywinauto child_window() specs; odometer has two boxes.
 FIELD_MAP = {
     # "plate": [{"class_name": "ThunderRT6TextBox", "found_index": 7}],

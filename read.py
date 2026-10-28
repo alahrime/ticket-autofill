@@ -139,3 +139,12 @@ def parse(lines):
         else:
             job.notes.append(line)
     return jobs
+
+
+def read_photo(path):
+    """Photo -> (jobs, error message or None). Safe to run off the Tk thread."""
+    from ocr import ocr_lines  # here so parse() tests run without Ollama
+    try:
+        return parse(ocr_lines(path)), None
+    except Exception as e:
+        return [], str(e)

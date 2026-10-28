@@ -32,7 +32,7 @@ Rule that keeps this clean: `draft.py`, `recipes.py`, `store.py` and `wifi.py` n
 
 ### R2. `fill.py` → `invomax.py`
 - `git mv fill.py invomax.py`; `app.py` does `import invomax` and calls `invomax.fill(...)`.
-- Add `NEVER = ("Done", "Charge", "Print", "Clear", "Dial Number")` here now (used by the runner later).
+- The NEVER list lives with the runner in `recipes.py` (done 2026-10-27).
 - `FIELD_MAP`/`GRID_START`/`field_writes`/`fill` stay for now; the recipe step replaces them, then they go.
 
 ### R3. `draft.py` with `Line`

@@ -1,12 +1,12 @@
 """Always-on-top helper next to InvoMax: photo -> review -> Fill."""
 import os, sys, threading, traceback, tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
-from read import parse, Job
-from prices import (load_catalog, load_overrides, save_override, match, position, lines_for,
-                    DEFAULT_MARKUP)
+from read import read_photo, Job
+from prices import load_catalog, load_overrides, save_override, position, DEFAULT_MARKUP
+from draft import from_job, needs, line_by_id
 from inspection import read_receipt
 import report
-import fill
+import invomax
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CATALOG = {}  # loaded in __main__ so a bad parts.csv shows a dialog
@@ -16,32 +16,14 @@ FIELDS = [("first", "First"), ("last", "Last"), ("phone", "Phone"), ("year_make"
 FLAG_BG = "#fff3b0"
 
 
-def note_text(it):
-    s = it.desc
-    if it.price is not None:
-        s += f" {it.price:g}$"
-    if it.cost is not None:
-        s += f" (cost ${it.cost:g})"
-    return s
-
-
-def read_page(path):
-    """Photo -> (jobs, error message or None). Runs off the Tk thread; never touches widgets."""
-    from ocr import ocr_lines
-    try:
-        return parse(ocr_lines(path)), None
-    except Exception as e:
-        return [], str(e)
-
-
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Ticket Autofill")
         self.attributes("-topmost", True)
         self.overrides = load_overrides(OV_PATH)
-        self.jobs, self.items, self.lines, self.make = [], [], [], ""
-        self.edits, self.deleted = {}, set()
+        self.jobs, self.job, self.draft, self.shown = [], None, None, []
+        self.codes, self.sides, self.edits, self.deleted = {}, {}, {}, set()
         self.filled = False
 
         bar = ttk.Frame(self)
@@ -103,7 +85,7 @@ class App(tk.Tk):
     def load(self, path):
         # Reading can take minutes on a CPU-only PC: do it on a worker thread, poll from Tk.
         result = []
-        threading.Thread(target=lambda: result.append(read_page(path)), daemon=True).start()
+        threading.Thread(target=lambda: result.append(read_photo(path)), daemon=True).start()
         for b in self.photo_btns:
             b.state(["disabled"])
         self.title("Ticket Autofill — reading photo…")
@@ -128,30 +110,26 @@ class App(tk.Tk):
         self.show_job(0)
 
     def show_job(self, i):
-        job = self.jobs[i]
+        self.job = job = self.jobs[i]
         for k, v in self.vars.items():
             v.set(job.fields.get(k, ""))
             self.entries[k].config(bg=FLAG_BG if k in job.flags else "white")
-        notes = list(job.notes)
-        self.make = job.fields.get("make", "")
-        self.items = []
-        self.edits, self.deleted = {}, set()
+        self.codes, self.sides, self.edits, self.deleted = {}, {}, {}, set()
         self.filled = False
-        for it in job.items:
-            code = match(it.desc, CATALOG) or self.ask_code(it.desc)
-            if not code:
-                notes.append(note_text(it))
-                continue
-            side = None
-            if CATALOG[code].sided and position(it.desc)[1] is None:
-                side = self.ask_side(it.desc)
-                if not side:
-                    notes.append(note_text(it))
+        for n, what in needs(job, CATALOG):
+            desc = job.items[n].desc
+            if what == "code":
+                code = self.ask_code(desc)
+                if code:
+                    self.codes[n] = code
+                    if not (CATALOG[code].sided and position(desc)[1] is None):
+                        continue
+                else:
                     continue
-            self.items.append((it, code, side))
-        self.note.delete("1.0", "end")
-        self.note.insert("1.0", "\n".join(notes))
+            self.sides[n] = self.ask_side(desc)
         self.reprice()
+        self.note.delete("1.0", "end")
+        self.note.insert("1.0", "\n".join(self.draft.notes))
 
     def ask_code(self, desc):
         while True:
@@ -184,44 +162,39 @@ class App(tk.Tk):
             markup = DEFAULT_MARKUP
             self.markup.set(str(DEFAULT_MARKUP))
         self.tree.delete(*self.tree.get_children())
-        self.lines = []
-        seen = {}
-        for it, code, side in self.items:
-            for ln in lines_for(it, code, self.make, CATALOG, self.overrides, markup, side):
-                k = (code, ln.desc, bool(ln.labor))
-                key = k + (seen.get(k, 0),)
-                seen[k] = key[3] + 1
-                if key in self.deleted:
-                    continue
-                ln.price = self.edits.get(key, ln.price)
-                cost = "" if ln.labor or it.cost is None else f"{it.cost:.2f}"
-                q = "?" if it.unsure and it.price is not None and not ln.labor else ""
-                iid = self.tree.insert("", "end", values=(ln.code, ln.desc, cost, f"{ln.price:.2f}{q}"))
-                self.lines.append((iid, ln, code, key))
+        self.draft = from_job(self.job, CATALOG, self.overrides, markup, self.codes, self.sides)
+        self.shown = []
+        for ln in self.draft.lines:
+            if ln.id in self.deleted:
+                continue
+            ln.price = self.edits.get(ln.id, ln.price)
+            cost = "" if ln.cost is None else f"{ln.cost:.2f}"
+            iid = self.tree.insert("", "end", values=(ln.code, ln.desc, cost, f"{ln.price:.2f}{'?' if ln.unsure else ''}"))
+            self.shown.append((iid, ln))
 
     def edit_price(self, event):
         iid = self.tree.identify_row(event.y)
-        hit = next((x for x in self.lines if x[0] == iid), None)
-        if not hit:
+        ln = next((x[1] for x in self.shown if x[0] == iid), None)
+        if not ln:
             return
-        _, ln, code, key = hit
         new = simpledialog.askfloat("Price", ln.desc, initialvalue=ln.price, minvalue=0, parent=self)
         if new is None:
             return
         ln.price = new
-        self.edits[key] = new
+        self.edits[ln.id] = new
         self.tree.set(iid, "price", f"{new:.2f}")
-        kind = "labor" if ln.labor else "part"
-        if messagebox.askyesno("Keep price?", f"Keep ${new:.2f} {kind} for {code} on {self.make or 'unknown make'}?"):
-            save_override(OV_PATH, self.overrides, code, self.make, kind, new)
+        code = line_by_id(self.draft, ln.covers[0]).code if ln.labor else ln.code  # overrides are keyed by part code
+        make = self.draft.make
+        if messagebox.askyesno("Keep price?", f"Keep ${new:.2f} {ln.kind} for {code} on {make or 'unknown make'}?"):
+            save_override(OV_PATH, self.overrides, code, make, ln.kind, new)
 
     def delete_line(self, _event):
         for iid in self.tree.selection():
-            hit = next((x for x in self.lines if x[0] == iid), None)
+            hit = next((x for x in self.shown if x[0] == iid), None)
             if hit:
-                self.deleted.add(hit[3])
+                self.deleted.add(hit[1].id)
             self.tree.delete(iid)
-        self.lines = [x for x in self.lines if self.tree.exists(x[0])]
+        self.shown = [x for x in self.shown if self.tree.exists(x[0])]
 
     def do_fill(self):
         fields = {k: v.get().strip() for k, v in self.vars.items() if v.get().strip()}
@@ -229,7 +202,7 @@ class App(tk.Tk):
             return
         self.withdraw()
         try:
-            fill.fill(fields, [x[1] for x in self.lines])
+            invomax.fill(fields, [x[1] for x in self.shown])
         except Exception as e:
             return messagebox.showerror("Fill stopped", str(e))
         finally:

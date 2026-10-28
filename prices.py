@@ -2,6 +2,7 @@
 from __future__ import annotations
 import csv, math, os, re
 from dataclasses import dataclass
+from draft import Line
 
 TIERS = {  # placeholder make multipliers
     1.15: "ford chevrolet chevy dodge jeep ram gmc buick chrysler volkswagen vw",
@@ -18,15 +19,6 @@ class Part:
     sided: bool
     part_price: float
     labor_price: float
-
-
-@dataclass
-class Line:
-    code: str
-    desc: str
-    price: float
-    labor: bool = False  # True = INSTALL-PART row
-    qty: int = 1
 
 
 def load_catalog(path):
@@ -99,5 +91,5 @@ def lines_for(item, code, make, catalog, overrides, markup=DEFAULT_MARKUP, side=
         desc = f"{p.description}    {tag}" if tag else p.description
         out.append(Line(code, desc, price))
         if labor:
-            out.append(Line("INSTALL-PART", f"Remove & Install: {desc}", labor, labor=True))
+            out.append(Line("INSTALL-PART", f"Remove & Install: {desc}", labor, kind="labor"))
     return out
