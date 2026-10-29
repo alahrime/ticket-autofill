@@ -53,17 +53,20 @@ label input,label textarea{margin-top:4px}
 .line .acts button{flex:1}
 .tot{display:flex;justify-content:space-between}
 .tot.sum{font-weight:700;font-size:19px;border-top:1px solid #ddd;padding-top:6px;margin-top:4px}
-#names button{display:block;width:100%;margin:10px 0;font-size:20px}
+#signedin{font-size:15px;color:#444}
+#signedin b{font-size:16px;color:#222}
+#signout{margin:0;flex:none}
+#signout button{min-height:40px;padding:6px 12px;font-size:15px}
 #lineform{border:2px solid #1f5fbf;scroll-margin-top:72px}
 [hidden]{display:none!important}
 </style></head><body>
-<header><div><b id="me"></b> <span id="saved" aria-live="polite"></span> <span id="net" aria-live="polite"></span></div><button id="notme" class="link" type="button" hidden>Not you?</button></header>
+<header><div><span id="signedin" hidden>Signed in as <b id="me"></b></span> <span id="saved" aria-live="polite"></span> <span id="net" aria-live="polite"></span></div>
+<form id="signout" method="post" action="/logout" hidden><button class="light" type="submit">Sign out</button></form></header>
 <div id="msg" role="alert" hidden></div>
 
-<section id="pick" hidden>
-  <h1>Who are you?</h1>
-  <p>Pick your name once; this phone remembers it.</p>
-  <div id="names"></div>
+<section id="start">
+  <p id="startmsg" class="empty">Loading…</p>
+  <button id="retry" class="light" type="button" hidden>Try again</button>
 </section>
 
 <section id="home" hidden>
@@ -113,9 +116,8 @@ label input,label textarea{margin-top:4px}
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const KEY = "tech.me";
 const FIELDS = [["odo", "odometer"], ["notes", "notes"]];  // box id, ticket field
-let me = "", list = [], etag = "", cur = null, editing = null, formStart = "", code = "", hintDesc = "";
+let me = "", uid = "", reloading = false, list = [], etag = "", cur = null, editing = null, formStart = "", code = "", hintDesc = "";
 let queue = Promise.resolve(), pending = 0, polling = false, hintSeq = 0, hintTimer = 0, savedTimer = 0, fieldTimer = 0;
 const known = {};   // id -> newest copy of that ticket this phone saved or loaded; queued saves take their version from it
 const queued = {};  // field -> value already waiting in the save queue
@@ -141,7 +143,7 @@ const plain = v => v == null ? "" : (Number(v) || 0).toFixed(2);
 const initial = s => (s || "").trim() ? (s || "").trim()[0] + "." : "";
 const shortName = t => [t.first, initial(t.last)].filter(Boolean).join(" ");
 const vehicle = t => [t.year, t.make, t.model].filter(Boolean).join(" ");
-const mineNow = t => t.status === "working" && t.mechanic === me;
+const mineNow = t => t.status === "working" && t.mechanic === me;  // accepting stores the account name as is
 
 function age(iso) {
   const t = Date.parse(iso);  // server local time without a zone: read as local time
@@ -215,9 +217,10 @@ async function api(path, body, headers, keepalive) {
   } catch (e) {  // offline, or no answer in 15 s
     throw new Http(0, {error: "Can't reach the shop. Check your connection and try again."});
   }
-  if (r.status === 401) {  // PIN cookie gone: the reload shows the PIN page
+  if (r.status === 401) {  // signed out (or the session ran out): the reload shows the sign-in page
+    reloading = true;
     location.reload();
-    throw new Http(401, {error: "PIN needed"});
+    throw new Http(401, {error: "sign in"});
   }
   const tag = r.headers.get("ETag") || "";
   if (r.status === 304) return {status: 304, data: null, etag: tag};
@@ -230,9 +233,7 @@ async function api(path, body, headers, keepalive) {
 
 // ---- screens and routing (#t<id> = a job, so the phone's Back button works)
 function show(name) {
-  for (const s of ["pick", "home", "job"]) $(s).hidden = s !== name;
-  $("me").textContent = me;
-  $("notme").hidden = !me || name === "pick";
+  for (const s of ["start", "home", "job"]) $(s).hidden = s !== name;
 }
 function goHome() {  // no questions asked: callers deal with an open line first
   closeForm();
@@ -256,7 +257,7 @@ function route() {
     }
     leaveJob();
   }
-  if (!me) return pickName();
+  if (!me) return;  // still finding out who's signed in
   if (id) {
     if (cur && cur.id === id) show("job");
     else loadJob(id);
@@ -267,39 +268,97 @@ function route() {
 }
 window.addEventListener("hashchange", route);
 
-// ---- who am I
-async function pickName() {
-  show("pick");
-  const box = $("names");
-  box.replaceChildren(el("p", "empty", "Loading names…"));
+// ---- who am I (the server only serves this page to a signed-in mechanic)
+async function whoAmI() {
+  show("start");
+  $("startmsg").textContent = "Loading…";
+  $("startmsg").className = "empty";
+  $("retry").hidden = true;
   try {
-    const r = await api("/api/mechanics");
-    const names = r.data.mechanics || [];
-    if (!names.length) {
-      box.replaceChildren(el("p", "err", "No names yet. Ask the office to add them to mechanics.txt."));
+    const r = await api("/api/me");
+    const name = r.data.name, id = r.data.id;
+    if (typeof name !== "string" || !name || id == null) {
+      $("startmsg").textContent = "Unexpected reply from the shop PC.";
+      $("startmsg").className = "err";
+      $("retry").hidden = false;
       return;
     }
-    box.replaceChildren(...names.map(n => btn(n, "", () => {
-      me = n;
-      store(KEY, n);
-      say("");
-      etag = "";
-      route();
-      poll();
-    })));
+    // Someone else signed in on this phone (another tab), or not as a mechanic: start over as whoever it is now.
+    if (r.data.role !== "mechanic" || me && (name !== me || String(id) !== uid)) {
+      reloading = true;
+      return location.reload();
+    }
+    me = name;
+    uid = String(id);  // drafts are kept per account
   } catch (e) {
     if (e.status === 401) return;
-    box.replaceChildren(el("p", "err", errText(e)), btn("Try again", "light", pickName));
+    $("startmsg").textContent = errText(e);
+    $("startmsg").className = "err";
+    $("retry").hidden = false;
+    return;
   }
+  $("me").textContent = me;
+  $("signedin").hidden = false;
+  $("signout").hidden = false;
+  forgetOthers();
+  route();
+  poll();
 }
-$("notme").addEventListener("click", () => {
-  if (!discardLine()) return;
-  leaveJob();
-  me = "";
-  store(KEY, "");
-  say("");
-  if (location.hash) location.hash = "";  // hashchange -> route -> pickName
-  else pickName();
+$("retry").addEventListener("click", whoAmI);
+function forgetOthers() {  // phones may be shared: drop drafts (and the old name) left by anyone else
+  try {
+    const mine = draftPrefix(), drop = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k === "tech.me" || k && k.startsWith("tech.draft.") && !k.startsWith(mine)) drop.push(k);
+    }
+    for (const k of drop) localStorage.removeItem(k);
+  } catch (e) { /* private mode */ }
+}
+function myDrafts() {  // ids of jobs with odometer/notes typed on this phone that never reached the server
+  const out = [];
+  try {
+    const mine = draftPrefix();
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(mine) && localStorage.getItem(k)) out.push(k.slice(mine.length));
+    }
+  } catch (e) { /* private mode */ }
+  return out;
+}
+let signingOut = false, signBusy = false;  // signingOut: the logout POST is going; signBusy: deciding whether to send it
+function signDone() {
+  signBusy = false;
+  $("signout").querySelector("button").disabled = false;
+}
+$("signout").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  if (signingOut || signBusy || reloading) return;
+  signBusy = true;
+  $("signout").querySelector("button").disabled = true;
+  try {
+    if (!discardLine()) return signDone();
+    closeForm();
+    say("");
+    saveFields();  // typed odometer/notes go first
+    await queue;
+    if (reloading) return;  // the session was already gone: the sign-in page is on its way
+    const left = myDrafts().length || Object.keys(dirtyBoxes()).length;
+    if (left && !confirm("Some odometer or notes changes haven't reached the shop yet and will be lost. Sign out anyway?")) return signDone();
+    if (navigator.onLine === false) {  // the POST wouldn't get there: keep everything
+      say("You're offline — sign out when you're back online.");
+      return signDone();
+    }
+    for (const id of myDrafts()) store(draftPrefix() + id, "");
+    signingOut = true;
+    $("signout").submit();  // the server clears the session and shows the sign-in page
+  } catch (e) {
+    signDone();
+    throw e;
+  }
+});
+window.addEventListener("pageshow", ev => {  // back from the sign-in page via the browser's page cache
+  if (ev.persisted) { signingOut = false; signDone(); }
 });
 
 // ---- home lists
@@ -341,7 +400,12 @@ async function poll() {
     const r = await api("/api/tickets?status=waiting,working", undefined, etag ? {"If-None-Match": etag} : {});
     $("net").textContent = "";
     if (r.status !== 304) {  // 304: nothing changed, keep the last list
-      list = r.data.tickets || [];
+      const got = r.data.tickets || [];
+      if (got.some(t => t.status === "working" && !mineNow(t))) {  // the server only sends my own: someone else is signed in now
+        reloading = true;
+        return location.reload();
+      }
+      list = got;
       etag = r.etag;
     }
     if (r.status === 304) {  // ages move on even when nothing changed: just their text, the cards stay
@@ -365,18 +429,20 @@ async function accept(t, b) {
   b.disabled = true;
   say("");
   try {
-    const r = await api(`/api/tickets/${t.id}/move`, {version: t.version, to: "working", mechanic: me});
+    const r = await api(`/api/tickets/${t.id}/move`, {version: t.version, to: "working"});  // always accepted as the signed-in mechanic
     etag = "";
     openJob(r.data);
     poll();
   } catch (e) {
     b.disabled = false;
-    if (e.status === 409 && e.data.ticket) {
+    if (e.status === 409 && e.data.ticket) {  // only a job still waiting or already mine gets here
       const x = e.data.ticket;
       if (mineNow(x)) { openJob(x); return; }  // took it on another phone
-      if (x.status === "working") say(`${x.mechanic || "Someone else"} already accepted this job.`);
-      else if (x.status !== "waiting") say("This job isn't waiting anymore.");
-      else say("The desk just changed this job. Check it and tap Accept again.");
+      say("This job just changed. Check it and tap Accept again.");
+      etag = "";
+      poll();
+    } else if (e.status === 404 || e.status === 403) {  // someone else's now, or no longer waiting
+      say("Someone else took this job, or it isn't waiting anymore.");
       etag = "";
       poll();
     } else if (e.status !== 401) {
@@ -411,7 +477,8 @@ async function loadJob(id) {
     show("job");
   } catch (e) {
     if (e.status === 401 || location.hash !== "#t" + id) return;
-    say(e.status === 404 ? "That job is gone." : errText(e));
+    if (e.status === 404) writeDraft(id, {});  // gone, or not this mechanic's: nothing to save there
+    say(e.status === 404 ? "That job isn't yours anymore, or it's gone." : errText(e));
     goHome();
   }
 }
@@ -424,7 +491,9 @@ function dirtyBoxes() {  // odometer/notes typed but not yet on the server: {fie
   return out;
 }
 // Unsaved odometer/notes are also kept on the phone per job until saved (survives a closed tab or dead battery).
-const draftKey = id => "tech.draft." + id;
+// Keyed by account too (tech.draft.<user id>.<ticket id>): a shared phone never hands one mechanic's typing to another.
+const draftPrefix = () => "tech.draft." + uid + ".";
+const draftKey = id => draftPrefix() + id;
 function readDraft(id) {
   try { return JSON.parse(load(draftKey(id)) || "{}") || {}; } catch (e) { return {}; }
 }
@@ -508,12 +577,12 @@ const isStale = e => e.status === 409 && e.data.error === "changed on another de
 // build(t) -> {lines} from the newest known copy, or null for a fields-only save.
 // fields: odometer/notes values captured now. A fields-only save that hits a stale version is retried once
 // on the new version (last write wins); a lines save is not (it would undo the other device's lines).
-async function runSave(id, build, fields, keepalive, who) {
+async function runSave(id, build, fields, keepalive) {
   for (let tries = 0; ; tries++) {
     const t = known[id];
     if (!t) return false;
     try {
-      const body = Object.assign({who: "mechanic", version: t.version}, build ? build(t) : {}, fields);
+      const body = Object.assign({version: t.version}, build ? build(t) : {}, fields);
       const r = await api(`/api/tickets/${id}`, body, null, keepalive);
       remember(r.data);
       draftSaved(id, fields);
@@ -529,8 +598,7 @@ async function runSave(id, build, fields, keepalive, who) {
       saved();
       return true;
     } catch (e) {
-      if (!build && tries === 0 && isStale(e) && e.data.ticket && e.data.ticket.status === "working"
-          && e.data.ticket.mechanic === who) {
+      if (!build && tries === 0 && isStale(e) && e.data.ticket && mineNow(e.data.ticket)) {
         remember(e.data.ticket);
         continue;
       }
@@ -547,7 +615,7 @@ function save(id, build, fields, keepalive, now) {
   // now: skip the queue (page closing while a save is in flight); a race with it ends in the stale retry above
   fields = fields || {};
   for (const k in fields) queued[k] = fields[k];
-  const run = () => runSave(id, build, fields, keepalive, me);
+  const run = () => runSave(id, build, fields, keepalive);
   const p = now ? run() : enqueue(run);
   p.finally(() => { for (const k in fields) if (queued[k] === fields[k]) delete queued[k]; });
   return p;
@@ -571,8 +639,17 @@ function conflict(id, e, staleText, lines) {
     }
     setCur(t);
     say(isStale(e) ? (staleText || "Changed on another device. Showing the latest.") : errText(e));
-  } else if (e.status === 404) {
-    if (here) { say("This job is gone."); goHome(); }
+  } else if (e.status === 404 || e.status === 403) {
+    // 404: gone or someone else's; 403: not this mechanic's to change (e.g. waiting again). No saves go there now.
+    writeDraft(id, {});
+    if (here) {
+      say(e.status === 403 ? "Not allowed: this job isn't yours anymore." : "This job isn't yours anymore, or it's gone.");
+      cur = null;  // leave without leaveJob's save of the typed boxes: it would only be refused again
+      clearFieldErrors();
+      etag = "";
+      goHome();
+      poll();
+    }
   } else if (e.status === 400 && here) {
     showErrors(e);
     const other = Object.keys((e.data && e.data.errors) || {}).filter(k => k !== "lines");
@@ -591,8 +668,11 @@ $("odo").addEventListener("input", typing);
 $("notes").addEventListener("input", typing);
 $("odo").addEventListener("change", () => saveFields());
 $("notes").addEventListener("change", () => saveFields());
-document.addEventListener("visibilitychange", () => { if (document.hidden) { keepDraft(); saveFields(true); } else poll(); });
-window.addEventListener("pagehide", () => { keepDraft(); saveFields(true); });
+document.addEventListener("visibilitychange", () => {
+  if (signingOut) return;
+  if (document.hidden) { keepDraft(); saveFields(true); } else poll();
+});
+window.addEventListener("pagehide", () => { if (!signingOut) { keepDraft(); if (!reloading) saveFields(true); } });  // a session swap must not save under the new account
 $("back").addEventListener("click", () => { if (discardLine()) goHome(); });
 $("reload").addEventListener("click", async () => {
   if (!cur || !discardLine()) return;
@@ -748,17 +828,7 @@ $("finish").addEventListener("click", async () => {
 });
 
 // ---- start
-me = load(KEY);
 setInterval(poll, 4000);
-(async () => {
-  if (me) {
-    try {  // the office may have taken the name off the list
-      const r = await api("/api/mechanics");
-      if (!(r.data.mechanics || []).includes(me)) { me = ""; store(KEY, ""); }
-    } catch (e) { if (e.status === 401) return; }  // offline: keep the saved name
-  }
-  route();
-  poll();
-})();
+whoAmI();
 </script>
 </body></html>
