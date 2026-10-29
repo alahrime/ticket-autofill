@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desk - Shop tickets</title>
+<style>
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{font:17px system-ui,-apple-system,sans-serif;margin:0;background:#f4f4f4;color:#222;-webkit-text-size-adjust:100%}
+button{font:inherit;min-height:48px;padding:10px 18px;border:0;border-radius:8px;background:#1f5fbf;color:#fff;cursor:pointer}
+button.light{background:#ddd;color:#222}
+button.warn{background:#a35a00}
+button.go{background:#1d7a34}
+button:disabled{opacity:.5}
+input,textarea,select{font:inherit;font-size:17px;width:100%;min-height:48px;padding:10px;border:1px solid #bbb;border-radius:8px;background:#fff;color:#222}
+input[readonly],textarea[readonly]{background:#eee;border-color:#ddd}
+textarea{min-height:80px;resize:vertical}
+label{display:block;font-size:14px;color:#555;margin-bottom:4px}
+header{position:sticky;top:0;z-index:5;display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:#fff;box-shadow:0 1px 4px #0002}
+header h1{font-size:22px;margin:0;flex:1}
+#net{font-size:14px;color:#777}
+#net.bad{color:#b00;font-weight:600}
+main{padding:12px 16px 40px}
+.msg{padding:12px 14px;border-radius:8px;margin:0 0 12px}
+.msg.err{background:#fde2e2;color:#800}
+.msg.ok{background:#e0f2e4;color:#145a26}
+.msg.note{background:#fff3b0;color:#4a3a00}
+.msg.banner{background:#fff3b0;color:#4a3a00;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.msg.banner span{flex:1}
+.msg ul{margin:6px 0;padding-left:22px}
+.msg li{overflow-wrap:anywhere;white-space:pre-wrap}
+/* board */
+#board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:start}
+@media (max-width:700px){#board{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.col{background:#e6e6e6;border-radius:10px;padding:8px;min-height:120px}
+.col h2{font-size:17px;margin:4px 4px 8px;display:flex;justify-content:space-between}
+.col.review{background:#f3e7b0}
+.card{display:block;width:100%;text-align:left;background:#fff;color:#222;border-radius:10px;padding:12px;margin:0 0 8px;min-height:64px;border:2px solid transparent;box-shadow:0 1px 2px #0001}
+.card .name{font-weight:600;display:block;overflow-wrap:anywhere}
+.card .car{display:block;font-size:15px;color:#555;overflow-wrap:anywhere}
+.card .meta{display:block;margin-top:4px;overflow-wrap:anywhere}
+.card.review{background:#fff3b0;border-color:#c99a00}
+.card.back{border-left:6px solid #a35a00}
+.meta{font-size:15px;color:#777}
+.empty{color:#888;font-size:15px;padding:8px 4px}
+/* forms */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px 14px}
+.grid .wide{grid-column:1/-1}
+.ferr{color:#b00;font-size:14px;margin-top:4px}
+.box{background:#fff;border-radius:10px;padding:14px;margin:0 0 14px}
+.box h2{font-size:19px;margin:0 0 10px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
+.actions .spacer{flex:1}
+#saved{color:#145a26;font-weight:600}
+.status{display:inline-block;padding:4px 10px;border-radius:12px;background:#ddd;font-size:15px;margin-left:8px;vertical-align:middle}
+.status.review{background:#fff3b0}
+.status.approved{background:#e0f2e4}
+/* lines */
+table{width:100%;border-collapse:collapse}
+th{font-size:14px;color:#555;text-align:left;font-weight:600;padding:6px 4px}
+td{padding:4px;vertical-align:middle}
+td.num,th.num{text-align:right;white-space:nowrap}
+td input{min-width:0}
+col.c-qty{width:80px}
+col.c-money{width:110px}
+col.c-total{width:100px}
+col.c-del{width:56px}
+td .x{min-width:48px;padding:10px;background:#eee;color:#900}
+td .code{display:block;font-size:13px;color:#666;margin-top:2px}
+.totals{display:flex;gap:20px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px;font-size:18px}
+.totals b{font-size:20px}
+.ro{white-space:pre-wrap;overflow-wrap:anywhere}
+.ready{font-size:22px;font-weight:600;color:#145a26}
+</style></head><body>
+<header>
+ <h1 id="title">Desk</h1>
+ <span id="net" role="status" aria-live="polite"></span>
+ <button type="button" id="btnNew">New ticket</button>
+ <button type="button" id="btnBoard" class="light" hidden>Back to board</button>
+</header>
+<main>
+ <div id="flash" class="msg" role="status" aria-live="polite" hidden></div>
+
+ <section id="viewBoard">
+  <div id="board"></div>
+ </section>
+
+ <section id="viewNew" hidden>
+  <div class="box">
+   <h2>New ticket</h2>
+   <div id="newErr" class="msg err" role="status" aria-live="polite" hidden></div>
+   <form id="newForm" autocomplete="off" novalidate>
+    <div class="grid">
+     <div><label for="n-first">First name</label><input id="n-first" name="first" autocapitalize="characters" autocorrect="off" spellcheck="false"><div class="ferr" data-for="first"></div></div>
+     <div><label for="n-last">Last name</label><input id="n-last" name="last" autocapitalize="characters" autocorrect="off" spellcheck="false"><div class="ferr" data-for="last"></div></div>
+     <div><label for="n-phone">Phone</label><input id="n-phone" name="phone" type="tel" inputmode="tel"><div class="ferr" data-for="phone"></div></div>
+     <div><label for="n-year">Year</label><input id="n-year" name="year" inputmode="numeric" maxlength="4" list="year-list"><div class="ferr" data-for="year"></div></div>
+     <div><label for="n-make">Make</label><input id="n-make" name="make" autocapitalize="characters" autocorrect="off" spellcheck="false" list="make-list"><div class="ferr" data-for="make"></div></div>
+     <div><label for="n-model">Model</label><input id="n-model" name="model" autocapitalize="characters" autocorrect="off" spellcheck="false" list="model-list"><div class="ferr" data-for="model"></div></div>
+     <div><label for="n-plate">Plate (optional)</label><input id="n-plate" name="plate" autocapitalize="characters" autocorrect="off" spellcheck="false"><div class="ferr" data-for="plate"></div></div>
+     <div class="wide"><label for="n-request">What the customer wants done</label><textarea id="n-request" name="request"></textarea><div class="ferr" data-for="request"></div></div>
+    </div>
+    <div class="actions"><button type="submit" id="btnCreate">Save ticket</button><button type="button" class="light" id="btnCancelNew">Cancel</button></div>
+   </form>
+  </div>
+ </section>
+
+ <section id="viewTicket" hidden></section>
+</main>
+<datalist id="year-list"></datalist>
+<datalist id="make-list"></datalist>
+<datalist id="model-list"></datalist>
+<script>
+"use strict";
+const POLL_MS = 4000, AGE_MS = 60000, TIMEOUT_MS = 15000;
+const OFFLINE = "Couldn't reach the shop PC — check the connection and try again.";
+const BOARD = ["waiting", "working", "review", "approved"];
+const COL_NAMES = {waiting: "Waiting", working: "Working", review: "Review", approved: "Approved"};
+const NAMEISH = {autocapitalize: "characters", autocorrect: "off", spellcheck: "false"};
+const FIELDS = [  // [key, label, extra attributes]; mechanic is handled apart (a list in review)
+  ["first", "First name", NAMEISH],
+  ["last", "Last name", NAMEISH],
+  ["phone", "Phone", {type: "tel", inputMode: "tel"}],
+  ["year", "Year", {inputMode: "numeric", maxLength: 4, list: "year-list"}],
+  ["make", "Make", {...NAMEISH, list: "make-list"}],
+  ["model", "Model", {...NAMEISH, list: "model-list"}],
+  ["plate", "Plate", NAMEISH],
+  ["odometer", "Odometer", {inputMode: "numeric"}],
+];
+const TEXTS = [["request", "What the customer wants done"], ["notes", "Notes"]];
+const LABELS = Object.fromEntries([...FIELDS, ...TEXTS, ["mechanic", "Mechanic"]].map(([k, l]) => [k, l]));
+
+const S = {
+  tickets: [], etag: "", view: "board",
+  cur: null,        // the open ticket as the server last sent it
+  dirty: false,     // the desk changed something on the open ticket and hasn't saved
+  newer: null,      // a newer server copy of the open ticket held back while editing
+  mechanics: [],    // from /api/mechanics
+  busy: false,
+  polling: false,   // one poll at a time
+  openSeq: 0,       // only the latest tap on a card opens a ticket
+  authLost: false,  // a 401 came while the desk had typing on screen
+};
+
+const $ = id => document.getElementById(id);
+
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k === "for") e.htmlFor = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (["list", "autocapitalize", "autocorrect", "spellcheck"].includes(k) || k.includes("-")) e.setAttribute(k, v);
+    else e[k] = v;
+  }
+  for (const c of kids.flat()) if (c != null) e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return e;
+}
+
+/* ---------- money in integer cents, rounded half-up like tickets.py ---------- */
+
+// "12.345" / "$1,200" / 3 -> whole hundredths (half-up), null for blank, NaN for bad or negative
+function hundredths(v) {
+  const s = String(v ?? "").replace(/[$,\s]/g, "");
+  if (s === "") return null;
+  const m = /^([0-9]*)(?:\.([0-9]*))?$/.exec(s);
+  if (!m || (m[1] === "" && !m[2])) return NaN;
+  const f = (m[2] || "") + "000";
+  return Number(m[1] || 0) * 100 + Number(f.slice(0, 2)) + (f[2] >= "5" ? 1 : 0);
+}
+
+function centsText(c) {
+  if (!Number.isFinite(c)) return "—";
+  const d = String(Math.floor(c / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return "$" + d + "." + String(c % 100).padStart(2, "0");
+}
+
+function money(n) { return centsText(hundredths(Number(n || 0).toFixed(2))); }
+
+// one line -> {parts, labor} in cents, NaN when something typed isn't a number
+function lineCents(qty, price, labor) {
+  let q = hundredths(qty), p = hundredths(price), l = hundredths(labor);
+  if (q === null) q = 100;  // blank qty is 1, as on the server
+  if (Number.isNaN(q) || q === 0) return {parts: NaN, labor: NaN};
+  const parts = p === null ? 0 : Number.isNaN(p) ? NaN : Math.floor((q * p + 50) / 100);  // qty x price, half-up
+  return {parts, labor: l === null ? 0 : l};
+}
+
+function age(iso) {
+  const t = new Date(iso).getTime();
+  if (!isFinite(t)) return "";
+  const m = Math.max(0, Math.floor((Date.now() - t) / 60000));
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + " h " + (m % 60) + " min";
+  const d = Math.floor(h / 24);
+  return d + (d === 1 ? " day" : " days");
+}
+
+function squash(s) { return String(s ?? "").trim().split(/\s+/).join(" ").toUpperCase(); }
+function fullName(t) { return [t.first, t.last].filter(Boolean).join(" "); }
+function vehicle(t) { return [t.year, t.make, t.model].filter(Boolean).join(" "); }
+
+function flash(text, kind) {
+  const f = $("flash");
+  f.textContent = text || "";
+  f.className = "msg " + (kind || "err");
+  f.hidden = !text;
+  if (text) window.scrollTo(0, 0);
+}
+
+function setNet(ok, text) {
+  const n = $("net");
+  n.textContent = text || "";
+  n.className = ok ? "" : "bad";
+}
+
+/* ---------- server calls ---------- */
+
+class Http extends Error {
+  constructor(status, data) { super((data && data.error) || ("error " + status)); this.status = status; this.data = data || {}; }
+}
+
+function newFormTyped() { return [...$("newForm").elements].some(e => (e.tagName === "INPUT" || e.tagName === "TEXTAREA") && e.value.trim()); }
+function hasTyping() { return S.dirty || (S.view === "new" && newFormTyped()); }
+
+function on401() {  // PIN cookie gone: the reload shows the PIN page, unless that would lose typing
+  if (!hasTyping()) { location.reload(); return; }
+  if (!S.authLost) flash("The PIN sign-in ended. Copy what you typed somewhere, then reload this page to sign in again.");
+  S.authLost = true;
+  setNet(false, "Sign-in needed — reload when ready");
+}
+
+function timeoutSignal() {
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) return AbortSignal.timeout(TIMEOUT_MS);
+  const c = new AbortController();
+  setTimeout(() => c.abort(), TIMEOUT_MS);
+  return c.signal;
+}
+
+async function api(method, path, body, headers) {
+  const opt = {method, headers: {...(headers || {})}, cache: "no-store", signal: timeoutSignal()};
+  if (body !== undefined) {
+    opt.headers["Content-Type"] = "application/json";
+    opt.body = JSON.stringify(body);
+  }
+  let r, data;
+  try {
+    r = await fetch(path, opt);
+    if (r.status === 304) return {status: 304, data: null, etag: r.headers.get("ETag")};
+    const raw = await r.text();
+    try { data = JSON.parse(raw); } catch (e) { data = undefined; }
+  } catch (e) {  // offline, timed out, dropped
+    throw new Http(0, {error: OFFLINE});
+  }
+  if (r.status === 401) { on401(); throw new Http(401, {error: "PIN needed"}); }
+  if (data === undefined || data === null || typeof data !== "object") {
+    throw new Http(r.status, {error: r.ok ? "Unexpected reply from the server" : "Server error (" + r.status + ")"});
+  }
+  if (!r.ok) throw new Http(r.status, data);
+  return {status: r.status, data, etag: r.headers.get("ETag")};
+}
+
+async function loadMechanics() {
+  try {
+    const r = await api("GET", "/api/mechanics");
+    if (Array.isArray(r.data.mechanics)) S.mechanics = r.data.mechanics.map(String);
+  } catch (e) { /* keep the last list; the select still holds the current name */ }
+}
+
+/* ---------- views ---------- */
+
+function show(view) {
+  S.view = view;
+  $("viewBoard").hidden = view !== "board";
+  $("viewNew").hidden = view !== "new";
+  $("viewTicket").hidden = view !== "ticket";
+  $("btnNew").hidden = view !== "board";
+  $("btnBoard").hidden = view === "board";
+  if (view !== "ticket") $("title").textContent = view === "new" ? "New ticket" : "Desk";
+  window.scrollTo(0, 0);
+}
+
+function leaveTicket() {
+  if (S.view === "ticket" && S.dirty && !confirm("Leave without saving your changes?")) return;
+  S.cur = null; S.dirty = false; S.newer = null;
+  flash("");
+  show("board");
+}
+
+function leaveNew() {
+  if (newFormTyped() && !confirm("Throw away this new ticket?")) return;
+  $("newForm").reset();
+  clearNewErrors();
+  flash("");
+  show("board");
+}
+
+/* ---------- board ---------- */
+
+function renderBoard() {
+  const cols = BOARD.map(st => {
+    const list = S.tickets.filter(t => t.status === st);
+    const col = el("div", {class: "col " + st},
+      el("h2", {}, el("span", {text: COL_NAMES[st]}), el("span", {text: String(list.length)})));
+    if (!list.length) col.append(el("div", {class: "empty", text: "None"}));
+    for (const t of list) {
+      const meta = el("span", {class: "meta"});
+      meta.dataset.mechanic = t.mechanic || "";
+      meta.dataset.created = t.created || "";
+      col.append(el("button", {type: "button", class: "card " + st + (t.back_note && st === "working" ? " back" : ""),
+                               onclick: () => openTicket(t.id)},
+        el("span", {class: "name", text: fullName(t) || "(no name)"}),
+        el("span", {class: "car", text: vehicle(t)}),
+        meta));
+    }
+    return col;
+  });
+  $("board").replaceChildren(...cols);
+  updateAges();
+}
+
+function updateAges() {  // in place: the board isn't rebuilt for the clock
+  for (const m of document.querySelectorAll("#board .meta")) {
+    m.textContent = [m.dataset.mechanic, age(m.dataset.created)].filter(Boolean).join(" · ");
+  }
+}
+
+async function poll() {
+  if (S.polling || document.hidden) return;
+  S.polling = true;
+  try {
+    const r = await api("GET", "/api/tickets?status=" + BOARD.join(","), undefined,
+                        S.etag ? {"If-None-Match": S.etag} : {});
+    const changed = r.status !== 304;
+    if (changed) {
+      if (!Array.isArray(r.data.tickets)) throw new Http(200, {error: "Unexpected reply from the server"});
+      S.tickets = r.data.tickets;
+      S.etag = r.etag || "";
+      renderBoard();
+    }
+    if (!S.authLost) setNet(true, "");
+    if (S.view === "ticket" && S.cur) await syncOpen(changed);
+  } catch (e) {
+    if (e.status !== 401) setNet(false, e.message.replace(/\.$/, "") + " — retrying…");
+  } finally {
+    S.polling = false;
+  }
+}
+
+function isField(e) { return e && (e.tagName === "INPUT" || e.tagName === "TEXTAREA" || e.tagName === "SELECT") && !e.readOnly; }
+function editingNow() { return S.dirty || ($("viewTicket").contains(document.activeElement) && isField(document.activeElement)); }
+
+async function syncOpen(changed) {
+  const cur = S.cur;
+  if (cur.status === "filled") return;  // done: nothing more will change
+  if (changed) {
+    let t = S.tickets.find(x => x.id === cur.id);
+    if (!t) {  // left the board (filled on another device)
+      try { t = (await api("GET", "/api/tickets/" + cur.id)).data; } catch (e) { return; }
+    }
+    if (S.cur !== cur) return;  // the desk moved on meanwhile
+    if (t && t.version > cur.version && (!S.newer || t.version > S.newer.version)) S.newer = t;
+  }
+  if (!S.newer) return;
+  if (editingNow()) renderBanner();  // never overwrite what the desk is typing
+  else loadTicket(S.newer);
+}
+
+/* ---------- new ticket ---------- */
+
+function clearNewErrors() {
+  $("newErr").hidden = true;
+  for (const d of document.querySelectorAll("#newForm .ferr")) d.textContent = "";
+}
+
+function showErrors(root, err, generalBox) {
+  const errors = (err.data && err.data.errors) || {};
+  let shown = false;
+  for (const [k, v] of Object.entries(errors)) {
+    const d = root.querySelector('.ferr[data-for="' + k + '"]');
+    if (d) { d.textContent = v; shown = true; }
+  }
+  const rest = Object.entries(errors).filter(([k]) => !root.querySelector('.ferr[data-for="' + k + '"]'));
+  const text = rest.length ? rest.map(([k, v]) => v).join("; ") : (!shown ? err.message : "Please fix the marked fields.");
+  generalBox.textContent = text;
+  generalBox.hidden = false;
+}
+
+async function createTicket(ev) {
+  ev.preventDefault();
+  if (S.busy) return;
+  clearNewErrors();
+  const f = $("newForm");
+  const body = {};
+  for (const k of ["first", "last", "phone", "year", "make", "model", "plate", "request"]) body[k] = f.elements[k].value;
+  S.busy = true; $("btnCreate").disabled = true;
+  try {
+    const r = await api("POST", "/api/tickets", body);
+    f.reset();
+    show("board");
+    flash("Saved: " + fullName(r.data) + " — " + vehicle(r.data), "ok");
+    S.etag = "";
+    poll();
+  } catch (e) {
+    if (e.status === 400) showErrors(f, e, $("newErr"));
+    else if (e.status !== 401) { $("newErr").textContent = e.message || "Couldn't save"; $("newErr").hidden = false; }
+  } finally {
+    S.busy = false; $("btnCreate").disabled = false;
+  }
+}
+
+/* ---------- ticket screen ---------- */
+
+async function openTicket(id) {
+  const n = ++S.openSeq;
+  flash("");
+  try {
+    const r = await api("GET", "/api/tickets/" + id);
+    if (r.data.status === "review") await loadMechanics();
+    if (n !== S.openSeq) return;  // another card was tapped meanwhile
+    S.dirty = false;
+    show("ticket");
+    loadTicket(r.data);
+  } catch (e) {
+    if (n === S.openSeq && e.status !== 401) flash(e.message || "Couldn't open the ticket");
+  }
+}
+
+function editable(t) { return t.status === "waiting" || t.status === "review"; }
+
+function markDirty() { S.dirty = true; }
+
+function mechanicField(t) {
+  const label = el("label", {for: "t-mechanic", text: "Mechanic"});
+  if (t.status !== "review") {
+    return el("div", {}, label, el("input", {id: "t-mechanic", value: t.mechanic || "", readOnly: true}));
+  }
+  const names = [...S.mechanics];
+  if (t.mechanic && !names.includes(t.mechanic)) names.unshift(t.mechanic);  // keep who did it, even if off the list
+  const sel = el("select", {id: "t-mechanic", name: "mechanic"},
+    t.mechanic ? null : el("option", {value: "", text: "Pick a mechanic", disabled: true}),
+    names.map(n => el("option", {value: n, text: n})));
+  sel.value = t.mechanic || "";
+  return el("div", {}, label, sel, el("div", {class: "ferr", "data-for": "mechanic"}));
+}
+
+function loadTicket(t) {
+  S.cur = t; S.dirty = false; S.newer = null;
+  const v = $("viewTicket");
+  const ed = editable(t);
+  const parts = [];
+
+  parts.push(el("div", {id: "banner", class: "msg banner", hidden: true}));
+  parts.push(el("div", {id: "tErr", class: "msg err", role: "status", "aria-live": "polite", hidden: true}));
+  parts.push(el("div", {id: "unsaved", class: "msg note", hidden: true}));
+
+  parts.push(el("div", {class: "box"},
+    el("h2", {}, el("span", {text: (fullName(t) || "Ticket") + " — " + vehicle(t)}),
+      el("span", {class: "status " + t.status, text: t.status})),
+    el("div", {class: "meta", text: "#" + t.id + (t.created ? " · opened " + age(t.created) + " ago" : "")})));
+
+  if (t.back_note) parts.push(el("div", {class: "msg note"},
+    el("b", {text: "Sent back: "}), el("span", {class: "ro", text: t.back_note})));
+  if (t.status === "approved") parts.push(el("div", {class: "msg ok ready", text: "Ready for InvoMax"}));
+  if (t.status === "working") parts.push(el("div", {class: "msg note",
+    text: "With " + (t.mechanic || "the mechanic") + " — read only while they work. This page updates as they add lines."}));
+  if (t.status === "filled") parts.push(el("div", {class: "msg ok", text: "Filled in InvoMax."}));
+
+  // customer + vehicle
+  const grid = el("div", {class: "grid"});
+  for (const [k, label, extra] of FIELDS) {
+    grid.append(el("div", {},
+      el("label", {for: "t-" + k, text: label}),
+      el("input", {id: "t-" + k, name: k, value: t[k] || "", readOnly: !ed, autocomplete: "off", ...extra}),
+      el("div", {class: "ferr", "data-for": k})));
+  }
+  grid.append(mechanicField(t));
+  for (const [k, label] of TEXTS) {
+    grid.append(el("div", {class: "wide"},
+      el("label", {for: "t-" + k, text: label}),
+      el("textarea", {id: "t-" + k, name: k, value: t[k] || "", readOnly: !ed}),
+      el("div", {class: "ferr", "data-for": k})));
+  }
+  parts.push(el("div", {class: "box", id: "tFields"}, grid));
+
+  // lines
+  const tbody = el("tbody", {id: "tLines"});
+  for (const ln of t.lines || []) tbody.append(lineRow(ln, ed));
+  const tot = t.totals || {};
+  parts.push(el("div", {class: "box"},
+    el("h2", {text: "Lines"}),
+    el("table", {},
+      el("colgroup", {}, el("col", {}), el("col", {class: "c-qty"}), el("col", {class: "c-money"}),
+         el("col", {class: "c-money"}), el("col", {class: "c-total"}), ed ? el("col", {class: "c-del"}) : null),
+      el("thead", {}, el("tr", {},
+        el("th", {text: "Description"}), el("th", {class: "num", text: "Qty"}), el("th", {class: "num", text: "Price"}),
+        el("th", {class: "num", text: "Labor"}), el("th", {class: "num", text: "Line total"}), ed ? el("th", {}) : null)),
+      tbody),
+    (t.lines || []).length || ed ? null : el("div", {class: "empty", text: "No lines yet."}),
+    el("div", {class: "ferr", "data-for": "lines"}),
+    ed ? el("div", {class: "actions"}, el("button", {type: "button", class: "light", text: "Add line", onclick: () => {
+      const row = lineRow({desc: "", qty: 1, price: null, labor: null, code: "", id: 0}, true);
+      $("tLines").append(row); markDirty(); recalc(); row.querySelector("input").focus();
+    }})) : null,
+    el("div", {class: "totals"},
+      el("span", {}, "Parts ", el("b", {id: "tParts", text: money(tot.parts)})),
+      el("span", {}, "Labor ", el("b", {id: "tLabor", text: money(tot.labor)})),
+      el("span", {}, "Total ", el("b", {id: "tTotal", text: money(tot.total)}))),
+    el("div", {class: "meta", text: "No tax: InvoMax adds it."})));
+
+  // actions
+  const act = el("div", {class: "actions"});
+  if (ed) act.append(el("button", {type: "button", id: "btnSave", text: "Save", onclick: () => save()}),
+                     el("span", {id: "saved", role: "status", "aria-live": "polite"}));
+  if (t.status === "review") {
+    act.append(el("span", {class: "spacer"}),
+      el("button", {type: "button", class: "warn", text: "Send back", onclick: sendBack}),
+      el("button", {type: "button", class: "go", text: "Approve", onclick: approve}));
+  }
+  if (t.status === "approved") act.append(el("button", {type: "button", class: "go", text: "Mark filled", onclick: markFilled}));
+  if (act.children.length) parts.push(act);
+
+  v.replaceChildren(...parts);
+  v.oninput = ed ? markDirty : null;
+  $("title").textContent = "Ticket #" + t.id;
+  if (ed) recalc();
+}
+
+function fmtCell(v, money2) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "number") return money2 ? v.toFixed(2) : String(v);
+  return String(v);  // typed text put back after a refused save
+}
+
+function lineRow(ln, ed) {
+  const tr = el("tr", {});
+  tr.dataset.id = ln.id || 0;
+  tr.dataset.code = ln.code || "";
+  tr.dataset.codeDesc = squash(ln.desc);  // the description the code came with
+  const total = el("td", {class: "num lt"});
+  const code = el("span", {class: "code"});
+  const showCode = () => { code.textContent = tr.dataset.code ? "Code " + tr.dataset.code : ""; code.hidden = !tr.dataset.code; };
+  const paint = () => {
+    const c = lineCents(tr.querySelector(".q").value, tr.querySelector(".p").value, tr.querySelector(".l").value);
+    total.textContent = centsText(c.parts + c.labor);
+  };
+  const upd = () => { paint(); if (ed) recalc(); };
+  const desc = el("input", {class: "d", value: ln.desc || "", readOnly: !ed, autocomplete: "off", "aria-label": "Description",
+    oninput: () => {  // a different description is no longer that catalog part
+      if (tr.dataset.code && squash(desc.value) !== tr.dataset.codeDesc) { tr.dataset.code = ""; showCode(); }
+    }});
+  const cell = (cls, val, label) => el("td", {}, el("input", {class: cls, value: val, readOnly: !ed, inputMode: "decimal",
+    autocomplete: "off", oninput: upd, "aria-label": label}));
+  tr.append(
+    el("td", {}, desc, code),
+    cell("q", fmtCell(ln.qty, false), "Quantity"),
+    cell("p", fmtCell(ln.price, true), "Price"),
+    cell("l", fmtCell(ln.labor, true), "Labor"),
+    total);
+  if (ed) tr.append(el("td", {}, el("button", {type: "button", class: "x", text: "✕", "aria-label": "Remove line",
+    onclick: () => { tr.remove(); markDirty(); recalc(); }})));
+  showCode();
+  paint();
+  return tr;
+}
+
+function recalc() {  // live Parts / Labor / Total from the typed lines, each line rounded like the server
+  let parts = 0, labor = 0;
+  for (const tr of document.querySelectorAll("#tLines tr")) {
+    const c = lineCents(tr.querySelector(".q").value, tr.querySelector(".p").value, tr.querySelector(".l").value);
+    parts += c.parts; labor += c.labor;
+  }
+  if (!$("tParts")) return;
+  $("tParts").textContent = centsText(parts);
+  $("tLabor").textContent = centsText(labor);
+  $("tTotal").textContent = centsText(parts + labor);
+}
+
+function readForm() {
+  const v = $("viewTicket"), t = S.cur;
+  const body = {version: t.version, who: "desk"};
+  for (const [k] of FIELDS) body[k] = v.querySelector("#t-" + k).value;
+  const mech = v.querySelector("select#t-mechanic");
+  if (mech && mech.value) body.mechanic = mech.value;
+  for (const [k] of TEXTS) body[k] = v.querySelector("#t-" + k).value;
+  body.lines = [...v.querySelectorAll("#tLines tr")].map(tr => {
+    const g = c => tr.querySelector(c).value;
+    return {id: Number(tr.dataset.id) || 0, code: tr.dataset.code || "", desc: g(".d"), qty: g(".q"), price: g(".p"), labor: g(".l")};
+  });
+  return body;
+}
+
+function clearTicketErrors() {
+  const e = $("tErr"); if (e) e.hidden = true;
+  for (const d of $("viewTicket").querySelectorAll(".ferr")) d.textContent = "";
+}
+
+function tError(text) {
+  const e = $("tErr");
+  if (!e) return flash(text);
+  e.textContent = text; e.hidden = !text;
+  if (text) window.scrollTo(0, 0);
+}
+
+function renderBanner() {
+  const b = $("banner");
+  if (!b) return;
+  b.replaceChildren(el("span", {text: "Changed on another device — saving will be refused; Reload to see it."}),
+    el("button", {type: "button", text: "Reload", onclick: reloadOpen}));
+  b.hidden = !S.newer;
+}
+
+async function reloadOpen() {
+  if (!S.cur) return;
+  if (S.dirty && !confirm("Throw away your unsaved changes and show the other device's version?")) return;
+  try {
+    const r = await api("GET", "/api/tickets/" + S.cur.id);
+    if (r.data.status === "review") await loadMechanics();
+    loadTicket(r.data);
+  } catch (e) {
+    if (e.status !== 401) tError(e.message || "Couldn't reload");
+  }
+}
+
+// What the desk changed (typed vs the copy it started from), after a refused save: shown and offered back, never lost silently.
+function changesMade(typed, base) {
+  const same = (k, x, y) => k === "phone" ? String(x).replace(/\D/g, "") === String(y || "").replace(/\D/g, "") : squash(x) === squash(y);
+  const fields = {};
+  for (const k of Object.keys(LABELS)) if (k in typed && !same(k, typed[k], base[k])) fields[k] = typed[k];
+  const key = ln => [squash(ln.desc), hundredths(ln.qty === "" ? 1 : ln.qty), hundredths(ln.price ?? ""), hundredths(ln.labor ?? "")].join("|");
+  const linesChanged = typed.lines.map(key).join("~") !== (base.lines || []).map(key).join("~");
+  return {fields, lines: linesChanged ? typed.lines : null};
+}
+
+function showUnsaved(ch, t) {
+  const items = Object.entries(ch.fields).map(([k, v]) => LABELS[k] + ": " + (v || "(blank)"));
+  if (ch.lines) {
+    items.push("Lines: " + (ch.lines.map(ln => [ln.desc, ln.qty && "qty " + ln.qty, ln.price && "price " + ln.price,
+      ln.labor && "labor " + ln.labor].filter(Boolean).join(", ")).join(" / ") || "(none)"));
+  }
+  const box = $("unsaved");
+  if (!box || !items.length) return;
+  box.replaceChildren(el("b", {text: "Your unsaved changes:"}), el("ul", {}, items.map(d => el("li", {text: d}))),
+    editable(t) ? el("button", {type: "button", text: "Put my changes back", onclick: () => reapply(ch)}) : null);
+  box.hidden = false;
+}
+
+function reapply(ch) {  // only what the desk changed, on top of the other device's version
+  const v = $("viewTicket");
+  for (const [k, val] of Object.entries(ch.fields)) {
+    const i = v.querySelector("#t-" + k);
+    if (!i || i.readOnly) continue;
+    if (i.tagName === "SELECT" && ![...i.options].some(o => o.value === val)) i.append(el("option", {value: val, text: val}));
+    i.value = val;
+  }
+  if (ch.lines) $("tLines").replaceChildren(...ch.lines.map(ln => lineRow(ln, true)));
+  $("unsaved").hidden = true;
+  markDirty();
+  recalc();
+}
+
+function onTicket(id) { return S.view === "ticket" && S.cur && S.cur.id === id; }
+
+function setBusy(on) {
+  S.busy = on;
+  for (const b of $("viewTicket").querySelectorAll("button")) b.disabled = on;
+  $("btnBoard").disabled = on;
+}
+
+// Every write: sends the version the page last saw. Returns the new ticket or null (error shown, or the desk left).
+async function post(path, body) {
+  if (S.busy || !S.cur) return null;
+  const base = S.cur, id = base.id, typed = S.dirty && editable(base) ? readForm() : null;
+  setBusy(true);
+  try {
+    const r = await api("POST", path, body);
+    S.etag = "";  // next poll fetches the new board
+    return onTicket(id) ? r.data : null;
+  } catch (e) {
+    if (!onTicket(id)) return null;
+    if (e.status === 409) {
+      const t = e.data && e.data.ticket;
+      if (t) {
+        loadTicket(t);
+        if (t.status === "review") loadMechanics();  // for next time; not awaited
+        if (typed) showUnsaved(changesMade(typed, base), t);
+      }
+      tError((e.message || "Changed on another device") + " — showing the current ticket.");
+    } else if (e.status === 400) {
+      clearTicketErrors();
+      showErrors($("viewTicket"), e, $("tErr"));
+    } else if (e.status !== 401) {
+      tError(e.message || "Couldn't save");
+    }
+    return null;
+  } finally {
+    setBusy(false);
+  }
+}
+
+let savedTimer = 0;
+async function save(quiet) {
+  if (!S.cur || !editable(S.cur)) return S.cur;
+  clearTicketErrors();
+  const t = await post("/api/tickets/" + S.cur.id, readForm());
+  if (t) {  // post() returns null once the desk has left this ticket
+    loadTicket(t);  // first, with no await before it: the buttons must never carry the old version
+    if (t.status === "review") loadMechanics();  // for next time; not awaited
+    if (!quiet && $("saved")) {
+      $("saved").textContent = "Saved.";
+      clearTimeout(savedTimer);
+      savedTimer = setTimeout(() => { if ($("saved")) $("saved").textContent = ""; }, 3000);
+    }
+    poll();
+  }
+  return t;
+}
+
+async function move(to, note) {
+  let t = S.cur;
+  if (S.dirty) {  // keep the desk's fixes: save first, then move with the new version
+    t = await save(true);
+    if (!t) return null;
+  }
+  const body = {version: t.version, to};
+  if (note !== undefined) body.note = note;
+  const r = await post("/api/tickets/" + t.id + "/move", body);
+  if (r) poll();
+  return r;
+}
+
+async function sendBack() {
+  const mech = $("t-mechanic");
+  if (!(mech ? mech.value : S.cur.mechanic).trim()) {
+    tError("Pick the mechanic first — the ticket goes back to them.");
+    return;
+  }
+  let note = "";
+  while (!note) {
+    const n = prompt("What should the mechanic fix? (required)");
+    if (n === null) return;
+    note = n.trim();
+  }
+  const t = await move("working", note);
+  if (t) { S.dirty = false; leaveTicket(); flash("Sent back to " + (t.mechanic || "the mechanic") + ".", "ok"); }
+}
+
+async function approve() {
+  const t = await move("approved");
+  if (t) { loadTicket(t); flash("Approved — ready for InvoMax.", "ok"); }
+}
+
+async function markFilled() {
+  if (!confirm("Mark this ticket as filled in InvoMax? It leaves the board.")) return;
+  const t = await move("filled");
+  if (t) { S.dirty = false; leaveTicket(); flash("Marked filled: " + fullName(t) + ".", "ok"); }
+}
+
+/* ---------- start ---------- */
+
+$("btnNew").addEventListener("click", () => { flash(""); clearNewErrors(); show("new"); $("n-first").focus(); });
+$("btnBoard").addEventListener("click", () => S.view === "ticket" ? leaveTicket() : leaveNew());
+$("btnCancelNew").addEventListener("click", leaveNew);
+$("newForm").addEventListener("submit", createTicket);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+
+show("board");
+loadMechanics();
+poll();
+setInterval(poll, POLL_MS);
+setInterval(updateAges, AGE_MS);
+</script>
+</body></html>
