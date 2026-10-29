@@ -17,9 +17,10 @@ Read first:
 | Parts / labor / remark / note recipes | Steps known from the probe (spec 5.7); not written. They need pictures of the untitled choice boxes. |
 | Side panel (`panel.py`), draft store, Wi-Fi page | Not started. |
 | Probe (`probe.py`, `probe.bat`) | Done. Read-only watch with Start/Pause; it logs to `probe/` and saves pictures of unreadable pop-ups to `probe/shots/` (git-ignored, customer data). |
+| Shop tickets (`tickets.py`, `shop.py`, `pinweb.py`, `web/desk.html`, `web/tech.html`, `shop.bat`) | Done 2026-10-29 (plan `plans/2026-10-29-shop-tickets.md`): desk iPad → mechanic phone → desk review → approved → `tickets.to_draft`. Not done: year/make/model option lists (the pages have empty `year-list` / `make-list` / `model-list` datalists), the shop hostname on the tunnel (owner, README), moving `phone.py` onto `pinweb.PinHandler` (its cookie is a plain hash of the PIN; the move logs the phone out once, so ask the owner), feeding approved drafts to the InvoMax fill, checking InvoMax accepts a part line with a blank code. |
 | Inspection report (`inspection.py`, `report.py`, `phone.py`) | Added by another session in `6f73778`; separate from InvoMax filling. It adds the `python-docx` and `winocr` dependencies and a Cloudflare tunnel for the phone page. |
 
-Tests: `python tests/test_<name>.py` for draft, invomax, ocr, phone, prices, probe, read, recipes and report. All 9 print `ok` (checked 2026-10-28).
+Tests: `python tests/test_<name>.py` for draft, invomax, ocr, phone, prices, probe, read, recipes, report, shop and tickets. All 11 print `ok` (checked 2026-10-29).
 
 ## What the probe taught us (details in spec section 4 and 5.x)
 - InvoMax is a Delphi app. The invoice window has class `TINVOICESCREEN`, maximized at 1936 × 1056; its title blanks for a moment on redraws.

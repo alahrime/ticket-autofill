@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mechanic</title>
+<style>
+*{box-sizing:border-box}
+body{font:17px/1.35 system-ui,sans-serif;margin:0 auto;max-width:640px;padding:0 12px 48px;background:#f4f4f4;color:#222}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;position:sticky;top:0;background:#f4f4f4;z-index:2}
+header b{font-size:18px}
+h1{font-size:22px;margin:16px 0}
+h2{font-size:18px;margin:18px 0 6px;color:#444}
+h3{font-size:18px;margin:0 0 4px}
+button{font:inherit;min-height:48px;padding:10px 16px;border:0;border-radius:8px;background:#1f5fbf;color:#fff;cursor:pointer}
+button.light{background:#ddd;color:#222}
+button.danger{background:#fde2e2;color:#900}
+button.link{background:none;color:#1f5fbf;padding:8px 4px;font-size:15px;text-decoration:underline}
+button.wide{display:block;width:100%;margin:8px 0}
+button:disabled{opacity:.5}
+input,textarea{font:inherit;font-size:18px;width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;background:#fff;color:#222}
+textarea{min-height:96px;resize:vertical}
+label{display:block;font-size:14px;color:#555;margin:10px 0 0}
+label input,label textarea{margin-top:4px}
+.card{background:#fff;border-radius:10px;padding:12px;margin:8px 0}
+.tk{display:flex;gap:10px;align-items:center}
+.tk .info{flex:1;min-width:0;text-align:left;background:none;color:#222;padding:0;min-height:0;display:block}
+.tk.mine{padding:0}
+.tk.mine .info{padding:12px}
+.who{font-weight:600;display:block}
+.age{float:right;color:#666;font-size:14px;margin-left:8px}
+.car{color:#444;display:block}
+.req{color:#666;font-size:15px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.tag{display:inline-block;background:#fff3b0;color:#7a5600;border-radius:6px;padding:1px 6px;font-size:13px;margin-top:4px}
+.big{font-size:20px;font-weight:600}
+.backnote{background:#fff3b0;border-left:4px solid #c90;padding:10px;border-radius:6px;margin-top:8px;white-space:pre-wrap}
+.backnote b{display:block;font-size:14px;color:#7a5600}
+.pre{white-space:pre-wrap}
+.row{display:flex;gap:8px}
+.row>*{flex:1;min-width:0}
+.empty{color:#666;margin:6px 0}
+.err{color:#b00}
+.ferr{color:#b00;font-size:15px;margin:4px 0 0;white-space:pre-wrap}
+.ferr:empty{display:none}
+#msg{background:#fde2e2;color:#900;padding:12px;border-radius:8px;margin:8px 0;white-space:pre-wrap}
+#msg.ok{background:#e2f5e2;color:#185c18}
+#net{color:#900;font-size:14px}
+#saved{color:#185c18;font-size:14px}
+#banner{background:#fff3b0;padding:8px 12px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0}
+#hints button{display:block;width:100%;text-align:left;background:#eef3fb;color:#222;margin-top:4px;font-size:16px}
+#hints small{display:block;color:#555}
+.line .desc{font-weight:600}
+.line .det{color:#444}
+.line .acts{display:flex;gap:8px;margin-top:8px}
+.line .acts button{flex:1}
+.tot{display:flex;justify-content:space-between}
+.tot.sum{font-weight:700;font-size:19px;border-top:1px solid #ddd;padding-top:6px;margin-top:4px}
+#names button{display:block;width:100%;margin:10px 0;font-size:20px}
+#lineform{border:2px solid #1f5fbf;scroll-margin-top:72px}
+[hidden]{display:none!important}
+</style></head><body>
+<header><div><b id="me"></b> <span id="saved" aria-live="polite"></span> <span id="net" aria-live="polite"></span></div><button id="notme" class="link" type="button" hidden>Not you?</button></header>
+<div id="msg" role="alert" hidden></div>
+
+<section id="pick" hidden>
+  <h1>Who are you?</h1>
+  <p>Pick your name once; this phone remembers it.</p>
+  <div id="names"></div>
+</section>
+
+<section id="home" hidden>
+  <h2>My jobs</h2>
+  <div id="mine"></div>
+  <h2>Waiting</h2>
+  <div id="waiting"></div>
+</section>
+
+<section id="job" hidden>
+  <button id="back" class="light" type="button">&lsaquo; Jobs</button>
+  <div id="banner" hidden><span>Changed on another device —</span><button id="reload" type="button">Reload</button></div>
+  <div class="card">
+    <div id="jcust" class="big"></div>
+    <div id="jcar" class="car"></div>
+    <div id="jreq" class="pre"></div>
+    <div id="jback" class="backnote" hidden><b>Sent back by the desk:</b><span id="jbacktext"></span></div>
+  </div>
+
+  <h2>Lines</h2>
+  <div id="lines"></div>
+  <div class="row" id="addbtns"><button id="addpart" type="button">Add part</button><button id="addlabor" type="button">Add labor</button></div>
+
+  <form id="lineform" class="card" autocomplete="off" hidden>
+    <h3 id="lftitle"></h3>
+    <label>Description <input id="ldesc" maxlength="200" autocapitalize="characters"></label>
+    <div id="hints"></div>
+    <div class="row partonly">
+      <label>Qty <input id="lqty" inputmode="decimal"></label>
+      <label>Price each <input id="lprice" inputmode="decimal" placeholder="0.00"></label>
+    </div>
+    <label>Labor <input id="llabor" inputmode="decimal" placeholder="0.00"></label>
+    <p id="lerr" class="ferr" role="alert"></p>
+    <div class="row" style="margin-top:12px"><button type="submit" id="lsave">Save line</button><button type="button" class="light" id="lcancel">Cancel</button></div>
+  </form>
+
+  <div id="totals" class="card"></div>
+
+  <label>Odometer <input id="odo" inputmode="numeric" autocomplete="off" maxlength="9"></label>
+  <p id="odoerr" class="ferr" role="alert"></p>
+  <label>Notes <textarea id="notes" maxlength="2000"></textarea></label>
+  <p id="noteserr" class="ferr" role="alert"></p>
+
+  <button id="finish" class="wide" type="button" style="margin-top:20px">Finish job</button>
+</section>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const KEY = "tech.me";
+const FIELDS = [["odo", "odometer"], ["notes", "notes"]];  // box id, ticket field
+let me = "", list = [], etag = "", cur = null, editing = null, formStart = "", code = "", hintDesc = "";
+let queue = Promise.resolve(), pending = 0, polling = false, hintSeq = 0, hintTimer = 0, savedTimer = 0, fieldTimer = 0;
+const known = {};   // id -> newest copy of that ticket this phone saved or loaded; queued saves take their version from it
+const queued = {};  // field -> value already waiting in the save queue
+
+function load(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
+function store(k, v) { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) { /* private mode */ } }
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function btn(text, cls, onclick) {
+  const b = el("button", cls, text);
+  b.type = "button";
+  b.addEventListener("click", onclick);
+  return b;
+}
+const cap = s => { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); };
+const money = v => "$" + (Number(v) || 0).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const plain = v => v == null ? "" : (Number(v) || 0).toFixed(2);
+const initial = s => (s || "").trim() ? (s || "").trim()[0] + "." : "";
+const shortName = t => [t.first, initial(t.last)].filter(Boolean).join(" ");
+const vehicle = t => [t.year, t.make, t.model].filter(Boolean).join(" ");
+const mineNow = t => t.status === "working" && t.mechanic === me;
+
+function age(iso) {
+  const t = Date.parse(iso);  // server local time without a zone: read as local time
+  if (isNaN(t)) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60);
+  return h < 24 ? h + " h" : Math.floor(h / 24) + " d";
+}
+
+function say(text, ok) {
+  const m = $("msg");
+  m.textContent = text || "";
+  m.className = ok ? "ok" : "";
+  m.hidden = !text;
+  if (text) m.scrollIntoView({block: "nearest"});
+}
+function saved() {
+  $("saved").textContent = "Saved";
+  clearTimeout(savedTimer);
+  savedTimer = setTimeout(() => { $("saved").textContent = ""; }, 2000);
+}
+function errText(e) {
+  const d = (e && e.data) || {};
+  if (d.errors && typeof d.errors === "object") {
+    const msgs = Object.values(d.errors).map(cap);
+    if (msgs.length) return msgs.join("\n");
+  }
+  if (d.error) return cap(d.error);
+  return e && e.status > 0 ? `The shop PC had a problem (${e.status}).` : "Something went wrong.";
+}
+function clearFieldErrors() {
+  for (const id of ["lerr", "odoerr", "noteserr"]) $(id).textContent = "";
+}
+function showErrors(e) {  // 400: each message next to its field; the rest at the top
+  const errs = (e.data && e.data.errors) || {}, rest = [];
+  for (const [k, v] of Object.entries(errs)) {
+    const box = k === "odometer" ? $("odoerr") : k === "notes" ? $("noteserr") : k === "lines" && editing ? $("lerr") : null;
+    if (box) box.textContent = cap(v);
+    else rest.push(cap(v));
+  }
+  if (!Object.keys(errs).length) rest.push(errText(e));
+  if (rest.length) say(rest.join("\n"));
+}
+
+class Http extends Error {
+  constructor(status, data) {
+    super((data && data.error) || ("error " + status));
+    this.status = status;
+    this.data = data || {};
+  }
+}
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) return AbortSignal.timeout(ms);
+  if (typeof AbortController === "undefined") return undefined;
+  const c = new AbortController();
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
+}
+async function api(path, body, headers, keepalive) {
+  const opt = {headers: Object.assign({}, headers || {}), credentials: "same-origin", cache: "no-store", signal: timeoutSignal(15000)};
+  if (body !== undefined) {
+    opt.method = "POST";
+    opt.headers["Content-Type"] = "application/json";
+    opt.body = JSON.stringify(body);
+    if (keepalive) opt.keepalive = true;  // still sent when the page is closing
+  }
+  let r;
+  try {
+    r = await fetch(path, opt);
+  } catch (e) {  // offline, or no answer in 15 s
+    throw new Http(0, {error: "Can't reach the shop. Check your connection and try again."});
+  }
+  if (r.status === 401) {  // PIN cookie gone: the reload shows the PIN page
+    location.reload();
+    throw new Http(401, {error: "PIN needed"});
+  }
+  const tag = r.headers.get("ETag") || "";
+  if (r.status === 304) return {status: 304, data: null, etag: tag};
+  let data = null;
+  try { data = await r.json(); } catch (e) { data = null; }
+  if (!r.ok) throw new Http(r.status, data);
+  if (data === null || typeof data !== "object") throw new Http(r.status, {error: "Unexpected reply from the shop PC."});
+  return {status: r.status, data, etag: tag};
+}
+
+// ---- screens and routing (#t<id> = a job, so the phone's Back button works)
+function show(name) {
+  for (const s of ["pick", "home", "job"]) $(s).hidden = s !== name;
+  $("me").textContent = me;
+  $("notme").hidden = !me || name === "pick";
+}
+function goHome() {  // no questions asked: callers deal with an open line first
+  closeForm();
+  if (location.hash) location.hash = "";
+  else route();
+}
+function leaveJob() {  // keeps the odometer/notes typed so far (sent with the ticket's own version), then forgets the job
+  if (!cur) return;
+  saveFields();
+  cur = null;
+  closeForm();
+  clearFieldErrors();
+}
+function route() {
+  const m = /^#t([0-9]+)$/.exec(location.hash);
+  const id = m ? Number(m[1]) : 0;
+  if (cur && cur.id !== id) {
+    if (!discardLine()) {  // Back pressed with a half-typed line: stay
+      history.pushState(null, "", "#t" + cur.id);
+      return;
+    }
+    leaveJob();
+  }
+  if (!me) return pickName();
+  if (id) {
+    if (cur && cur.id === id) show("job");
+    else loadJob(id);
+  } else {
+    show("home");
+    renderHome();
+  }
+}
+window.addEventListener("hashchange", route);
+
+// ---- who am I
+async function pickName() {
+  show("pick");
+  const box = $("names");
+  box.replaceChildren(el("p", "empty", "Loading names…"));
+  try {
+    const r = await api("/api/mechanics");
+    const names = r.data.mechanics || [];
+    if (!names.length) {
+      box.replaceChildren(el("p", "err", "No names yet. Ask the office to add them to mechanics.txt."));
+      return;
+    }
+    box.replaceChildren(...names.map(n => btn(n, "", () => {
+      me = n;
+      store(KEY, n);
+      say("");
+      etag = "";
+      route();
+      poll();
+    })));
+  } catch (e) {
+    if (e.status === 401) return;
+    box.replaceChildren(el("p", "err", errText(e)), btn("Try again", "light", pickName));
+  }
+}
+$("notme").addEventListener("click", () => {
+  if (!discardLine()) return;
+  leaveJob();
+  me = "";
+  store(KEY, "");
+  say("");
+  if (location.hash) location.hash = "";  // hashchange -> route -> pickName
+  else pickName();
+});
+
+// ---- home lists
+function renderHome() {
+  const mine = list.filter(mineNow);
+  const waiting = list.filter(t => t.status === "waiting").reverse();  // longest waiting first
+  fill($("mine"), mine.map(t => card(t, false)), "No jobs yet. Accept one below.");
+  fill($("waiting"), waiting.map(t => card(t, true)), "Nothing waiting.");
+}
+function fill(box, cards, empty) {
+  box.replaceChildren(...(cards.length ? cards : [el("p", "empty", empty)]));
+}
+function card(t, waiting) {
+  const c = el("div", "card tk" + (waiting ? "" : " mine"));
+  const info = el(waiting ? "div" : "button", "info");
+  if (!waiting) {
+    info.type = "button";
+    info.addEventListener("click", () => openJob(t));
+  }
+  const top = el("span", "who", shortName(t));
+  const ag = el("span", "age", age(t.created));
+  ag.dataset.created = t.created || "";
+  top.append(ag);
+  info.append(top, el("span", "car", vehicle(t)));
+  if (t.request) info.append(el("span", "req", t.request));
+  if (!waiting && t.back_note) info.append(el("span", "tag", "Sent back"));
+  c.append(info);
+  if (waiting) {
+    const b = btn("Accept", "", () => accept(t, b));
+    c.append(b);
+  }
+  return c;
+}
+
+async function poll() {
+  if (!me || polling || document.hidden) return;
+  polling = true;
+  try {
+    const r = await api("/api/tickets?status=waiting,working", undefined, etag ? {"If-None-Match": etag} : {});
+    $("net").textContent = "";
+    if (r.status !== 304) {  // 304: nothing changed, keep the last list
+      list = r.data.tickets || [];
+      etag = r.etag;
+    }
+    if (r.status === 304) {  // ages move on even when nothing changed: just their text, the cards stay
+      for (const a of document.querySelectorAll("#home .age")) a.textContent = age(a.dataset.created);
+    } else renderHome();
+    checkOpen();
+  } catch (e) {
+    if (e.status !== 401) $("net").textContent = e.status === 0 ? "Offline, retrying…" : "Server trouble, retrying…";
+  } finally {
+    polling = false;
+  }
+}
+function checkOpen() {  // the open job changed somewhere else (desk, another phone): offer a reload
+  if (!cur || pending) return;
+  const t = list.find(x => x.id === cur.id);
+  if (!t || t.version > cur.version) $("banner").hidden = false;
+}
+
+async function accept(t, b) {
+  if (!confirm(`Accept ${shortName(t)}, ${vehicle(t)}?`)) return;
+  b.disabled = true;
+  say("");
+  try {
+    const r = await api(`/api/tickets/${t.id}/move`, {version: t.version, to: "working", mechanic: me});
+    etag = "";
+    openJob(r.data);
+    poll();
+  } catch (e) {
+    b.disabled = false;
+    if (e.status === 409 && e.data.ticket) {
+      const x = e.data.ticket;
+      if (mineNow(x)) { openJob(x); return; }  // took it on another phone
+      if (x.status === "working") say(`${x.mechanic || "Someone else"} already accepted this job.`);
+      else if (x.status !== "waiting") say("This job isn't waiting anymore.");
+      else say("The desk just changed this job. Check it and tap Accept again.");
+      etag = "";
+      poll();
+    } else if (e.status !== 401) {
+      say(errText(e));
+    }
+  }
+}
+
+// ---- job screen
+function remember(t) {
+  if (!known[t.id] || t.version >= known[t.id].version) known[t.id] = t;
+}
+function openJob(t) {
+  remember(t);
+  setCur(t);
+  say("");
+  if (location.hash !== "#t" + t.id) location.hash = "t" + t.id;
+  else show("job");
+}
+async function loadJob(id) {
+  try {
+    const r = await api(`/api/tickets/${id}`);
+    if (location.hash !== "#t" + id) return;  // went elsewhere meanwhile
+    const t = r.data;
+    if (!mineNow(t)) {
+      writeDraft(id, {});  // nothing left for this phone to save there
+      say(t.status === "working" ? "That job belongs to someone else." : `That job is ${t.status} now.`);
+      return goHome();
+    }
+    remember(t);
+    setCur(t);
+    show("job");
+  } catch (e) {
+    if (e.status === 401 || location.hash !== "#t" + id) return;
+    say(e.status === 404 ? "That job is gone." : errText(e));
+    goHome();
+  }
+}
+// What the server would store for a typed value: trimmed; odometer without commas/spaces (as tickets.normalize).
+const tidy = (k, v) => k === "odometer" ? v.trim().replace(/[, ]/g, "") : v.trim();
+function dirtyBoxes() {  // odometer/notes typed but not yet on the server: {field: value as typed}
+  const out = {};
+  if (!cur) return out;
+  for (const [id, k] of FIELDS) if (tidy(k, $(id).value) !== (cur[k] || "")) out[k] = $(id).value;
+  return out;
+}
+// Unsaved odometer/notes are also kept on the phone per job until saved (survives a closed tab or dead battery).
+const draftKey = id => "tech.draft." + id;
+function readDraft(id) {
+  try { return JSON.parse(load(draftKey(id)) || "{}") || {}; } catch (e) { return {}; }
+}
+function writeDraft(id, d) {
+  store(draftKey(id), Object.keys(d).length ? JSON.stringify(d) : "");
+}
+function keepDraft() {
+  if (cur) writeDraft(cur.id, dirtyBoxes());
+}
+function draftSaved(id, fields) {  // the server has these values now: drop them from the draft unless retyped since
+  const d = readDraft(id);
+  for (const k in fields) if (d[k] === fields[k]) delete d[k];
+  writeDraft(id, d);
+}
+function setCur(t) {
+  // A box the mechanic changed (differs from the copy shown) is never overwritten; it is saved instead.
+  const same = cur && cur.id === t.id;
+  const dirty = same ? dirtyBoxes() : {};
+  remember(t);
+  cur = t;
+  $("banner").hidden = true;
+  $("jcust").textContent = shortName(t);
+  $("jcar").textContent = vehicle(t) + (t.plate ? " · " + t.plate : "");
+  $("jreq").textContent = t.request || "(no request written)";
+  $("jbacktext").textContent = t.back_note || "";
+  $("jback").hidden = !t.back_note;
+  renderLines();
+  renderTotals();
+  for (const [id, k] of FIELDS) {
+    const box = $(id);  // an equivalent value ("abc " for "abc") is left as typed: no jumping under the cursor
+    if (!(k in dirty) && tidy(k, box.value) !== (t[k] || "")) box.value = t[k] || "";
+  }
+  if (!same) {  // (re)opened: bring back anything typed here that never reached the server
+    const d = readDraft(t.id);
+    for (const [id, k] of FIELDS) if (typeof d[k] === "string" && tidy(k, d[k]) !== (t[k] || "")) $(id).value = d[k];
+    if (Object.keys(dirtyBoxes()).length) {
+      clearTimeout(fieldTimer);
+      fieldTimer = setTimeout(saveFields, 800);
+    }
+  }
+  keepDraft();
+}
+function renderLines() {
+  const box = $("lines");
+  if (!cur.lines.length) return box.replaceChildren(el("p", "empty", "No lines yet."));
+  box.replaceChildren(...cur.lines.map(ln => {
+    const c = el("div", "card line");
+    c.append(el("div", "desc", ln.desc));
+    const bits = [];
+    if (ln.price != null) bits.push(`${ln.qty} × ${money(ln.price)}`);
+    else bits.push("Labor only");
+    if (ln.labor != null) bits.push("Labor " + money(ln.labor));
+    c.append(el("div", "det", bits.join(" · ")));
+    const acts = el("div", "acts");
+    acts.append(btn("Edit", "light", () => openForm(ln.price == null ? "labor" : "part", ln)),
+                btn("Remove", "danger", () => removeLine(ln)));
+    c.append(acts);
+    return c;
+  }));
+}
+function renderTotals() {
+  const t = cur.totals || {parts: 0, labor: 0, total: 0};
+  const row = (name, v, cls) => {
+    const r = el("div", "tot" + (cls ? " " + cls : ""));
+    r.append(el("span", "", name), el("span", "", money(v)));
+    return r;
+  };
+  $("totals").replaceChildren(row("Parts", t.parts), row("Labor", t.labor), row("Total (before tax)", t.total, "sum"));
+}
+
+// Every change goes through one queue; each save takes the version of known[id], which the previous reply updated,
+// so saves queued before leaving the job still go through.
+function enqueue(fn) {
+  pending++;
+  const p = queue.then(fn).finally(() => { pending--; });
+  queue = p.then(() => {}, () => {});
+  return p;
+}
+const isStale = e => e.status === 409 && e.data.error === "changed on another device";
+
+// build(t) -> {lines} from the newest known copy, or null for a fields-only save.
+// fields: odometer/notes values captured now. A fields-only save that hits a stale version is retried once
+// on the new version (last write wins); a lines save is not (it would undo the other device's lines).
+async function runSave(id, build, fields, keepalive, who) {
+  for (let tries = 0; ; tries++) {
+    const t = known[id];
+    if (!t) return false;
+    try {
+      const body = Object.assign({who: "mechanic", version: t.version}, build ? build(t) : {}, fields);
+      const r = await api(`/api/tickets/${id}`, body, null, keepalive);
+      remember(r.data);
+      draftSaved(id, fields);
+      if (cur && cur.id === id) {
+        setCur(r.data);
+        for (const [bid, k] of FIELDS) {
+          const box = $(bid);  // the server tidies values ("45,120" -> "45120"): show its copy, but not mid-typing
+          if (k in fields && box.value === fields[k] && document.activeElement !== box) box.value = r.data[k] || "";
+          if (k in fields) $(k === "odometer" ? "odoerr" : "noteserr").textContent = "";
+        }
+        if (build) $("lerr").textContent = "";
+      }
+      saved();
+      return true;
+    } catch (e) {
+      if (!build && tries === 0 && isStale(e) && e.data.ticket && e.data.ticket.status === "working"
+          && e.data.ticket.mechanic === who) {
+        remember(e.data.ticket);
+        continue;
+      }
+      conflict(id, e, build ? "Changed on another device, so that change wasn't saved. Showing the latest; try again." : "", !!build);
+      if (build && isStale(e)) {  // typed odometer/notes go again on the new version
+        for (const k in fields) if (queued[k] === fields[k]) delete queued[k];
+        saveFields();
+      }
+      return false;
+    }
+  }
+}
+function save(id, build, fields, keepalive, now) {
+  // now: skip the queue (page closing while a save is in flight); a race with it ends in the stale retry above
+  fields = fields || {};
+  for (const k in fields) queued[k] = fields[k];
+  const run = () => runSave(id, build, fields, keepalive, me);
+  const p = now ? run() : enqueue(run);
+  p.finally(() => { for (const k in fields) if (queued[k] === fields[k]) delete queued[k]; });
+  return p;
+}
+function saveFields(keepalive) {  // send typed odometer/notes not already on their way
+  if (!cur) return Promise.resolve(true);
+  const f = saveableBoxes();
+  if (!Object.keys(f).length) return Promise.resolve(true);
+  return save(cur.id, null, f, keepalive, keepalive && pending > 0);
+}
+function conflict(id, e, staleText, lines) {
+  if (e.status === 401) return;
+  const here = cur && cur.id === id;
+  if (e.status === 409 && e.data.ticket) {
+    const t = e.data.ticket;
+    remember(t);
+    if (!here) return;
+    if (!mineNow(t)) {
+      say(t.status === "working" ? `This job is now ${t.mechanic || "someone else"}'s.` : `This job is ${t.status} now; the phone can't change it.`);
+      return goHome();
+    }
+    setCur(t);
+    say(isStale(e) ? (staleText || "Changed on another device. Showing the latest.") : errText(e));
+  } else if (e.status === 404) {
+    if (here) { say("This job is gone."); goHome(); }
+  } else if (e.status === 400 && here) {
+    showErrors(e);
+    const other = Object.keys((e.data && e.data.errors) || {}).filter(k => k !== "lines");
+    if (lines && other.length) {  // the line was fine; a typed field that rode along wasn't
+      const text = `Fix the ${other.join(" and ")} below first.`;
+      if (editing) $("lerr").textContent = text;
+      else say(text);
+    }
+  } else {
+    say(errText(e));
+  }
+}
+
+const typing = () => { keepDraft(); clearTimeout(fieldTimer); fieldTimer = setTimeout(saveFields, 800); };
+$("odo").addEventListener("input", typing);
+$("notes").addEventListener("input", typing);
+$("odo").addEventListener("change", () => saveFields());
+$("notes").addEventListener("change", () => saveFields());
+document.addEventListener("visibilitychange", () => { if (document.hidden) { keepDraft(); saveFields(true); } else poll(); });
+window.addEventListener("pagehide", () => { keepDraft(); saveFields(true); });
+$("back").addEventListener("click", () => { if (discardLine()) goHome(); });
+$("reload").addEventListener("click", async () => {
+  if (!cur || !discardLine()) return;
+  closeForm();
+  say("");
+  const id = cur.id;
+  saveFields();
+  await queue;
+  if (!cur || cur.id !== id) return;
+  if (Object.keys(dirtyBoxes()).length) return;  // couldn't save them: the error is under the box
+  cur = null;  // makes loadJob replace everything
+  loadJob(id);
+});
+
+// ---- add / edit a line
+const formValues = () => ["ldesc", "lqty", "lprice", "llabor"].map(id => $(id).value).join("\u0000");
+const lineTyped = () => !!editing && formValues() !== formStart;
+function discardLine() {  // true when it's fine to go on (nothing half-typed, or the mechanic said discard)
+  if (!lineTyped()) return true;
+  if (!confirm("Discard this line?")) return false;
+  closeForm();
+  return true;
+}
+function openForm(mode, ln) {
+  if (!cur || !discardLine()) return;
+  editing = {mode, id: ln ? ln.id : 0};
+  $("lftitle").textContent = (ln ? "Edit " : "Add ") + (mode === "part" ? "part" : "labor");
+  $("ldesc").value = ln ? ln.desc : "";
+  $("lqty").value = ln ? String(ln.qty) : "1";
+  $("lprice").value = ln && ln.price != null ? plain(ln.price) : "";
+  $("llabor").value = ln && ln.labor != null ? plain(ln.labor) : "";
+  formStart = formValues();
+  code = ln ? ln.code || "" : "";
+  hintDesc = ln ? ln.desc : "";
+  for (const e of document.querySelectorAll(".partonly")) e.hidden = mode !== "part";
+  $("hints").replaceChildren();
+  $("lerr").textContent = "";
+  $("lineform").hidden = false;
+  $("addbtns").hidden = true;
+  $("lineform").scrollIntoView({block: "start", behavior: "smooth"});
+  if (!ln) $("ldesc").focus();
+}
+function closeForm() {
+  editing = null;
+  clearTimeout(hintTimer);
+  hintSeq++;
+  $("lineform").hidden = true;
+  $("addbtns").hidden = false;
+  $("hints").replaceChildren();
+  $("lerr").textContent = "";
+}
+$("addpart").addEventListener("click", () => openForm("part", null));
+$("addlabor").addEventListener("click", () => openForm("labor", null));
+$("lcancel").addEventListener("click", closeForm);
+
+$("ldesc").addEventListener("input", () => {
+  if (code && $("ldesc").value !== hintDesc) code = "";  // a changed description is no longer that catalog part
+  if (!editing || editing.mode !== "part") return;
+  clearTimeout(hintTimer);
+  const q = $("ldesc").value.trim();
+  const seq = ++hintSeq;
+  if (q.length < 2) return $("hints").replaceChildren();
+  hintTimer = setTimeout(async () => {
+    try {
+      const r = await api("/api/catalog?q=" + encodeURIComponent(q));
+      if (seq !== hintSeq || !editing) return;  // typed more since, or closed
+      showHints(Array.isArray(r.data) ? r.data : []);
+    } catch (e) { /* hints are a nicety */ }
+  }, 250);
+});
+function showHints(hits) {
+  $("hints").replaceChildren(...hits.map(h => {
+    const b = btn("", "", () => {
+      $("ldesc").value = h.description;
+      code = h.code || "";
+      hintDesc = h.description;
+      $("lprice").value = plain(h.part_price);
+      $("llabor").value = plain(h.labor_price);
+      hintSeq++;
+      $("hints").replaceChildren();
+    });
+    b.append(el("span", "", h.description), el("small", "", `Part ${money(h.part_price)} · Labor ${money(h.labor_price)}`));
+    return b;
+  }));
+}
+
+$("lineform").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  if (!editing || !cur) return;
+  const part = editing.mode === "part", id = editing.id;
+  const ln = {desc: $("ldesc").value.trim(), qty: part ? $("lqty").value.trim() : 1,
+              price: part ? $("lprice").value.trim() : null, labor: $("llabor").value.trim(), code};
+  const bad = !ln.desc ? "Type a description." : part && !ln.price ? "Type the part price (0 if none)."
+            : !part && !ln.labor ? "Type the labor charge." : "";
+  $("lerr").textContent = bad;
+  if (bad) return;
+  $("lsave").disabled = true;
+  const ok = await save(cur.id, t => {
+    const lines = t.lines.map(x => Object.assign({}, x));
+    const i = id ? lines.findIndex(x => x.id === id) : -1;
+    if (i >= 0) lines[i] = Object.assign({}, ln, {id});
+    else lines.push(Object.assign({}, ln, {id: 0}));
+    return {lines};
+  }, saveableBoxes());
+  $("lsave").disabled = false;
+  if (ok && editing && editing.id === id) closeForm();
+});
+function saveableBoxes() {  // typed odometer/notes ride along with a lines save
+  clearTimeout(fieldTimer);
+  const f = dirtyBoxes();
+  for (const k of Object.keys(f)) if (queued[k] === f[k]) delete f[k];
+  return f;
+}
+
+function removeLine(ln) {
+  if (!cur || !confirm(`Remove "${ln.desc}"?`)) return;
+  save(cur.id, t => ({lines: t.lines.filter(x => x.id !== ln.id)}), saveableBoxes());
+}
+
+$("finish").addEventListener("click", async () => {
+  if (!cur) return;
+  if (lineTyped()) {
+    $("lerr").textContent = "Save or cancel this line first.";
+    return $("lineform").scrollIntoView({block: "start", behavior: "smooth"});
+  }
+  if (!confirm("Finish this job and send it to the desk?")) return;
+  closeForm();
+  const id = cur.id;
+  $("finish").disabled = true;
+  try {
+    saveFields();
+    await queue;
+    if (!cur || cur.id !== id) return;
+    if (Object.keys(dirtyBoxes()).length) {  // odometer/notes didn't save: say so and stay
+      if (!$("odoerr").textContent && !$("noteserr").textContent && $("msg").hidden) say("Couldn't save the odometer or notes. Try again.");
+      return;
+    }
+    await enqueue(async () => {
+      try {
+        await api(`/api/tickets/${id}/move`, {version: known[id].version, to: "review"});
+        writeDraft(id, {});
+        etag = "";
+        goHome();
+        say("Sent to the desk for review.", true);
+        poll();
+      } catch (e) {
+        conflict(id, e, "Changed on another device. Showing the latest; check it and tap Finish again.");
+      }
+    });
+  } finally {
+    $("finish").disabled = false;
+  }
+});
+
+// ---- start
+me = load(KEY);
+setInterval(poll, 4000);
+(async () => {
+  if (me) {
+    try {  // the office may have taken the name off the list
+      const r = await api("/api/mechanics");
+      if (!(r.data.mechanics || []).includes(me)) { me = ""; store(KEY, ""); }
+    } catch (e) { if (e.status === 401) return; }  // offline: keep the saved name
+  }
+  route();
+  poll();
+})();
+</script>
+</body></html>
