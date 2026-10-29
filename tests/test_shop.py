@@ -38,6 +38,7 @@ class Server:
         self.dir = tempfile.mkdtemp()
         j = lambda n: os.path.join(self.dir, n)
         shop.Handler.log_path, shop.MECHANICS, shop.CATALOG, shop.WEB = j("shop.log"), j("mechanics.txt"), j("parts.csv"), j("web")
+        shop.VEHICLES = j("vehicles.json")
         with open(shop.MECHANICS, "w", encoding="utf8") as f:
             f.write("# who works here\n\nAl Fixit\nBo  Wrench\n")
         with open(shop.CATALOG, "w", encoding="utf8") as f:
@@ -253,6 +254,24 @@ def test_catalog():
         assert call(base, "/api/catalog?q=oil", cookie=c)[1][0]["code"] == "OIL"
         assert call(base, "/api/catalog?q=", cookie=c)[1] == [] and call(base, "/api/catalog", cookie=c)[1] == []
         assert call(base, "/api/catalog?q=brake")[0] == 401
+
+
+def test_vehicles():
+    with Server() as base:
+        cars = {"TOYOTA": {"CAMRY": [1990, 2027]}}
+        with open(shop.VEHICLES, "w", encoding="utf8") as f:
+            json.dump(cars, f)
+        assert call(base, "/api/vehicles")[0] == 401
+        c = login(base)
+        assert call(base, "/api/vehicles", cookie=c) == (200, cars)
+        os.remove(shop.VEHICLES)
+        assert call(base, "/api/vehicles", cookie=c) == (200, cars)  # read once
+        shop.VEHICLES += ".missing"
+        assert call(base, "/api/vehicles", cookie=c) == (200, {})
+        shop.VEHICLES = shop.VEHICLES.replace("vehicles.json", "bad.json")
+        with open(shop.VEHICLES, "w", encoding="utf8") as f:
+            f.write("{not json")
+        assert call(base, "/api/vehicles", cookie=c) == (200, {})
 
 
 def test_mechanics_file_made():

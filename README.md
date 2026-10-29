@@ -26,6 +26,7 @@ Double-click `probe.bat`: a small window opens. Click **▶ Start watching**, th
 Double-click `shop.bat` on the shop PC; it serves on port 8081. Open `http://<shop PC's address>:8081` on the iPad and the phones and type the PIN once (it is in `shop_pin.txt`, made at first start; edit it and restart to change it, which logs every device out).
 - **Desk (iPad, `/desk`):** **New ticket** takes the customer's first and last name, phone, year / make / model, plate (optional) and what they want done. The board shows Waiting / Working / Review / Approved. A ticket in Review shows the mechanic's parts and labor with totals: fix anything, then **Send back** (with a note) or **Approve**. Approved tickets are "Ready for InvoMax"; click **Mark filled** once it is on the InvoMax invoice. The invoice is printed from InvoMax as usual (company copy signed by the customer, plus the customer's copy).
 - **Mechanic (phone, `/tech`):** pick your name once (names come from `mechanics.txt`, one per line). **Accept** a waiting job, add each part (description, qty, price, and the labor to install it; part names from `parts.csv` pop up as hints) or a labor-only line, the odometer and notes. **Finish job** sends it to the desk for review.
+- Year / make / model suggestions on the desk come from `vehicles.json` (from NHTSA, committed; the server stays offline). Once a year, for the new model year, run `python vehicles.py` (needs the internet; re-run it if it lists failed requests) and restart `shop.bat`.
 - Tickets are kept in `tickets.db` on this PC (customer names and phones; git-ignored). Nothing is deleted.
 - An approved ticket becomes an InvoMax draft with `tickets.to_draft(ticket, catalog)`; the InvoMax fill itself is still being built (see `docs/superpowers/HANDOFF.md`).
 
@@ -34,4 +35,4 @@ Online (phones on cellular), done by the owner once: add an ingress rule `- host
 ## Tests
 Test data is made up. Real sample photos go in `tests/samples/` (git-ignored, never committed).
 
-`python tests/test_read.py`, `python tests/test_prices.py`, `python tests/test_ocr.py`, `python tests/test_invomax.py`, `python tests/test_probe.py`, `python tests/test_draft.py`, `python tests/test_recipes.py`, `python tests/test_report.py`, `python tests/test_phone.py`, `python tests/test_tickets.py`, `python tests/test_shop.py` — each prints `ok`.
+`python tests/test_read.py`, `python tests/test_prices.py`, `python tests/test_ocr.py`, `python tests/test_invomax.py`, `python tests/test_probe.py`, `python tests/test_draft.py`, `python tests/test_recipes.py`, `python tests/test_report.py`, `python tests/test_phone.py`, `python tests/test_tickets.py`, `python tests/test_shop.py`, `python tests/test_vehicles.py` — each prints `ok`.

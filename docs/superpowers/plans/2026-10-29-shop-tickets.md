@@ -79,5 +79,10 @@ Each task: an implementer subagent, then two senior reviewers in parallel (A: sp
 - `shop.bat`, `.gitignore` (`tickets.db`, `shop_pin.txt`, `shop.log`, `mechanics.txt`), README section, HANDOFF row, tunnel steps for the owner (ingress `shop.<domain>` → `http://localhost:8081` in `inspection.yml`, `cloudflared tunnel route dns`), test list.
 - Browser check in the app's browser: desk at iPad size and tech at phone size, one ticket through every status, made-up data only.
 
+### T7 — Year / make / model lists (added 2026-10-29)
+- `vehicles.py`: a one-off builder (run by hand, needs the internet) that asks NHTSA's public vPIC API (`GetModelsForMakeYear`, vehicle types passenger car, multipurpose passenger vehicle (MPV) and truck) for each make in a fixed list and each year 1990 → next year, and writes `vehicles.json`: `{"MAKE": {"MODEL": [first year, last year]}}`, makes and models upper-case, sorted. The JSON is committed, so the shop server stays offline.
+- `shop.py`: `GET /api/vehicles` serves `vehicles.json` (cached, `{}` if missing).
+- `web/desk.html`: `year-list` = next year down to 1990; `make-list` = all makes; `model-list` = models of the typed make (and year, when typed) — refreshed as make/year change, in both the New form and the ticket screen. Free text stays allowed (custom or older vehicles).
+
 ## Not in this plan
-Year/make/model option lists; the real InvoMax fill (see HANDOFF "Next"); signature capture; tax; history/search of old tickets; deleting tickets.
+The real InvoMax fill (see HANDOFF "Next"); signature capture; tax; history/search of old tickets; deleting tickets.

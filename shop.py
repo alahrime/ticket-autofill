@@ -19,6 +19,7 @@ LOG = os.path.join(HERE, "shop.log")  # one line per request: time, path (ticket
 DB = os.path.join(HERE, "tickets.db")  # customer data stays on this PC (git-ignored)
 MECHANICS = os.path.join(HERE, "mechanics.txt")  # one name per line; # comments (git-ignored)
 CATALOG = os.path.join(HERE, "parts.csv")
+VEHICLES = os.path.join(HERE, "vehicles.json")  # year / make / model lists, built by vehicles.py
 WEB = os.path.join(HERE, "web")
 TITLE = "Shop tickets"
 MAX_NOTE, MAX_HINTS = 2000, 8
@@ -48,6 +49,22 @@ def hints(q, path=None):
     hits = [p for p in cat.values() if q in p.code.lower() or q in p.description.lower() or any(q in a for a in p.aliases)]
     return [{"code": p.code, "description": p.description, "part_price": p.part_price, "labor_price": p.labor_price}
             for p in hits[:MAX_HINTS]]
+
+
+_vehicles = {}
+
+
+def vehicles():
+    """vehicles.json as bytes, read once per path; {} when missing or unreadable."""
+    if VEHICLES not in _vehicles:
+        try:
+            with open(VEHICLES, "rb") as f:
+                raw = f.read()
+            json.loads(raw)
+        except (OSError, ValueError):
+            raw = b"{}"
+        _vehicles[VEHICLES] = raw
+    return _vehicles[VEHICLES]
 
 
 def as_json(t):
@@ -105,6 +122,8 @@ class Handler(PinHandler):
             return self.reply(200, {"tickets": [as_json(t) for t in found]}, headers=[("ETag", tag)])
         if path == "/api/mechanics":
             return self.reply(200, {"mechanics": load_mechanics()})
+        if path == "/api/vehicles":
+            return self.reply(200, vehicles())
         if path == "/api/catalog":
             return self.reply(200, hints(q.get("q", [""])[0]))
         m = TICKET.fullmatch(path)

@@ -269,6 +269,40 @@ async function loadMechanics() {
   } catch (e) { /* keep the last list; the select still holds the current name */ }
 }
 
+/* ---------- year / make / model lists (vehicles.json) ---------- */
+
+const FIRST_YEAR = 1990, NEXT_YEAR = new Date().getFullYear() + 1;
+let CARS = {}, modelsShown = null, carsLoading = false;  // {"MAKE": {"MODEL": [first, last]}}; the make|year listed
+const MAKE_ALIAS = {CHEVY: "CHEVROLET", VW: "VOLKSWAGEN", MERCEDES: "MERCEDES-BENZ", BENZ: "MERCEDES-BENZ",
+                    "MERCEDES BENZ": "MERCEDES-BENZ", LANDROVER: "LAND ROVER"};
+
+function fillList(id, items) { $(id).replaceChildren(...items.map(v => el("option", {value: v}))); }
+
+async function loadVehicles() {  // at start, and again from poll() while empty; until then typing still works
+  if (carsLoading) return;
+  carsLoading = true;
+  try {
+    const d = (await api("GET", "/api/vehicles")).data;
+    if (!Array.isArray(d)) { CARS = d; fillList("make-list", Object.keys(d)); modelsShown = null; }
+  } catch (e) { /* free text only */ } finally { carsLoading = false; }
+}
+
+function refreshModels(root) {  // models of the make typed in this form; of the typed year when it has any
+  const val = n => (root.querySelector('[name="' + n + '"]') || {}).value;
+  const make = MAKE_ALIAS[squash(val("make"))] || squash(val("make")), y = Number(val("year"));
+  const year = /^[0-9]{4}$/.test(String(val("year")).trim()) && y >= FIRST_YEAR && y <= NEXT_YEAR ? y : 0;
+  if (modelsShown === make + "|" + year) return;
+  modelsShown = make + "|" + year;
+  const models = Object.entries(CARS[make] || {});
+  const built = models.filter(([, r]) => Array.isArray(r) && r[0] <= year && year <= r[1]);
+  fillList("model-list", (year && built.length ? built : models).map(([m]) => m));  // none that year: all of them
+}
+
+function carField(ev) {
+  const root = ev.target.closest && ev.target.closest("#newForm, #viewTicket");
+  if (root && ["year", "make", "model"].includes(ev.target.name)) refreshModels(root);
+}
+
 /* ---------- views ---------- */
 
 function show(view) {
@@ -341,6 +375,7 @@ async function poll() {
       renderBoard();
     }
     if (!S.authLost) setNet(true, "");
+    if (!Object.keys(CARS).length) loadVehicles();  // the first try failed (or the list is missing): try again
     if (S.view === "ticket" && S.cur) await syncOpen(changed);
   } catch (e) {
     if (e.status !== 401) setNet(false, e.message.replace(/\.$/, "") + " — retrying…");
@@ -764,9 +799,12 @@ $("btnNew").addEventListener("click", () => { flash(""); clearNewErrors(); show(
 $("btnBoard").addEventListener("click", () => S.view === "ticket" ? leaveTicket() : leaveNew());
 $("btnCancelNew").addEventListener("click", leaveNew);
 $("newForm").addEventListener("submit", createTicket);
+for (const e of ["focusin", "input", "change"]) document.addEventListener(e, carField);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 
 show("board");
+fillList("year-list", Array.from({length: NEXT_YEAR - FIRST_YEAR + 1}, (_, i) => String(NEXT_YEAR - i)));
+loadVehicles();
 loadMechanics();
 poll();
 setInterval(poll, POLL_MS);
