@@ -119,7 +119,7 @@ def clean_line(d):
         raise ValueError("qty must be more than 0")
     try:
         lid = max(int(d.get("id") or 0), 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # 1e400 in JSON is inf
         lid = 0
     return Line(desc, int(qty) if qty == int(qty) else qty, money(d.get("price"), "price"),
                 money(d.get("labor"), "labor"), text(d.get("code"), "code", 40).upper(), lid)

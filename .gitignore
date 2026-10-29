@@ -13,3 +13,6 @@ phone.log
 cloudflared.log
 tickets.db
 mechanics.txt
+shop_pin.txt
+shop_secret.txt
+shop.log
