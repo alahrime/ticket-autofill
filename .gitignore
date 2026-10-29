@@ -11,3 +11,5 @@ report.json
 phone_pin.txt
 phone.log
 cloudflared.log
+tickets.db
+mechanics.txt
