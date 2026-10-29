@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check-in</title>
+<style>
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{font:22px/1.35 system-ui,-apple-system,sans-serif;margin:0;background:#eef2f7;color:#1d2330}
+main{max-width:920px;margin:0 auto;padding:28px 24px 60px}
+h1{font-size:40px;line-height:1.15;margin:0 0 6px}
+.sub{font-size:22px;color:#4a5466;margin:0 0 24px}
+.card{background:#fff;border-radius:18px;padding:26px 24px;box-shadow:0 2px 10px #0001}
+.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:20px 18px}
+.s2{grid-column:span 2}.s3{grid-column:span 3}.s6{grid-column:1/-1}
+@media (max-width:620px){.s2,.s3{grid-column:1/-1}h1{font-size:32px}}
+label{display:block;font-size:20px;font-weight:600;margin-bottom:6px}
+label .opt{font-weight:400;color:#6a7385}
+input,textarea{font:inherit;font-size:24px;width:100%;min-height:64px;padding:12px 14px;border:2px solid #b8c0cc;border-radius:12px;background:#fff;color:#1d2330}
+input:focus,textarea:focus{outline:none;border-color:#1f5fbf;box-shadow:0 0 0 3px #1f5fbf33}
+input.bad,textarea.bad{border-color:#c0282d}
+textarea{min-height:140px;resize:vertical}
+.ferr{color:#b3171d;font-size:19px;margin-top:6px;min-height:0}
+.ferr:empty{display:none}
+.msg{padding:16px 18px;border-radius:12px;margin:0 0 20px;font-size:21px}
+.msg.err{background:#fde2e2;color:#7d0a0a}
+button{font:inherit;font-size:26px;font-weight:600;min-height:72px;padding:14px 36px;border:0;border-radius:14px;background:#1d7a34;color:#fff;cursor:pointer}
+button:disabled{opacity:.55}
+.actions{margin-top:28px;display:flex;justify-content:flex-end}
+@media (max-width:620px){.actions button{width:100%}}
+.done{text-align:center;padding:60px 24px}
+.done h1{font-size:46px;margin-bottom:18px;overflow-wrap:anywhere}
+.done p{font-size:26px;margin:0 0 30px;overflow-wrap:anywhere}
+.done .small{font-size:19px;color:#6a7385;margin-top:26px}
+.setup{text-align:center;padding:80px 24px}
+.setup p{font-size:30px;font-weight:600;margin:0}
+</style></head><body>
+<main>
+ <section id="viewForm">
+  <h1>Welcome — please check in</h1>
+  <p class="sub">Tell us about you and your car, and we'll take it from here.</p>
+  <div class="card">
+   <div id="err" class="msg err" role="alert" hidden></div>
+   <form id="form" autocomplete="off" novalidate>
+    <div class="grid">
+     <div class="s3"><label for="f-first">First name</label><input id="f-first" name="first" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false" maxlength="80"><div class="ferr" data-for="first"></div></div>
+     <div class="s3"><label for="f-last">Last name</label><input id="f-last" name="last" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false" maxlength="80"><div class="ferr" data-for="last"></div></div>
+     <div class="s3"><label for="f-phone">Phone number</label><input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="off" maxlength="30"><div class="ferr" data-for="phone"></div></div>
+     <div class="s3"><label for="f-plate">License plate <span class="opt">(optional)</span></label><input id="f-plate" name="plate" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="80"><div class="ferr" data-for="plate"></div></div>
+     <div class="s2"><label for="f-year">Year</label><input id="f-year" name="year" inputmode="numeric" maxlength="4" list="year-list" autocomplete="off"><div class="ferr" data-for="year"></div></div>
+     <div class="s2"><label for="f-make">Make</label><input id="f-make" name="make" list="make-list" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false" maxlength="80"><div class="ferr" data-for="make"></div></div>
+     <div class="s2"><label for="f-model">Model</label><input id="f-model" name="model" list="model-list" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false" maxlength="80"><div class="ferr" data-for="model"></div></div>
+     <div class="s6"><label for="f-request">What can we help with today?</label><textarea id="f-request" name="request" autocomplete="off" maxlength="2000"></textarea><div class="ferr" data-for="request"></div></div>
+    </div>
+    <div class="actions"><button type="submit" id="btnSend">Check in</button></div>
+   </form>
+  </div>
+ </section>
+
+ <section id="viewDone" class="card done" hidden>
+  <h1 id="doneTitle"></h1>
+  <p id="doneText"></p>
+  <button type="button" id="btnDone">Done</button>
+  <p class="small">This screen clears itself in a few seconds.</p>
+ </section>
+
+ <section id="viewSetup" class="card setup" hidden>
+  <p>This iPad needs to be set up again. Please ask the staff.</p>
+ </section>
+</main>
+<datalist id="year-list"></datalist>
+<datalist id="make-list"></datalist>
+<datalist id="model-list"></datalist>
+<script>
+"use strict";
+const DONE_MS = 8000, IDLE_MS = 180000, PING_MS = 60000, TIMEOUT_MS = 15000;
+const FIELDS = ["first", "last", "phone", "year", "make", "model", "plate", "request"];
+const S = {view: "form", busy: false, last: Date.now(), doneTimer: 0};
+const $ = id => document.getElementById(id);
+
+/* ---------- server calls ---------- */
+
+class Http extends Error {
+  constructor(status, data) { super((data && data.error) || ("error " + status)); this.status = status; this.data = data || {}; }
+}
+
+function timeoutSignal() {
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) return AbortSignal.timeout(TIMEOUT_MS);
+  const c = new AbortController();
+  setTimeout(() => c.abort(), TIMEOUT_MS);
+  return c.signal;
+}
+
+async function api(method, path, body) {
+  const opt = {method, headers: {}, cache: "no-store", signal: timeoutSignal()};
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  let r, data;
+  try {
+    r = await fetch(path, opt);
+    try { data = JSON.parse(await r.text()); } catch (e) { data = undefined; }
+  } catch (e) {
+    throw new Http(0, {});
+  }
+  if (r.status === 401) { $("form").reset(); show("setup"); throw new Http(401, {}); }  // the kiosk session is gone
+  if (!r.ok || data === undefined || data === null || typeof data !== "object") throw new Http(r.status, data);
+  return data;
+}
+
+/* ---------- year / make / model lists (vehicles.json), as on the admin page ---------- */
+
+const FIRST_YEAR = 1990, NEXT_YEAR = new Date().getFullYear() + 1;
+let CARS = {}, modelsShown = null, carsLoading = false;  // {"MAKE": {"MODEL": [first, last]}}; the make|year listed
+// keep MAKE_ALIAS in sync with admin.html
+const MAKE_ALIAS = {CHEVY: "CHEVROLET", VW: "VOLKSWAGEN", MERCEDES: "MERCEDES-BENZ", BENZ: "MERCEDES-BENZ",
+                    "MERCEDES BENZ": "MERCEDES-BENZ", LANDROVER: "LAND ROVER"};
+
+function squash(s) { return String(s ?? "").trim().split(/\s+/).join(" ").toUpperCase(); }
+
+function fillList(id, items) {
+  $(id).replaceChildren(...items.map(v => { const o = document.createElement("option"); o.value = v; return o; }));
+}
+
+async function loadVehicles() {
+  if (carsLoading) return;
+  carsLoading = true;
+  try {
+    const d = await api("GET", "/api/vehicles");
+    if (!Array.isArray(d)) { CARS = d; fillList("make-list", Object.keys(d)); modelsShown = null; }
+  } catch (e) { /* free text only */ } finally { carsLoading = false; }
+}
+
+function refreshModels() {  // models of the make typed; of the typed year when it has any
+  const f = $("form").elements;
+  const make = MAKE_ALIAS[squash(f.make.value)] || squash(f.make.value), y = Number(f.year.value);
+  const year = /^[0-9]{4}$/.test(f.year.value.trim()) && y >= FIRST_YEAR && y <= NEXT_YEAR ? y : 0;
+  if (modelsShown === make + "|" + year) return;
+  modelsShown = make + "|" + year;
+  const models = Object.entries(CARS[make] || {});
+  const built = models.filter(([, r]) => Array.isArray(r) && r[0] <= year && year <= r[1]);
+  fillList("model-list", (year && built.length ? built : models).map(([m]) => m));  // none that year: all of them
+}
+
+/* ---------- screens ---------- */
+
+function show(view) {
+  S.view = view;
+  $("viewForm").hidden = view !== "form";
+  $("viewDone").hidden = view !== "done";
+  $("viewSetup").hidden = view !== "setup";
+  if (view !== "done") clearTimeout(S.doneTimer);
+  window.scrollTo(0, 0);
+}
+
+function typed() { return FIELDS.some(k => $("form").elements[k].value.trim()); }
+
+function clearErrors() {
+  $("err").hidden = true;
+  for (const d of document.querySelectorAll(".ferr")) d.textContent = "";
+  for (const i of document.querySelectorAll(".bad")) i.classList.remove("bad");
+}
+
+function fresh() {  // an empty form for the next customer
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  $("form").reset();
+  clearErrors();
+  modelsShown = null;
+  fillList("model-list", []);
+  S.last = Date.now();
+  if (S.view !== "setup") show("form");
+}
+
+function lastFour(p) { return p.replace(/\D/g, "").slice(-4); }  // the next customer may be watching: no full number
+
+function friendly(k, msg) {  // the server's field messages, in words for a customer
+  msg = String(msg || "");
+  if (/required/.test(msg)) return {first: "Please enter your first name.", last: "Please enter your last name.",
+    phone: "Please enter your phone number.", year: "Please enter your car's year.", make: "Please enter your car's make.",
+    model: "Please enter your car's model."}[k] || "Please fill this in.";
+  if (k === "phone") return "Please enter a 10-digit phone number.";
+  if (k === "year") return "Please enter the 4-digit year, like 2018.";
+  return msg.charAt(0).toUpperCase() + msg.slice(1);
+}
+
+async function send(ev) {
+  ev.preventDefault();
+  if (S.busy || S.view !== "form") return;
+  clearErrors();
+  const f = $("form").elements, body = {};
+  for (const k of FIELDS) body[k] = f[k].value;
+  S.busy = true; $("btnSend").disabled = true;
+  try {
+    await api("POST", "/api/tickets", body);
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    const first = body.first.trim().split(/\s+/).join(" ");
+    $("doneTitle").textContent = "Thanks, " + first + "!";
+    $("doneText").textContent = "We'll call the number ending " + lastFour(body.phone) + " when it's ready.";
+    $("form").reset();
+    show("done");
+    S.doneTimer = setTimeout(fresh, DONE_MS);
+  } catch (e) {
+    if (e.status === 401) return;
+    const errors = (e.status === 400 && e.data && e.data.errors) || {};
+    let first = null;
+    for (const [k, v] of Object.entries(errors)) {
+      const d = document.querySelector('.ferr[data-for="' + k + '"]'), i = f[k];
+      if (d) d.textContent = friendly(k, v);
+      if (i) { i.classList.add("bad"); first = first || i; }
+    }
+    const err = $("err");
+    err.textContent = Object.keys(errors).length ? "Please check the marked fields."
+      : e.status === 0 ? "We couldn't send that. Please try again in a moment, or ask the staff."
+      : "Something went wrong. Please try again, or ask the staff.";
+    err.hidden = false;
+    window.scrollTo(0, 0);
+  } finally {
+    S.busy = false; $("btnSend").disabled = false;
+  }
+}
+
+async function ping() {  // shows the set-up message once the admin signs this iPad out; retries the car lists
+  if (S.view === "setup" || document.hidden) return;
+  try { await api("GET", "/api/me"); } catch (e) { return; }
+  if (!Object.keys(CARS).length) loadVehicles();
+}
+
+function idleCheck() {  // a half-filled form left alone: clear it for the next customer
+  if (S.view === "form" && !S.busy && typed() && Date.now() - S.last > IDLE_MS) fresh();
+}
+
+/* ---------- start ---------- */
+
+$("form").addEventListener("submit", send);
+$("btnDone").addEventListener("click", fresh);
+for (const e of ["input", "change", "focusin"]) {
+  $("form").addEventListener(e, ev => {
+    S.last = Date.now();
+    if (["year", "make", "model"].includes(ev.target.name)) refreshModels();
+    if (e === "input" && ev.target.classList.contains("bad")) {  // fixing a marked field clears its mark
+      ev.target.classList.remove("bad");
+      const d = document.querySelector('.ferr[data-for="' + ev.target.name + '"]');
+      if (d) d.textContent = "";
+    }
+  });
+}
+for (const e of ["touchstart", "keydown", "pointerdown"]) document.addEventListener(e, () => { S.last = Date.now(); }, {passive: true});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
+window.addEventListener("pageshow", e => { if (e.persisted) { fresh(); ping(); } });  // back/forward cache: never show the last customer
+
+fillList("year-list", Array.from({length: NEXT_YEAR - FIRST_YEAR + 1}, (_, i) => String(NEXT_YEAR - i)));
+show("form");
+loadVehicles();
+setInterval(ping, PING_MS);
+setInterval(idleCheck, 5000);
+</script>
+</body></html>

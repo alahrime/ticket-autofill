@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Desk - Shop tickets</title>
+<title>Admin - Shop tickets</title>
 <style>
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -70,12 +70,32 @@ td .code{display:block;font-size:13px;color:#666;margin-top:2px}
 .totals b{font-size:20px}
 .ro{white-space:pre-wrap;overflow-wrap:anywhere}
 .ready{font-size:22px;font-weight:600;color:#145a26}
+/* signed in */
+#me{font-size:14px;color:#555;overflow-wrap:anywhere}
+#logoutForm{margin:0}
+/* mechanics & admins */
+.users td,.users th{padding:8px 6px;border-bottom:1px solid #eee}
+.users td{overflow-wrap:break-word}
+.users td.c-name{overflow-wrap:anywhere}
+.users .role-inline{display:none;font-size:14px;color:#666}
+input.pin{-webkit-text-security:disc}
+.users .btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.users .btns button{min-height:44px;padding:8px 12px;font-size:15px}
+.users tr.off td:not(:last-child){color:#999}
+.you{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:10px;background:#dbe7fb;color:#1f3f7a;font-size:13px}
+.onoff{display:inline-block;padding:2px 10px;border-radius:10px;font-size:14px;background:#e0f2e4;color:#145a26}
+.onoff.no{background:#eee;color:#777}
+.hint{font-size:14px;color:#666;margin-top:4px}
+@media (max-width:640px){.users .c-created,.users .c-role{display:none}.users .role-inline{display:block}}
 </style></head><body>
 <header>
  <h1 id="title">Desk</h1>
  <span id="net" role="status" aria-live="polite"></span>
+ <span id="me"></span>
  <button type="button" id="btnNew">New ticket</button>
+ <button type="button" id="btnUsers" class="light">Mechanics &amp; admins</button>
  <button type="button" id="btnBoard" class="light" hidden>Back to board</button>
+ <form id="logoutForm" method="post" action="/logout"><button type="submit" class="light">Sign out</button></form>
 </header>
 <main>
  <div id="flash" class="msg" role="status" aria-live="polite" hidden></div>
@@ -105,6 +125,56 @@ td .code{display:block;font-size:13px;color:#666;margin-top:2px}
  </section>
 
  <section id="viewTicket" hidden></section>
+
+ <section id="viewUsers" hidden>
+  <div class="box">
+   <h2>Mechanics &amp; admins</h2>
+   <div id="uErr" class="msg err" role="status" aria-live="polite" hidden></div>
+   <div id="uOk" class="msg ok" role="status" aria-live="polite" hidden></div>
+   <table class="users">
+    <thead><tr><th>Name</th><th class="c-role">Role</th><th>Account</th><th class="c-created">Added</th><th></th></tr></thead>
+    <tbody id="uList"></tbody>
+   </table>
+  </div>
+
+  <div class="box" id="resetBox" hidden>
+   <h2 id="resetTitle">Reset PIN</h2>
+   <div id="resetWarn" class="msg note" hidden></div>
+   <div id="resetErr" class="msg err" role="status" aria-live="polite" hidden></div>
+   <form id="resetForm" autocomplete="off" novalidate>
+    <div class="grid">
+     <div><label for="r-secret" id="r-label">New PIN</label><input id="r-secret" name="secret" type="text" class="pin" autocomplete="off" inputmode="numeric"><div class="hint" id="r-hint"></div><div class="ferr" data-for="secret"></div></div>
+     <div><label for="r-again" id="r-label2">Same PIN again</label><input id="r-again" name="again" type="text" class="pin" autocomplete="off" inputmode="numeric"><div class="ferr" data-for="again"></div></div>
+    </div>
+    <div class="actions"><button type="submit" id="btnReset">Save</button><button type="button" class="light" id="btnCancelReset">Cancel</button></div>
+   </form>
+  </div>
+
+  <div class="box">
+   <h2>Add a mechanic or admin</h2>
+   <div id="addErr" class="msg err" role="status" aria-live="polite" hidden></div>
+   <form id="addForm" autocomplete="off" novalidate>
+    <div class="grid">
+     <div><label for="a-name">Name</label><input id="a-name" name="name" autocapitalize="words" autocorrect="off" spellcheck="false" maxlength="40"><div class="ferr" data-for="name"></div></div>
+     <div><label for="a-role">Role</label><select id="a-role" name="role"><option value="mechanic">Mechanic</option><option value="admin">Admin</option></select><div class="ferr" data-for="role"></div></div>
+     <div><label for="a-secret" id="a-label">PIN</label><input id="a-secret" name="secret" type="text" class="pin" autocomplete="off" inputmode="numeric"><div class="hint" id="a-hint"></div><div class="ferr" data-for="secret"></div></div>
+     <div><label for="a-again" id="a-label2">Same PIN again</label><input id="a-again" name="again" type="text" class="pin" autocomplete="off" inputmode="numeric"><div class="ferr" data-for="again"></div></div>
+    </div>
+    <div class="actions"><button type="submit" id="btnAdd">Add</button></div>
+   </form>
+  </div>
+
+  <div class="box">
+   <h2>Check-in iPad</h2>
+   <p class="meta">Customers check themselves in on an iPad set up here. It can only create new tickets — it sees nothing else.</p>
+   <div id="kErr" class="msg err" role="status" aria-live="polite" hidden></div>
+   <div id="kOk" class="msg ok" role="status" aria-live="polite" hidden></div>
+   <div class="actions">
+    <button type="button" id="btnKiosk">Use this iPad for check-in</button>
+    <button type="button" class="warn" id="btnRevoke">Sign out all check-in iPads</button>
+   </div>
+  </div>
+ </section>
 </main>
 <datalist id="year-list"></datalist>
 <datalist id="make-list"></datalist>
@@ -139,6 +209,9 @@ const S = {
   polling: false,   // one poll at a time
   openSeq: 0,       // only the latest tap on a card opens a ticket
   authLost: false,  // a 401 came while the desk had typing on screen
+  me: null,         // {role, name, id} from /api/me
+  users: [],        // from /api/users
+  resetting: null,  // the user whose PIN/password the reset box is for
 };
 
 const $ = id => document.getElementById(id);
@@ -222,12 +295,16 @@ class Http extends Error {
   constructor(status, data) { super((data && data.error) || ("error " + status)); this.status = status; this.data = data || {}; }
 }
 
-function newFormTyped() { return [...$("newForm").elements].some(e => (e.tagName === "INPUT" || e.tagName === "TEXTAREA") && e.value.trim()); }
-function hasTyping() { return S.dirty || (S.view === "new" && newFormTyped()); }
+function formTyped(f) { return [...f.elements].some(e => (e.tagName === "INPUT" || e.tagName === "TEXTAREA") && e.value.trim()); }
+function newFormTyped() { return formTyped($("newForm")); }
+function hasTyping() {
+  return S.dirty || (S.view === "new" && newFormTyped()) ||
+         (S.view === "users" && (formTyped($("addForm")) || (!$("resetBox").hidden && formTyped($("resetForm")))));
+}
 
-function on401() {  // PIN cookie gone: the reload shows the PIN page, unless that would lose typing
+function on401() {  // session gone: the reload shows the sign-in page, unless that would lose typing
   if (!hasTyping()) { location.reload(); return; }
-  if (!S.authLost) flash("The PIN sign-in ended. Copy what you typed somewhere, then reload this page to sign in again.");
+  if (!S.authLost) flash("You were signed out. Copy what you typed somewhere, then reload this page to sign in again.");
   S.authLost = true;
   setNet(false, "Sign-in needed — reload when ready");
 }
@@ -254,7 +331,8 @@ async function api(method, path, body, headers) {
   } catch (e) {  // offline, timed out, dropped
     throw new Http(0, {error: OFFLINE});
   }
-  if (r.status === 401) { on401(); throw new Http(401, {error: "PIN needed"}); }
+  if (r.status === 401) { on401(); throw new Http(401, {error: "Sign-in needed"}); }
+  if (r.status === 403) throw new Http(403, {error: "Not allowed — this account can't do that."});
   if (data === undefined || data === null || typeof data !== "object") {
     throw new Http(r.status, {error: r.ok ? "Unexpected reply from the server" : "Server error (" + r.status + ")"});
   }
@@ -310,9 +388,11 @@ function show(view) {
   $("viewBoard").hidden = view !== "board";
   $("viewNew").hidden = view !== "new";
   $("viewTicket").hidden = view !== "ticket";
+  $("viewUsers").hidden = view !== "users";
   $("btnNew").hidden = view !== "board";
+  $("btnUsers").hidden = view !== "board";
   $("btnBoard").hidden = view === "board";
-  if (view !== "ticket") $("title").textContent = view === "new" ? "New ticket" : "Desk";
+  if (view !== "ticket") $("title").textContent = {new: "New ticket", users: "Mechanics & admins"}[view] || "Desk";
   window.scrollTo(0, 0);
 }
 
@@ -620,7 +700,7 @@ function recalc() {  // live Parts / Labor / Total from the typed lines, each li
 
 function readForm() {
   const v = $("viewTicket"), t = S.cur;
-  const body = {version: t.version, who: "desk"};
+  const body = {version: t.version};  // who comes from the session
   for (const [k] of FIELDS) body[k] = v.querySelector("#t-" + k).value;
   const mech = v.querySelector("select#t-mechanic");
   if (mech && mech.value) body.mechanic = mech.value;
@@ -799,17 +879,283 @@ async function markFilled() {
   if (t) { S.dirty = false; leaveTicket(); flash("Marked filled: " + fullName(t) + ".", "ok"); }
 }
 
+/* ---------- signed in as ---------- */
+
+async function loadMe() {
+  try {
+    const d = (await api("GET", "/api/me")).data;
+    S.me = {role: String(d.role || ""), name: String(d.name || ""), id: typeof d.id === "number" ? d.id : null};
+    $("me").textContent = S.me.name ? "Signed in as " + S.me.name : "";
+    if (S.view === "users") renderUsers();
+  } catch (e) { /* the header just stays blank */ }
+}
+
+function isMe(u) {
+  if (!S.me) return false;
+  if (S.me.id !== null) return u.id === S.me.id;
+  return u.role === "admin" && String(u.name).toLowerCase() === S.me.name.toLowerCase();
+}
+
+$("logoutForm").addEventListener("submit", ev => {
+  if (hasTyping() && !confirm("Sign out and lose what you typed?")) ev.preventDefault();
+});
+
+/* ---------- mechanics & admins ---------- */
+
+const SECRET = {  // what each role signs in with (accounts.py: PIN 6-8 digits, password 10+ characters)
+  mechanic: {word: "PIN", hint: "6 to 8 digits. The mechanic signs in on the phone page with their name and this PIN.",
+             inputMode: "numeric", pattern: "[0-9]*", maxLength: 8},
+  admin: {word: "password", hint: "At least 10 characters. Signs in on this admin page.",
+          inputMode: "text", pattern: "", maxLength: 200},
+};
+
+function secretKind(role) { return SECRET[role] || SECRET.mechanic; }
+function secretOk(role, s) { return role === "admin" ? s.length >= 10 : /^[0-9]{6,8}$/.test(s); }  // the server checks too
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+function shapeSecret(p, role) {  // the right keyboard and words for the role; p: "a" (add) or "r" (reset)
+  const k = secretKind(role);
+  for (const i of [$(p + "-secret"), $(p + "-again")]) {
+    i.inputMode = k.inputMode;
+    if (k.pattern) i.setAttribute("pattern", k.pattern); else i.removeAttribute("pattern");
+    i.maxLength = k.maxLength;
+    const pin = role !== "admin";  // a PIN never goes to the browser's password store (keychain) on the admin's iPad
+    i.type = pin ? "text" : "password";
+    i.autocomplete = pin ? "off" : "new-password";
+    i.classList.toggle("pin", pin);
+    i.autocapitalize = "off"; i.spellcheck = false;
+  }
+  $(p + "-label").textContent = p === "r" ? "New " + k.word : cap(k.word);
+  $(p + "-label2").textContent = "Same " + k.word + " again";
+  $(p + "-hint").textContent = k.hint;
+}
+
+function usersBusy(on) {  // one save at a time on the users screen: its buttons wait for the reply
+  S.busy = on;
+  for (const b of $("viewUsers").querySelectorAll("button")) b.disabled = on;
+}
+
+function boxMsg(id, text) { const b = $(id); b.textContent = text || ""; b.hidden = !text; }
+
+function clearFieldErrors(root) { for (const d of root.querySelectorAll(".ferr")) d.textContent = ""; }
+
+function fieldErrors(root, err, box) {  // 400 {errors: {name|role|secret|active}} next to the fields, the rest in box
+  const errors = (err.data && err.data.errors) || {};
+  const rest = [];
+  for (const [k, v] of Object.entries(errors)) {
+    const d = root.querySelector('.ferr[data-for="' + k + '"]');
+    if (d) d.textContent = cap(String(v)); else rest.push(cap(String(v)));
+  }
+  boxMsg(box, rest.length ? rest.join("; ") : Object.keys(errors).length ? "" : cap(err.message || "Couldn't save"));
+}
+
+function fmtDate(iso) {
+  const t = new Date(iso);
+  return isFinite(t.getTime()) ? t.toLocaleDateString(undefined, {year: "numeric", month: "short", day: "numeric"}) : String(iso || "");
+}
+
+async function loadUsers() {
+  try {
+    const r = await api("GET", "/api/users");
+    if (!Array.isArray(r.data.users)) throw new Http(200, {error: "Unexpected reply from the server"});
+    S.users = r.data.users;
+    renderUsers();
+  } catch (e) {
+    if (e.status !== 401) boxMsg("uErr", e.message || "Couldn't load the list");
+  }
+}
+
+function renderUsers() {
+  const rows = S.users.map(u => {
+    const me = isMe(u), word = secretKind(u.role).word, role = u.role === "admin" ? "Admin" : "Mechanic";
+    return el("tr", {class: u.active ? "" : "off"},
+      el("td", {class: "c-name"}, el("b", {text: u.name}), me ? el("span", {class: "you", text: "you"}) : null,
+        el("span", {class: "role-inline", text: role})),  // narrow screens: the role under the name
+      el("td", {class: "c-role", text: role}),
+      el("td", {}, el("span", {class: "onoff" + (u.active ? "" : " no"), text: u.active ? "On" : "Off"})),
+      el("td", {class: "c-created", text: fmtDate(u.created)}),
+      el("td", {}, el("div", {class: "btns"},
+        el("button", {type: "button", class: "light", text: "Reset " + word, onclick: () => openReset(u)}),
+        el("button", {type: "button", class: u.active ? "warn" : "go", text: u.active ? "Turn off" : "Turn on",
+                      onclick: () => setActive(u, !u.active)}))));
+  });
+  if (!rows.length) rows.push(el("tr", {}, el("td", {colSpan: 5, class: "empty", text: "No accounts yet."})));
+  $("uList").replaceChildren(...rows);
+}
+
+function showUsers() {
+  flash("");
+  boxMsg("uErr", ""); boxMsg("uOk", ""); boxMsg("kErr", ""); boxMsg("kOk", "");
+  show("users");
+  renderUsers();
+  loadUsers();
+  loadMe();
+}
+
+function leaveUsers() {
+  if (hasTyping() && !confirm("Leave without saving what you typed?")) return;
+  $("addForm").reset(); clearFieldErrors($("addForm")); boxMsg("addErr", "");
+  closeReset();
+  show("board");
+}
+
+function addRoleChanged() {
+  shapeSecret("a", $("a-role").value);
+}
+
+async function addUser(ev) {
+  ev.preventDefault();
+  if (S.busy) return;
+  const f = $("addForm"), role = f.elements.role.value, word = secretKind(role).word;
+  clearFieldErrors(f); boxMsg("addErr", ""); boxMsg("uOk", "");
+  if (f.elements.secret.value !== f.elements.again.value) {
+    f.querySelector('.ferr[data-for="again"]').textContent = "The two " + word + "s don't match.";
+    return;
+  }
+  usersBusy(true);
+  try {
+    const r = await api("POST", "/api/users", {name: f.elements.name.value, role, secret: f.elements.secret.value});
+    f.reset(); addRoleChanged();
+    boxMsg("uOk", "Added " + r.data.name + " (" + (r.data.role === "admin" ? "admin" : "mechanic") + ").");
+    loadUsers();
+  } catch (e) {
+    if (e.status === 400) fieldErrors(f, e, "addErr");
+    else if (e.status !== 401) boxMsg("addErr", e.message || "Couldn't add");
+  } finally {
+    usersBusy(false);
+  }
+}
+
+function openReset(u) {
+  const word = secretKind(u.role).word;
+  S.resetting = u;
+  $("resetForm").reset(); clearFieldErrors($("resetForm")); boxMsg("resetErr", "");
+  $("resetTitle").textContent = "Reset " + word + " for " + u.name;
+  shapeSecret("r", u.role);
+  boxMsg("resetWarn", isMe(u) ? "This is your own " + word + ". Your other devices will be signed out; this one stays signed in."
+                              : u.name + " will be signed out everywhere and must use the new " + word + ".");
+  $("resetBox").hidden = false;
+  $("resetBox").scrollIntoView({block: "start"});
+  $("r-secret").focus();
+}
+
+function closeReset() {
+  S.resetting = null;
+  $("resetForm").reset(); clearFieldErrors($("resetForm")); boxMsg("resetErr", "");
+  $("resetBox").hidden = true;
+}
+
+async function resetSecret(ev) {
+  ev.preventDefault();
+  const u = S.resetting, f = $("resetForm");
+  if (!u || S.busy) return;
+  const word = secretKind(u.role).word;
+  clearFieldErrors(f); boxMsg("resetErr", ""); boxMsg("uOk", "");
+  if (!f.elements.secret.value) { f.querySelector('.ferr[data-for="secret"]').textContent = "Type the new " + word + "."; return; }
+  if (f.elements.secret.value !== f.elements.again.value) {
+    f.querySelector('.ferr[data-for="again"]').textContent = "The two " + word + "s don't match.";
+    return;
+  }
+  if (!secretOk(u.role, f.elements.secret.value)) {
+    f.querySelector('.ferr[data-for="secret"]').textContent = secretKind(u.role).hint.split(".")[0] + ".";
+    return;
+  }
+  if (!confirm(isMe(u) ? "Change your own " + word + "? Your other devices will be signed out."
+                       : "Set a new " + word + " for " + u.name + "? They'll be signed out everywhere.")) return;
+  usersBusy(true);
+  try {
+    await api("POST", "/api/users/" + u.id, {secret: f.elements.secret.value});
+    closeReset();
+    boxMsg("uOk", "New " + word + " saved for " + u.name + ".");
+    loadUsers();
+  } catch (e) {
+    if (e.status === 400) fieldErrors(f, e, "resetErr");
+    else if (e.status !== 401) boxMsg("resetErr", e.message || "Couldn't save");
+  } finally {
+    usersBusy(false);
+  }
+}
+
+async function setActive(u, active) {
+  if (S.busy) return;
+  const me = isMe(u);
+  const q = active ? "Turn " + u.name + " back on? They can sign in again."
+          : me ? "Turn off your own account? You'll be signed out right away and can't sign in again until another admin turns you back on."
+          : "Turn off " + u.name + "? They'll be signed out everywhere and can't sign in" +
+            (u.role === "mechanic" ? "; their name leaves the mechanic list." : ".");
+  if (!confirm(q)) return;
+  boxMsg("uErr", ""); boxMsg("uOk", "");
+  usersBusy(true);
+  try {
+    await api("POST", "/api/users/" + u.id, {active});
+    if (me && !active) { location.reload(); return; }  // signed out: the sign-in page
+    boxMsg("uOk", u.name + (active ? " is on again." : " is turned off."));
+    loadUsers();
+    if (u.role === "mechanic") loadMechanics();
+  } catch (e) {
+    if (e.status === 400) {
+      const errs = (e.data && e.data.errors) || {};
+      boxMsg("uErr", errs.active ? (/admin/.test(errs.active) ? "Can't turn off the last admin — add another admin first."
+                                                                : cap(String(errs.active)))
+                                 : cap(e.message || "Couldn't change it"));
+    } else if (e.status !== 401) boxMsg("uErr", e.message || "Couldn't change it");
+  } finally {
+    usersBusy(false);
+  }
+}
+
+async function useForCheckin() {
+  if (S.busy) return;
+  if (!confirm((hasTyping() ? "What you typed on this page will be lost. " : "") +
+               "This signs you out here and turns this iPad into the customer check-in screen. " +
+               "Don't let Safari save your password on this iPad. Turn on Guided Access to keep customers on this page. Continue?")) return;
+  boxMsg("kErr", ""); boxMsg("kOk", "");
+  usersBusy(true);
+  try {
+    await api("POST", "/api/kiosk", {});
+    location.replace("/checkin");  // Back can't return to the admin page
+  } catch (e) {
+    if (e.status !== 401) boxMsg("kErr", e.message || "Couldn't set up check-in");
+    usersBusy(false);
+  }
+}
+
+async function revokeKiosks() {
+  if (S.busy) return;
+  if (!confirm("Sign out every check-in iPad? Each one will need to be set up again from this page.")) return;
+  boxMsg("kErr", ""); boxMsg("kOk", "");
+  usersBusy(true);
+  try {
+    await api("POST", "/api/kiosk/revoke", {});
+    boxMsg("kOk", "All check-in iPads are signed out.");
+  } catch (e) {
+    if (e.status !== 401) boxMsg("kErr", e.message || "Couldn't sign them out");
+  } finally {
+    usersBusy(false);
+  }
+}
+
 /* ---------- start ---------- */
 
 $("btnNew").addEventListener("click", () => { flash(""); clearNewErrors(); show("new"); $("n-first").focus(); });
-$("btnBoard").addEventListener("click", () => S.view === "ticket" ? leaveTicket() : leaveNew());
+$("btnUsers").addEventListener("click", showUsers);
+$("btnBoard").addEventListener("click", () => S.view === "ticket" ? leaveTicket() : S.view === "users" ? leaveUsers() : leaveNew());
+$("a-role").addEventListener("change", addRoleChanged);
+$("addForm").addEventListener("submit", addUser);
+$("resetForm").addEventListener("submit", resetSecret);
+$("btnCancelReset").addEventListener("click", closeReset);
+$("btnKiosk").addEventListener("click", useForCheckin);
+$("btnRevoke").addEventListener("click", revokeKiosks);
 $("btnCancelNew").addEventListener("click", leaveNew);
 $("newForm").addEventListener("submit", createTicket);
 for (const e of ["focusin", "input", "change"]) document.addEventListener(e, carField);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+window.addEventListener("pageshow", e => { if (e.persisted) location.reload(); });  // from the back/forward cache: ask the server again
 
 show("board");
 fillList("year-list", Array.from({length: NEXT_YEAR - FIRST_YEAR + 1}, (_, i) => String(NEXT_YEAR - i)));
+addRoleChanged();
+loadMe();
 loadVehicles();
 loadMechanics();
 poll();
