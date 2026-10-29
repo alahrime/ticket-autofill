@@ -22,9 +22,9 @@ class LoginFailed(Exception):
 
 class Locked(Exception):
     """Too many wrong tries for this name or client (or the server is busy); .retry_after is seconds to wait."""
-    def __init__(self, retry_after, msg="too many wrong tries; wait and try again"):
+    def __init__(self, retry_after, msg="too many wrong tries; wait and try again", busy=False):
         super().__init__(msg)
-        self.retry_after = max(int(retry_after + 0.999), 1)
+        self.retry_after, self.busy = max(int(retry_after + 0.999), 1), busy  # busy: too many logins at once
 
 
 def utf8(s):
@@ -181,7 +181,9 @@ class Accounts:
             raise Invalid(errors)
         h = hash_secret(secret, self.iterations)
         created = datetime.fromtimestamp(self.now()).isoformat(timespec="seconds")
-        with self.lock:
+        with self.lock:  # NOCASE only folds ASCII: Strauss and Strauß are one name too
+            if any(n.casefold() == name.casefold() for (n,) in self.db.execute("SELECT name FROM users")):
+                raise Invalid({"name": f"{name} is already taken"})
             try:
                 id = self.db.execute("INSERT INTO users (name, role, hash, active, created) VALUES (?, ?, ?, 1, ?)",
                                      (name, role, h, created)).lastrowid
@@ -291,7 +293,7 @@ class Accounts:
         name = squash(name if isinstance(name, str) else "")[:80]
         keys = (("name", name.casefold()), ("client", client_key(client)))
         if not self.hashing.acquire(timeout=self.hash_wait):
-            raise Locked(5, "busy; try again in a few seconds")
+            raise Locked(5, "busy; try again in a few seconds", busy=True)
         try:
             t = self.now()
             with self.fails_lock:

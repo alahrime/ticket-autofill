@@ -1,9 +1,11 @@
 import http.client, json, os, re, shutil, sys, tempfile, threading, time, urllib.request
+from urllib.parse import urlencode
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from http.server import ThreadingHTTPServer
-import pinweb, shop, tickets
+import accounts, pinweb, shop, tickets
 
-PIN = "730146"
+ADMIN, PASSWORD = "Owner Test", "made-up-pass-1"
+PINS = {"Al Fixit": "246810", "Bo Wrench": "135790"}
 CAR = {"first": "Jane", "last": "Testcase", "phone": "555 010 0000", "year": "2019", "make": "Cadillac",
        "model": "XT5", "plate": "tst-0001", "request": "brakes squeak"}
 
@@ -14,8 +16,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def call(base, path, data=None, cookie="", headers=None):
-    """-> (status, parsed JSON or raw bytes, or the Set-Cookie of a login); call.headers = the reply's headers.
-    API posts go as application/json unless headers say otherwise."""
+    """-> (status, parsed JSON or raw bytes); call.headers = the reply's headers.
+    API posts go as application/json unless headers say otherwise; dicts to other paths go as a form."""
+    if isinstance(data, dict) and not path.startswith("/api/"):
+        data = urlencode(data).encode()
     body = data if isinstance(data, bytes) or data is None else json.dumps(data).encode()
     h = {"Cookie": cookie} if cookie else {}
     if data is not None and path.startswith("/api/"):
@@ -30,27 +34,38 @@ def call(base, path, data=None, cookie="", headers=None):
     try:
         return code, json.loads(raw)
     except ValueError:
-        return code, raw if "Set-Cookie" not in headers else headers["Set-Cookie"]
+        return code, raw
+
+
+def sid():
+    """The sid cookie the last call set, as a Cookie header value."""
+    return call.headers["Set-Cookie"].split(";")[0]
 
 
 class Server:
+    def __init__(self, admin=True):
+        self.admin = admin
+
     def __enter__(self):
         self.dir = tempfile.mkdtemp()
         j = lambda n: os.path.join(self.dir, n)
-        shop.Handler.log_path, shop.MECHANICS, shop.CATALOG, shop.WEB = j("shop.log"), j("mechanics.txt"), j("parts.csv"), j("web")
-        shop.VEHICLES = j("vehicles.json")
-        with open(shop.MECHANICS, "w", encoding="utf8") as f:
-            f.write("# who works here\n\nAl Fixit\nBo  Wrench\n")
+        shop.Handler.log_path, shop.CATALOG, shop.WEB, shop.VEHICLES = j("shop.log"), j("parts.csv"), j("web"), j("vehicles.json")
+        shop.SETUP = j("setup_code.txt")
+        shop.Handler.setup_fails.clear()
         with open(shop.CATALOG, "w", encoding="utf8") as f:
             f.write("code,description,aliases,sided,part_price,labor_price\n"
                     "FBP,FRONT BRAKE PADS,front brake pads|front pads,no,100,100\n"
                     "OIL,OIL CHANGE,oil change,no,40,0\n"
                     + "".join(f"BR{i},BRAKE THING {i},brake thing {i},no,{i},5\n" for i in range(10)))
-        shop.Handler.pin, shop.Handler.secret, shop.Handler.store = PIN, "made-up-test-secret", tickets.Store(j("tickets.db"))
-        shop.Handler.fails.clear()
+        shop.Handler.store = tickets.Store(j("tickets.db"))
+        self.acc = shop.Handler.accounts = accounts.Accounts(shop.Handler.store, iterations=1000)  # fast hashes
+        self.ids = {ADMIN: self.acc.add(ADMIN, "admin", PASSWORD)["id"]} if self.admin else {}
+        for name, pin in PINS.items():
+            self.ids[name] = self.acc.add(name, "mechanic", pin)["id"]
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), shop.Handler)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
-        return f"http://127.0.0.1:{self.srv.server_address[1]}"
+        self.base = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        return self
 
     def __exit__(self, *a):
         self.srv.shutdown()
@@ -58,141 +73,313 @@ class Server:
         shop.Handler.store.close()
         shutil.rmtree(self.dir)
 
-
-def login(base):
-    code, cookie = call(base, "/login", f"pin={PIN}".encode())
-    assert code == 303 and cookie.startswith("shop=") and "HttpOnly" in cookie and "SameSite=Strict" in cookie
-    return cookie.split(";")[0]
+    def log(self):
+        with open(shop.Handler.log_path, encoding="utf8") as f:
+            return f.read()
 
 
-def test_shop_flow():
-    with Server() as base:
-        for p in ("/", "/desk", "/tech"):
-            assert b'name="pin"' in call(base, p)[1]  # PIN page until logged in
-        assert call(base, "/api/tickets")[0] == 401 and call(base, "/api/tickets", CAR)[0] == 401
-        assert call(base, "/api/tickets/1/move", {"version": 1, "to": "working"})[0] == 401
-        assert call(base, "/login", b"pin=111111")[0] == 401
-        c = login(base)
-        assert b'href="/desk"' in call(base, "/", cookie=c)[1]
-        assert b"isn't built yet" in call(base, "/tech", cookie=c)[1]
+def admin(base, password=PASSWORD):
+    code, _ = call(base, "/login/admin", {"name": ADMIN, "secret": password})
+    assert code == 303 and call.headers["Location"] == "/admin"
+    return sid()
+
+
+def tech(base, name):
+    code, _ = call(base, "/login/tech", {"name": name, "secret": PINS[name]})
+    assert code == 303 and call.headers["Location"] == "/tech"
+    return sid()
+
+
+def kiosk(base, password=PASSWORD):
+    a = admin(base, password)
+    assert call(base, "/api/kiosk", {}, a) == (200, {"ok": True})
+    k = sid()
+    assert call(base, "/api/me", cookie=a)[0] == 401  # the enrolling admin's session is gone
+    return k
+
+
+def test_pages_and_sign_in():
+    with Server() as s:
+        b = s.base
+        page = call(b, "/")[1]
+        assert all(f'href="/{p}"'.encode() in page for p in ("checkin", "tech", "admin"))
+        assert call(b, "/desk")[0] == 302 and call.headers["Location"] == "/admin"
+        assert b'action="/login/admin"' in call(b, "/admin")[1] and b'type="password"' in call(b, "/admin")[1]
+        assert b'action="/login/tech"' in call(b, "/tech")[1] and b'inputmode="numeric"' in call(b, "/tech")[1]
+        assert b"isn't set up for check-in" in call(b, "/checkin")[1] and b'href="/admin"' in call(b, "/checkin")[1]
+        assert call(b, "/api/tickets")[0] == 401 and call(b, "/api/tickets", CAR)[0] == 401
+        assert call(b, "/api/tickets/1/move", {"version": 1, "to": "working"})[0] == 401
+        assert call(b, "/api/me", cookie="sid=" + "x" * 43)[0] == 401  # made-up token
+        a, m, k = admin(b), tech(b, "Al Fixit"), kiosk(b)
+        assert b"isn't built yet" in call(b, "/admin", cookie=a)[1]
         os.makedirs(shop.WEB)
-        with open(os.path.join(shop.WEB, "tech.html"), "w") as f:
-            f.write("<p>tech page</p>")
-        assert call(base, "/tech", cookie=c)[1] == b"<p>tech page</p>"
+        for name in ("admin", "tech", "checkin"):
+            with open(os.path.join(shop.WEB, name + ".html"), "w") as f:
+                f.write(f"<p>{name} page</p>")
+        for c, mine in ((a, "/admin"), (m, "/tech"), (k, "/checkin")):  # each page only to its role
+            for p in ("/admin", "/tech", "/checkin"):
+                assert (call(b, p, cookie=c)[1] == f"<p>{p[1:]} page</p>".encode()) == (p == mine)
+        assert call(b, "/api/me", cookie=m)[1] == {"role": "mechanic", "name": "Al Fixit", "id": s.ids["Al Fixit"]}
+        assert call(b, "/api/me", cookie=k)[1] == {"role": "kiosk", "name": "", "id": None}
+        assert shop.HOST == "127.0.0.1"  # everything comes in through the tunnel
 
-        code, t = call(base, "/api/tickets", CAR, c)
-        assert code == 200 and t["status"] == "waiting" and t["version"] == 1 and t["phone"] == "(555)010-0000"
-        assert t["plate"] == "TST-0001" and t["totals"] == {"parts": 0, "labor": 0, "total": 0}
-        tid, url = t["id"], f"/api/tickets/{t['id']}"
-        code, bad = call(base, "/api/tickets", {**CAR, "first": "", "year": "1800"}, c)
+
+def test_full_flow():
+    with Server() as s:
+        b = s.base
+        a = admin(b)
+        k = kiosk(b)  # enrolled on another device: a fresh admin sign-in there, replaced by the kiosk
+        assert call(b, "/api/me", cookie=a)[1] == {"role": "admin", "name": ADMIN, "id": s.ids[ADMIN]}  # still admin
+
+        code, r = call(b, "/api/tickets", CAR, k)
+        assert code == 200 and list(r) == ["id"]  # the kiosk gets no ticket data back
+        tid, url = r["id"], f"/api/tickets/{r['id']}"
+        extra = {"mechanic": "Al Fixit", "lines": [{"desc": "free brakes", "price": 0}], "notes": "x", "odometer": "9",
+                 "status": "filled", "back_note": "y", "id": 77}
+        kid = call(b, "/api/tickets", {**CAR, **extra}, k)[1]["id"]  # check-in fills the customer's fields only
+        t = call(b, f"/api/tickets/{kid}", cookie=a)[1]
+        assert (t["status"], t["mechanic"], t["lines"], t["notes"], t["odometer"], t["back_note"]) == ("waiting", "", [], "", "", "")
+        assert t["id"] == kid != 77 and t["first"] == "JANE" and t["request"] == "brakes squeak"
+        code, bad = call(b, "/api/tickets", {**CAR, "first": "", "year": "1800"}, k)
         assert code == 400 and set(bad["errors"]) == {"first", "year"}
-        assert [x["id"] for x in call(base, "/api/tickets?status=waiting,review", cookie=c)[1]["tickets"]] == [tid]
-        assert call(base, "/api/tickets?status=working", cookie=c)[1] == {"tickets": []}
-        assert call(base, "/api/tickets?status=bogus", cookie=c)[1] == {"tickets": []}
-        assert call(base, url, cookie=c)[1]["first"] == "JANE"
-        assert call(base, "/api/mechanics", cookie=c)[1] == {"mechanics": ["Al Fixit", "Bo Wrench"]}
+        assert call(b, "/api/vehicles", cookie=k)[0] == 200
+        for path in ("/api/tickets", url, "/api/mechanics", "/api/users", "/api/catalog?q=oil"):
+            assert call(b, path, cookie=k)[0] == 403, path
+        for path, body in ((url, {"version": 1, "first": "X"}), (url + "/move", {"version": 1, "to": "working"}),
+                           ("/api/users", {"name": "Cy", "role": "admin", "secret": "x" * 12}), ("/api/kiosk/revoke", {})):
+            assert call(b, path, body, k)[0] == 403, path
 
-        call(base, "/api/tickets?status=waiting", cookie=c)
-        tag = call.headers["ETag"]
-        assert call(base, "/api/tickets?status=waiting", cookie=c, headers={"If-None-Match": tag}) == (304, b"")
-        assert call(base, "/api/tickets?status=working", cookie=c, headers={"If-None-Match": tag})[0] == 200  # other filter
-        code, t = call(base, url, {"version": 1, "who": "desk", "first": "Joan", "request": "brakes squeak, front"}, c)
-        assert code == 200 and (t["first"], t["version"]) == ("JOAN", 2)  # desk edits a waiting ticket
-        assert call(base, "/api/tickets?status=waiting", cookie=c, headers={"If-None-Match": tag})[0] == 200  # changed
+        al, bo = tech(b, "Al Fixit"), tech(b, "Bo Wrench")
+        assert [t["id"] for t in call(b, "/api/tickets?status=waiting,working", cookie=al)[1]["tickets"]] == [kid, tid]
+        assert call(b, url, cookie=bo)[1]["first"] == "JANE"  # waiting: anyone may look
+        assert call(b, url, {"version": 1, "notes": "x"}, al)[0] == 403  # not theirs until accepted
+        code, t = call(b, url + "/move", {"version": 1, "to": "working", "mechanic": "Bo Wrench"}, al)
+        assert code == 200 and (t["status"], t["mechanic"], t["version"]) == ("working", "Al Fixit", 2)  # as themselves
 
-        mv = lambda body: call(base, url + "/move", body, c)
-        assert mv({"version": 2, "to": "working", "mechanic": "Cy Unknown"})[0] == 400
-        assert mv({"version": 2, "to": "working"})[0] == 400  # accept needs a name from the list
-        code, t = mv({"version": 2, "to": "working", "mechanic": "Bo Wrench"})
-        assert code == 200 and (t["status"], t["mechanic"], t["version"]) == ("working", "Bo Wrench", 3)
-        code, r = mv({"version": 3, "to": "review"})
-        assert code == 409 and "line" in r["error"] and r["ticket"]["status"] == "working"  # finish with no lines
+        assert [t["id"] for t in call(b, "/api/tickets?status=waiting,working", cookie=bo)[1]["tickets"]] == [kid]  # Al's: hidden
+        assert call(b, url, cookie=bo)[0] == 404
+        assert call(b, url, {"version": 2, "notes": "mine now"}, bo)[0] == 404
+        assert call(b, url + "/move", {"version": 2, "to": "review"}, bo)[0] == 404
+        for path in ("/api/users", "/api/mechanics"):
+            assert call(b, path, cookie=bo)[0] == 403
+        for path, body in (("/api/users", {"name": "Cy Sneak", "role": "admin", "secret": "x" * 12}),
+                           (f"/api/users/{s.ids['Bo Wrench']}", {"secret": "999999"}), ("/api/kiosk", {}),
+                           ("/api/kiosk/revoke", {}), ("/api/tickets", CAR)):
+            assert call(b, path, body, bo)[0] == 403, path
 
-        code, r = call(base, url, {"version": 3, "who": "desk", "first": "JUNE"}, c)
-        assert code == 409 and (r["ticket"]["first"], r["ticket"]["version"]) == ("JOAN", 3)  # refused: stored copy
-        code, r = call(base, url, {"version": 3, "who": "mechanic", "first": "JUNE"}, c)
-        assert code == 409 and "first" in r["error"]
-        code, t = call(base, url, b'{"version": 3, "who": "mechanic", "lines": [{"desc": "wiper", "id": 1e400}]}', c)
-        assert code == 200 and t["lines"][0]["id"] == 1 and t["version"] == 4  # a silly id is renumbered, not a 500
-        code, r = call(base, url, b'{"version": 4, "who": "mechanic", "lines": [{"desc": "wiper", "qty": 1e400}]}', c)
+        code, r = call(b, url, {"version": 2, "who": "desk", "first": "JUNE"}, al)  # who in the body: ignored
+        assert code == 409 and "first" in r["error"] and r["ticket"]["first"] == "JANE"
+        code, t = call(b, url, b'{"version": 2, "lines": [{"desc": "wiper", "id": 1e400}]}', al)
+        assert code == 200 and t["lines"][0]["id"] == 1 and t["version"] == 3  # a silly id is renumbered, not a 500
+        code, r = call(b, url, b'{"version": 3, "lines": [{"desc": "wiper", "qty": 1e400}]}', al)
         assert code == 400 and "lines" in r["errors"]
         lines = [{"desc": "front brake pads", "qty": 1, "price": "100", "labor": "100", "code": "FBP"},
                  {"desc": "brake fluid flush", "labor": 80}]
-        code, t = call(base, url, {"version": 4, "who": "mechanic", "lines": lines, "odometer": "45,120"}, c)
-        assert code == 200 and t["version"] == 5 and t["odometer"] == "45120"
+        code, t = call(b, url, {"version": 3, "lines": lines, "odometer": "45,120"}, al)
+        assert code == 200 and t["version"] == 4 and t["odometer"] == "45120"
         assert t["totals"] == {"parts": 100.0, "labor": 180.0, "total": 280.0}
-        assert [ln["id"] for ln in t["lines"]] == [1, 2]
-        code, r = call(base, url, {"version": 4, "who": "mechanic", "notes": "late"}, c)
-        assert code == 409 and r["ticket"]["version"] == 5 and r["ticket"]["notes"] == ""  # stale
-        code, r = call(base, url, {"version": 5, "who": "mechanic", "lines": [{"desc": "x", "qty": 0}]}, c)
-        assert code == 400 and "lines" in r["errors"]
-        assert call(base, url, {"version": 5, "who": "boss"}, c)[0] == 400
-        assert call(base, url, {"version": "5", "who": "mechanic"}, c)[0] == 400
+        code, r = call(b, url, {"version": 3, "notes": "late"}, al)
+        assert code == 409 and r["ticket"]["version"] == 4 and r["ticket"]["notes"] == ""  # stale
+        assert call(b, url, {"version": "4", "notes": "x"}, al)[0] == 400
+        code, r = call(b, url + "/move", {"version": 4, "to": "waiting"}, al)
+        assert code == 409 and r["ticket"]["status"] == "working"
 
-        assert mv({"version": 5, "to": "review"})[1]["status"] == "review"
-        assert call(base, url, {"version": 6, "who": "mechanic", "notes": "x"}, c)[0] == 409  # phone: review is locked
+        assert call(b, url + "/move", {"version": 4, "to": "review"}, al)[1]["status"] == "review"
+        assert call(b, url, cookie=al)[1]["status"] == "review"  # still theirs to look at
+        assert call(b, "/api/tickets?status=review", cookie=al)[1] == {"tickets": []}  # the list: waiting + working
+        assert call(b, url, {"version": 5, "notes": "x"}, al)[0] == 409  # phone: review is locked
+        code, r = call(b, url + "/move", {"version": 5, "to": "approved"}, al)
+        assert code == 409 and r["ticket"]["status"] == "review"  # only the desk approves
+
+        assert [t["id"] for t in call(b, "/api/tickets?status=review", cookie=a)[1]["tickets"]] == [tid]
         lines[0].update(qty=2, price="50.50")
-        code, t = call(base, url, {"version": 6, "who": "desk", "lines": lines}, c)
-        assert code == 200 and t["totals"] == {"parts": 101.0, "labor": 180.0, "total": 281.0}  # desk fixes a line
-        code, r = mv({"version": 7, "to": "working"})
-        assert code == 409 and r["ticket"]["status"] == "review"  # sending back needs a note
-        assert mv({"version": 7, "to": "working", "note": ["x"]})[0] == 400
-        assert mv({"version": 7, "to": "working", "note": "x" * 2001})[0] == 400
-        assert mv({"version": 7, "to": ["working"]})[0] == 400
-        code, t = mv({"version": 7, "to": "working", "note": "check rear pads too", "mechanic": "Nobody"})
-        assert code == 200 and (t["status"], t["back_note"], t["mechanic"]) == ("working", "check rear pads too", "Bo Wrench")
-        t = mv({"version": 8, "to": "review"})[1]
-        assert (t["status"], t["back_note"]) == ("review", "")
-        code, t = call(base, url, {"version": 9, "who": "desk", "notes": "customer waiting"}, c)
-        assert code == 200 and t["notes"] == "customer waiting"
-        assert mv({"version": 10, "to": "approved"})[1]["status"] == "approved"
-        code, r = call(base, url, {"version": 11, "who": "mechanic", "notes": "late"}, c)
-        assert code == 409 and r["ticket"]["notes"] == "customer waiting" and r["ticket"]["version"] == 11
+        code, t = call(b, url, {"version": 5, "who": "mechanic", "lines": lines, "first": "Joan"}, a)  # desk rules
+        assert code == 200 and t["first"] == "JOAN" and t["totals"] == {"parts": 101.0, "labor": 180.0, "total": 281.0}
+        mv = lambda body, c=a: call(b, url + "/move", body, c)
+        assert mv({"version": 6, "to": "working"})[0] == 409  # sending back needs a note
+        assert mv({"version": 6, "to": "working", "note": ["x"]})[0] == 400
+        assert mv({"version": 6, "to": "working", "note": "x" * 2001})[0] == 400
+        assert mv({"version": 6, "to": ["working"]})[0] == 400
+        code, t = mv({"version": 6, "to": "working", "note": "check rear pads too", "mechanic": "Bo Wrench"})
+        assert code == 200 and (t["status"], t["back_note"], t["mechanic"]) == ("working", "check rear pads too", "Al Fixit")
+        assert (mv({"version": 7, "to": "review"}, al)[1]["back_note"]) == ""
+        assert mv({"version": 8, "to": "approved"})[1]["status"] == "approved"
         priced = [dict(ln, price=ln["price"] and ln["price"] + 5, labor=ln["labor"] and ln["labor"] + 10) for ln in t["lines"]]
-        code, t = call(base, url, {"version": 11, "who": "desk", "lines": priced}, c)  # prices stay editable after approval
-        assert code == 200 and t["status"] == "approved" and t["version"] == 12
+        assert call(b, url, cookie=al)[0] == 404  # approved: off the phone
+        code, t = call(b, url, {"version": 9, "lines": priced}, a)  # prices stay editable after approval
+        assert code == 200 and t["status"] == "approved" and t["version"] == 10
         assert [(ln["price"], ln["labor"]) for ln in t["lines"]] == [(ln["price"], ln["labor"]) for ln in priced]
-        code, r = mv({"version": 12, "to": "working", "note": "again"})
-        assert code == 409 and r["ticket"]["status"] == "approved" and r["ticket"]["version"] == 12  # refused move
-        code, t = mv({"version": 12, "to": "filled"})
-        assert code == 200 and t["status"] == "filled" and t["version"] == 13
-        assert call(base, url, {"version": 13, "who": "desk", "notes": "late"}, c)[0] == 409
+        code, t = mv({"version": 10, "to": "filled"})
+        assert code == 200 and t["status"] == "filled" and t["version"] == 11
+        assert call(b, url, {"version": 11, "notes": "late"}, a)[0] == 409
 
-        assert call(base, "/api/tickets/999", cookie=c)[0] == 404
-        assert call(base, "/api/tickets/999/move", {"version": 1, "to": "working"}, c)[0] == 404
-        assert call(base, "/api/tickets/abc", cookie=c)[0] == 404
-        assert call(base, "/api/tickets/99999999999999999999", {"version": 1}, c)[0] == 404
-        with open(shop.Handler.log_path, encoding="utf8") as f:
-            log = f.read()
-        assert f"POST /api/tickets/{tid}/move 200" in log and "JOAN" not in log.upper() and "status=" not in log
+        code, t = call(b, "/api/tickets", CAR, a)  # the desk's own intake gets the ticket back
+        assert code == 200 and t["status"] == "waiting" and t["phone"] == "(555)010-0000" and t["plate"] == "TST-0001"
+        u2 = f"/api/tickets/{t['id']}/move"
+        assert call(b, u2, {"version": 1, "to": "working", "mechanic": "Cy Unknown"}, a)[0] == 400
+        assert call(b, u2, {"version": 1, "to": "working"}, a)[0] == 400
+        code, t = call(b, u2, {"version": 1, "to": "working", "mechanic": "bo  wrench"}, a)  # desk accepts for Bo
+        assert code == 200 and t["mechanic"] == "Bo Wrench"
+        assert call(b, u2[:-5], {"version": 2, "notes": "on it"}, bo)[0] == 200
+        code, t = call(b, "/api/tickets", CAR, a)  # waiting: the desk may set who it's for
+        u3 = f"/api/tickets/{t['id']}"
+        for m, stored in (("al fixit", "Al Fixit"), ("AL FIXIT", "Al Fixit"), ("Bo Wrench", "Bo Wrench")):
+            code, t = call(b, u3, {"version": t["version"], "mechanic": m}, a)  # desk: an account, its spelling
+            assert code == 200 and t["mechanic"] == stored
+        for m in ("Cy Unknown", "", ["Al Fixit"], None):
+            code, r = call(b, u3, {"version": t["version"], "mechanic": m}, a)
+            assert code == 400 and "mechanic" in r["errors"], m
+        call(b, u3, {"version": t["version"], "mechanic": "al fixit"}, a)
+        call(b, f"/api/users/{s.ids['Al Fixit']}", {"active": False}, a)
+        code, t = call(b, u3, {"version": t["version"] + 1, "mechanic": "AL FIXIT", "notes": "kept"}, a)
+        assert code == 200 and t["mechanic"] == "Al Fixit"  # off now, but it's the ticket's current value
+        call(b, u3, {"version": t["version"], "mechanic": "Bo Wrench"}, a)
+        assert call(b, u3, {"version": t["version"] + 1, "mechanic": "Al Fixit"}, a)[0] == 400  # off: not pickable
+        code, t = call(b, "/api/tickets", CAR, a)
+        assert call(b, f"/api/tickets/{t['id']}/move", {"version": 1, "to": "working", "mechanic": "Al Fixit"}, a)[0] == 400
+        assert call(b, "/api/mechanics", cookie=a)[1] == {"mechanics": ["Bo Wrench"]}  # active accounts only
+
+        assert call(b, "/api/tickets/999", cookie=a)[0] == 404
+        assert call(b, "/api/tickets/999/move", {"version": 1, "to": "working"}, a)[0] == 404
+        assert call(b, "/api/tickets/abc", cookie=a)[0] == 404
+        assert call(b, "/api/tickets/99999999999999999999", {"version": 1}, a)[0] == 404
+        log = s.log()
+        assert f"POST /api/tickets/{tid}/move 200" in log and "status=" not in log
+        for secret in ["JANE", "FIXIT", "WRENCH", ADMIN.upper(), PASSWORD.upper(), *PINS.values(),
+                       *(c.split("=", 1)[1].upper() for c in (a, k, al, bo))]:
+            assert secret not in log.upper()
+
+
+def test_roles_refused_at_the_wrong_door():
+    with Server() as s:
+        b = s.base
+        code, page = call(b, "/login/tech", {"name": ADMIN, "secret": PASSWORD})
+        assert code == 401 and b"Wrong name or PIN." in page and "Set-Cookie" not in call.headers
+        code, page = call(b, "/login/admin", {"name": "Al Fixit", "secret": PINS["Al Fixit"]})
+        assert code == 401 and b"Wrong name or password." in page
+        err = lambda r: (r[0], re.search(rb'class="err">(.*?)<', r[1])[1])
+        unknown = err(call(b, "/login/tech", {"name": "Nobody Here", "secret": "123456"}))
+        assert unknown == err(call(b, "/login/tech", {"name": "Al Fixit", "secret": "123456"})) == (401, b"Wrong name or PIN.")
+        assert call(b, "/login/tech", {"name": "<b>x</b>", "secret": "1"})[1].count(b"<b>") == 0  # escaped
+
+
+def test_lockout():
+    with Server() as s:
+        b = s.base
+        codes = [call(b, "/login/tech", {"name": "Al Fixit", "secret": p})[0] for p in ("1", "2", "3", "4", "5")]
+        code, page = call(b, "/login/tech", {"name": "Al Fixit", "secret": PINS["Al Fixit"]})
+        assert codes == [401] * 5 and code == 429 and b"Wait 10 min." in page  # even the right PIN waits
+        assert 590 <= int(call.headers["Retry-After"]) <= 600
+        tech(b, "Bo Wrench")  # another name is fine
+        cf = lambda ip: {"CF-Connecting-IP": ip}  # through cloudflared on this PC: the client is the header
+        for i in range(20):
+            call(b, "/login/tech", {"name": f"Guess {i}", "secret": "000000"}, headers=cf("203.0.113.5"))
+        assert call(b, "/login/tech", {"name": "Bo Wrench", "secret": PINS["Bo Wrench"]}, headers=cf("203.0.113.5"))[0] == 429
+        assert 1 <= int(call.headers["Retry-After"]) <= 600
+        assert call(b, "/login/tech", {"name": "Bo Wrench", "secret": PINS["Bo Wrench"]}, headers=cf("203.0.113.6"))[0] == 303
+        h = shop.Handler.__new__(shop.Handler)  # the header only counts from loopback
+        h.headers, h.client_address = {"CF-Connecting-IP": "203.0.113.9"}, ("192.168.1.20", 5000)
+        assert h.client() == "192.168.1.20"
+        h.client_address = ("127.0.0.1", 5000)
+        assert h.client() == "203.0.113.9"
+
+
+def test_users_and_sessions():
+    with Server() as s:
+        b = s.base
+        a = admin(b)
+        code, r = call(b, "/api/users", cookie=a)
+        assert code == 200 and [u["name"] for u in r["users"]] == ["Al Fixit", "Bo Wrench", ADMIN]
+        assert all(set(u) == {"id", "name", "role", "active", "created"} for u in r["users"])  # no hashes
+        code, u = call(b, "/api/users", {"name": "Cy Newhire", "role": "mechanic", "secret": "11223344"}, a)
+        assert code == 200 and u["name"] == "Cy Newhire" and u["active"] is True
+        assert call(b, "/api/users", {"name": "cy newhire", "role": "mechanic", "secret": "11223344"}, a)[0] == 400
+        code, r = call(b, "/api/users", {"name": "Di Short", "role": "mechanic", "secret": "12"}, a)
+        assert code == 400 and "secret" in r["errors"]
+        assert "Cy Newhire" in call(b, "/api/mechanics", cookie=a)[1]["mechanics"]
+
+        al, al_id = tech(b, "Al Fixit"), s.ids["Al Fixit"]
+        code, u = call(b, f"/api/users/{al_id}", {"secret": "975310"}, a)  # reset PIN: Al is signed out
+        assert code == 200 and "hash" not in u and "Set-Cookie" not in call.headers
+        assert call(b, "/api/me", cookie=al)[0] == 401
+        assert call(b, "/login/tech", {"name": "Al Fixit", "secret": PINS["Al Fixit"]})[0] == 401
+        assert call(b, "/login/tech", {"name": "Al Fixit", "secret": "975310"})[0] == 303
+        al = sid()
+        assert call(b, f"/api/users/{al_id}", {"active": "no"}, a)[0] == 400
+        assert call(b, f"/api/users/{al_id}", {"active": False}, a)[1]["active"] is False  # off: signed out
+        assert call(b, "/api/me", cookie=al)[0] == 401
+        assert call(b, "/login/tech", {"name": "Al Fixit", "secret": "975310"})[0] == 401
+        assert "Al Fixit" not in call(b, "/api/mechanics", cookie=a)[1]["mechanics"]
+        assert call(b, f"/api/users/{al_id}", {"active": True}, a)[1]["active"] is True
+        assert call(b, "/api/users/999", {"active": True}, a)[0] == 404
+
+        me = f"/api/users/{s.ids[ADMIN]}"
+        assert call(b, me, {"active": False}, a)[0] == 400  # the last admin stays on
+        other = admin(b)
+        assert call(b, me, {"secret": "short"}, a)[0] == 400
+        code, u = call(b, me, {"secret": "made-up-pass-2"}, a)  # own password: this device gets a new sid
+        assert code == 200 and call.headers["Set-Cookie"].startswith("sid=")
+        a2 = sid()
+        assert a2 != a and call(b, "/api/me", cookie=a)[0] == 401 and call(b, "/api/me", cookie=other)[0] == 401
+        assert call(b, "/api/me", cookie=a2)[1]["role"] == "admin"
+        admin(b, "made-up-pass-2")
+
+        k1, k2 = kiosk(b, "made-up-pass-2"), kiosk(b, "made-up-pass-2")
+        assert call(b, "/api/kiosk/revoke", {}, a2) == (200, {"ok": True})
+        assert call(b, "/api/me", cookie=k1)[0] == 401 and call(b, "/api/me", cookie=k2)[0] == 401
+        assert call(b, "/api/me", cookie=a2)[0] == 200
+
+        bo = tech(b, "Bo Wrench")
+        assert call(b, "/logout", b"", bo)[0] == 303 and call.headers["Location"] == "/tech"
+        assert "Max-Age=0" in call.headers["Set-Cookie"] and call(b, "/api/me", cookie=bo)[0] == 401
+        assert call(b, "/logout", b"", a2)[0] == 303 and call.headers["Location"] == "/admin"
+        assert call(b, "/logout", b"")[0] == 303 and call.headers["Location"] == "/"
+        k = kiosk(b, "made-up-pass-2")
+        assert call(b, "/logout", b"", k)[0] == 303 and call.headers["Location"] == "/checkin"
+
+
+def test_cookie_flags():
+    with Server() as s:
+        b = s.base
+        for path, form, age in (("/login/admin", {"name": ADMIN, "secret": PASSWORD}, 7 * 86400),
+                                ("/login/tech", {"name": "Al Fixit", "secret": PINS["Al Fixit"]}, 30 * 86400)):
+            call(b, path, form)
+            c = call.headers["Set-Cookie"]
+            assert re.fullmatch(rf"sid=[\w-]{{43}}; Path=/; Max-Age={age}; HttpOnly; SameSite=Strict", c), c
+            call(b, path, form, headers={"X-Forwarded-Proto": "https"})
+            assert call.headers["Set-Cookie"].endswith("; SameSite=Strict; Secure")  # through the tunnel
+        call(b, "/api/kiosk", {}, admin(b))
+        assert f"Max-Age={365 * 86400}; HttpOnly; SameSite=Strict" in call.headers["Set-Cookie"]
 
 
 def test_bad_requests():
-    with Server() as base:
-        c = login(base)
-        assert call(base, "/api/tickets", b"{not json", c)[0] == 400
-        assert call(base, "/api/tickets", b"[1, 2]", c)[0] == 400
-        assert call(base, "/api/tickets", b"\xff\xfe", c)[0] == 400
-        assert call(base, "/api/tickets", b"[" * 100000, c)[0] == 400  # too deep for json: RecursionError
+    with Server() as s:
+        b, c = s.base, admin(s.base)
+        assert call(b, "/api/tickets", b"{not json", c)[0] == 400
+        assert call(b, "/api/tickets", b"[1, 2]", c)[0] == 400
+        assert call(b, "/api/tickets", b"\xff\xfe", c)[0] == 400
+        assert call(b, "/api/tickets", b"[" * 100000, c)[0] == 400  # too deep for json: RecursionError
         for ctype in ("text/plain", "application/x-www-form-urlencoded"):  # what a form on another site can send
-            assert call(base, "/api/tickets", json.dumps(CAR).encode(), c, {"Content-Type": ctype})[0] == 400
-        assert call(base, "/api/tickets", json.dumps(CAR).encode(), c, {"Content-Type": "application/json; charset=utf-8"})[0] == 200
-        conn = http.client.HTTPConnection(base[7:])  # says 2 MB: refused before reading it
-        conn.putrequest("POST", "/api/tickets")
-        conn.putheader("Cookie", c)
-        conn.putheader("Content-Type", "application/json")
-        conn.putheader("Content-Length", str(2 * 1024 * 1024))
-        conn.endheaders()
-        assert conn.getresponse().status == 400
-        conn.close()
+            assert call(b, "/api/tickets", json.dumps(CAR).encode(), c, {"Content-Type": ctype})[0] == 400
+        assert call(b, "/api/tickets", json.dumps(CAR).encode(), c, {"Content-Type": "application/json; charset=utf-8"})[0] == 200
+        assert call(b, "/api/me", cookie='sid="\\x; bad')[0] == 401  # a mangled cookie: no session, no 500
+        for path in ("/api/tickets", "/login/admin"):  # says 2 MB: refused before reading it
+            conn = http.client.HTTPConnection(b[7:])
+            conn.putrequest("POST", path)
+            conn.putheader("Cookie", c)
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", str(2 * 1024 * 1024))
+            conn.endheaders()
+            assert conn.getresponse().status == 400
+            conn.close()
 
 
 def test_stalled_body():
     shop.Handler.timeout = 1
     try:
-        with Server() as base:
-            c, start = login(base), time.time()
-            conn = http.client.HTTPConnection(base[7:], timeout=10)
+        with Server() as s:
+            c, start = admin(s.base), time.time()
+            conn = http.client.HTTPConnection(s.base[7:], timeout=10)
             conn.putrequest("POST", "/api/tickets")
             conn.putheader("Cookie", c)
             conn.putheader("Content-Type", "application/json")
@@ -204,38 +391,54 @@ def test_stalled_body():
                 pass  # the server hung up
             conn.close()
             assert time.time() - start < 5
-            assert call(base, "/api/mechanics", cookie=c)[0] == 200  # still serving
-            with open(shop.Handler.log_path, encoding="utf8") as f:
-                assert "POST /api/tickets dropped" in f.read()
+            assert call(s.base, "/api/me", cookie=c)[0] == 200  # still serving
+            assert "POST /api/tickets dropped" in s.log()
     finally:
-        shop.Handler.timeout = pinweb.PinHandler.timeout
+        shop.Handler.timeout = pinweb.Web.timeout
 
 
 def test_security_headers():
-    with Server() as base:
-        call(base, "/")
-        h = call.headers
-        assert h["X-Content-Type-Options"] == "nosniff" and h["Referrer-Policy"] == "no-referrer"
-        assert "frame-ancestors 'none'" in h["Content-Security-Policy"] and "form-action 'self'" in h["Content-Security-Policy"]
-        call(base, "/api/tickets")
+    with Server() as s:
+        for p in ("/", "/admin", "/tech", "/checkin"):
+            call(s.base, p)
+            h = call.headers
+            assert h["X-Content-Type-Options"] == "nosniff" and h["Referrer-Policy"] == "same-origin"
+            assert h["Cache-Control"] == "no-store"
+            assert "frame-ancestors 'none'" in h["Content-Security-Policy"] and "form-action 'self'" in h["Content-Security-Policy"]
+        call(s.base, "/api/tickets")
         assert call.headers["X-Content-Type-Options"] == "nosniff" and "Content-Security-Policy" not in call.headers
-        assert "Secure" not in call(base, "/login", f"pin={PIN}".encode())[1]  # plain http on the shop Wi-Fi
-        cookie = call(base, "/login", f"pin={PIN}".encode(), headers={"X-Forwarded-Proto": "https"})[1]
-        assert cookie.endswith("; Secure")  # through the tunnel
 
 
 def test_server_error_says_nothing():
-    with Server() as base:
-        c = login(base)
+    with Server() as s:
+        c = admin(s.base)
         def boom(*a):
             raise RuntimeError("C:\\secret\\path tickets.db locked")
         shop.Handler.store.list = boom
-        assert call(base, "/api/tickets", cookie=c) == (500, {"error": "server error"})
-        with open(shop.Handler.log_path, encoding="utf8") as f:
-            assert "GET /api/tickets 500" in f.read()
+        assert call(s.base, "/api/tickets", cookie=c) == (500, {"error": "server error"})
+        assert "GET /api/tickets 500" in s.log() and "secret" not in s.log()
 
 
-def test_pin_and_secret_files():
+def test_etag_per_role():
+    with Server() as s:
+        b, a, al = s.base, admin(s.base), tech(s.base, "Al Fixit")
+        call(b, "/api/tickets", CAR, a)
+        tags = {}
+        for name, c in (("admin", a), ("al", al)):
+            assert call(b, "/api/tickets?status=waiting", cookie=c)[0] == 200
+            tags[name] = call.headers["ETag"]
+            assert call(b, "/api/tickets?status=waiting", cookie=c, headers={"If-None-Match": tags[name]}) == (304, b"")
+            assert call(b, "/api/tickets?status=working", cookie=c, headers={"If-None-Match": tags[name]})[0] == 200
+        assert tags["admin"] != tags["al"]  # same tickets, other role: no shared tag
+        assert call(b, "/api/tickets?status=waiting", cookie=al, headers={"If-None-Match": tags["admin"]})[0] == 200
+        bo = tech(b, "Bo Wrench")
+        assert call(b, "/api/tickets?status=waiting", cookie=bo, headers={"If-None-Match": tags["al"]})[0] == 200
+        call(b, "/api/tickets/1", {"version": 1, "first": "Joan"}, a)
+        assert call(b, "/api/tickets?status=waiting", cookie=al, headers={"If-None-Match": tags["al"]})[0] == 200  # changed
+        assert call(b, "/api/tickets?status=bogus", cookie=a)[1] == {"tickets": []}
+
+
+def test_pin_and_secret_files():  # pinweb's PIN pieces, still there for phone.py's move
     d = tempfile.mkdtemp()
     try:
         pin, secret = pinweb.load_pin(os.path.join(d, "pin.txt")), pinweb.load_secret(os.path.join(d, "secret.txt"))
@@ -248,49 +451,189 @@ def test_pin_and_secret_files():
 
 
 def test_catalog():
-    with Server() as base:
-        c = login(base)
-        code, h = call(base, "/api/catalog?q=BRAKE", cookie=c)
+    with Server() as s:
+        b, c = s.base, admin(s.base)
+        code, h = call(b, "/api/catalog?q=BRAKE", cookie=c)
         assert code == 200 and len(h) == 8  # capped
         assert h[0] == {"code": "FBP", "description": "FRONT BRAKE PADS", "part_price": 100.0, "labor_price": 100.0}
-        assert call(base, "/api/catalog?q=front%20pads", cookie=c)[1][0]["code"] == "FBP"  # alias
-        assert call(base, "/api/catalog?q=oil", cookie=c)[1][0]["code"] == "OIL"
-        assert call(base, "/api/catalog?q=", cookie=c)[1] == [] and call(base, "/api/catalog", cookie=c)[1] == []
-        assert call(base, "/api/catalog?q=brake")[0] == 401
+        assert call(b, "/api/catalog?q=front%20pads", cookie=c)[1][0]["code"] == "FBP"  # alias
+        assert call(b, "/api/catalog?q=oil", cookie=tech(b, "Al Fixit"))[1][0]["code"] == "OIL"  # mechanics too
+        assert call(b, "/api/catalog?q=", cookie=c)[1] == [] and call(b, "/api/catalog", cookie=c)[1] == []
+        assert call(b, "/api/catalog?q=brake")[0] == 401
 
 
 def test_vehicles():
-    with Server() as base:
+    with Server() as s:
+        b = s.base
         cars = {"TOYOTA": {"CAMRY": [1990, 2027]}}
         with open(shop.VEHICLES, "w", encoding="utf8") as f:
             json.dump(cars, f)
-        assert call(base, "/api/vehicles")[0] == 401
-        c = login(base)
-        assert call(base, "/api/vehicles", cookie=c) == (200, cars)
+        assert call(b, "/api/vehicles")[0] == 401
+        c = kiosk(b)
+        assert call(b, "/api/vehicles", cookie=c) == (200, cars)
         os.remove(shop.VEHICLES)
-        assert call(base, "/api/vehicles", cookie=c) == (200, cars)  # read once
+        assert call(b, "/api/vehicles", cookie=c) == (200, cars)  # read once
         shop.VEHICLES += ".missing"
-        assert call(base, "/api/vehicles", cookie=c) == (200, {})
+        assert call(b, "/api/vehicles", cookie=c) == (200, {})
         shop.VEHICLES = shop.VEHICLES.replace("vehicles.json", "bad.json")
         with open(shop.VEHICLES, "w", encoding="utf8") as f:
             f.write("{not json")
-        assert call(base, "/api/vehicles", cookie=c) == (200, {})
+        assert call(b, "/api/vehicles", cookie=c) == (200, {})
 
 
-def test_mechanics_file_made():
-    with Server() as base:
-        os.remove(shop.MECHANICS)
-        assert call(base, "/api/mechanics", cookie=login(base))[1] == {"mechanics": ["MECHANIC 1"]}
-        assert os.path.exists(shop.MECHANICS)
-        with open(shop.MECHANICS, "w", encoding="utf-8-sig") as f:  # Notepad's BOM
-            f.write("Al Fixit\nBo Wrench\n")
-        assert call(base, "/api/mechanics", cookie=login(base))[1] == {"mechanics": ["Al Fixit", "Bo Wrench"]}
+def test_make_admin_command():
+    d, db, getpass = tempfile.mkdtemp(), shop.DB, shop.getpass.getpass
+    try:
+        shop.DB = os.path.join(d, "tickets.db")
+        typed = iter(["made-up-pass-1", "made-up-pass-1", "made-up-pass-1", "something-else-2"])
+        shop.getpass.getpass = lambda prompt="": next(typed)
+        shop.main(["admin", "Test Boss"])
+        try:
+            shop.main(["admin", "Test Boss"])  # typed twice, not the same: nothing changes
+            assert False
+        except SystemExit as e:
+            assert "match" in str(e)
+        store = tickets.Store(shop.DB)
+        try:
+            acc = accounts.Accounts(store, iterations=1000)
+            assert [(u["name"], u["role"]) for u in acc.list()] == [("Test Boss", "admin")]
+            assert acc.login("test boss", "made-up-pass-1", "admin", "127.0.0.1")[1]["name"] == "Test Boss"
+        finally:
+            store.close()
+    finally:
+        shop.DB, shop.getpass.getpass = db, getpass
+        shutil.rmtree(d)
 
 
-def test_pin_lockout():
-    with Server() as base:
-        codes = [call(base, "/login", f"pin={p}".encode())[0] for p in ["1", "2", "3", "4", "5", PIN]]
-        assert codes == [401] * 5 + [429]  # even the right PIN waits out the lockout
+def test_cross_site_posts_refused():
+    with Server() as s:
+        b, host = s.base, s.base[7:]
+        form = {"name": ADMIN, "secret": PASSWORD}
+        for h in ({"Origin": "https://evil.example"}, {"Origin": "null"}, {"Origin": f"http://{host}.evil.example"},
+                  {"Sec-Fetch-Site": "cross-site"}, {"Sec-Fetch-Site": "same-site"},
+                  {"Origin": f"http://{host}", "Sec-Fetch-Site": "cross-site"}):
+            assert call(b, "/login/admin", form, headers=h)[0] == 403, h
+            assert "Set-Cookie" not in call.headers
+            assert call(b, "/login/tech", {"name": "Al Fixit", "secret": PINS["Al Fixit"]}, headers=h)[0] == 403
+            a = admin(b)
+            assert call(b, "/logout", b"", a, headers=h)[0] == 403 and call(b, "/api/me", cookie=a)[0] == 200
+            assert call(b, "/api/tickets", CAR, a, headers=h)[0] == 403
+            assert call(b, "/setup", {"code": "x"}, headers=h)[0] == 403
+        for h in ({"Origin": f"http://{host}"}, {"Origin": f"https://{host}"}, {"Sec-Fetch-Site": "same-origin"},
+                  {"Sec-Fetch-Site": "none"}, {"Origin": "null", "Sec-Fetch-Site": "same-origin"}):  # Chrome's own forms
+            assert call(b, "/login/admin", form, headers=h)[0] == 303, h
+        a = admin(b)
+        for path in ("/api/kiosk", "/api/kiosk/revoke"):  # JSON only: a form can't send it
+            assert call(b, path, b"", a, {"Content-Type": "application/x-www-form-urlencoded"})[0] == 400
+        assert call(b, "/api/me", cookie=a)[0] == 200  # still admin: the refused enrol changed nothing
+
+
+def test_user_changes_all_or_nothing():
+    with Server() as s:
+        b, a = s.base, admin(s.base)
+        al = f"/api/users/{s.ids['Al Fixit']}"
+        code, r = call(b, al, {"secret": "12", "active": False}, a)  # bad PIN: Al isn't turned off either
+        assert code == 400 and "secret" in r["errors"]
+        assert call(b, "/api/users", cookie=a)[1]["users"][0]["active"] is True
+        me = f"/api/users/{s.ids[ADMIN]}"
+        code, r = call(b, me, {"secret": "made-up-pass-9", "active": False}, a)  # last admin: password not changed
+        assert code == 400 and "active" in r["errors"]
+        assert call(b, "/api/me", cookie=a)[0] == 200
+        admin(b)  # the old password still works
+        call(b, "/api/users", {"name": "Second Boss", "role": "admin", "secret": "made-up-pass-3"}, a)
+        code, u = call(b, me, {"secret": "made-up-pass-9", "active": False}, a)  # now allowed: both applied
+        assert code == 200 and u["active"] is False and "Set-Cookie" not in call.headers
+        assert call(b, "/api/me", cookie=a)[0] == 401
+
+
+def test_names_fold_and_owners_match_exactly():
+    with Server() as s:
+        b, a = s.base, admin(s.base)
+        assert call(b, "/api/users", {"name": "Strauss", "role": "mechanic", "secret": "11223344"}, a)[0] == 200
+        for name in ("STRAUß", "strauß", "STRAUSS"):
+            code, r = call(b, "/api/users", {"name": name, "role": "mechanic", "secret": "11223344"}, a)
+            assert code == 400 and "name" in r["errors"], name
+        try:  # the same rule straight on accounts
+            s.acc.add("Strauß", "admin", PASSWORD)
+            assert False
+        except tickets.Invalid as e:
+            assert "name" in e.errors
+        st = shop.Handler.store.create(CAR)  # a ticket naming Al in other letters: not Al's
+        tickets.move(st, "working", "AL FIXIT")
+        shop.Handler.store.save(st, 1)
+        al = tech(b, "Al Fixit")
+        assert call(b, f"/api/tickets/{st.id}", cookie=al)[0] == 404
+        assert call(b, f"/api/tickets/{st.id}", {"version": 2, "notes": "x"}, al)[0] == 404
+        code, t = call(b, "/api/tickets", CAR, a)
+        PINS["Strauss"] = "11223344"
+        try:
+            code, t = call(b, f"/api/tickets/{t['id']}/move", {"version": 1, "to": "working"}, tech(b, "Strauss"))
+        finally:
+            del PINS["Strauss"]
+        assert code == 200 and t["mechanic"] == "Strauss"
+
+
+def test_sign_in_messages():
+    with Server() as s:
+        b = s.base
+        err = lambda r: (r[0], re.search(rb'class="err">(.*?)<', r[1])[1])
+        a = admin(b)
+        call(b, f"/api/users/{s.ids['Bo Wrench']}", {"active": False}, a)
+        off = err(call(b, "/login/tech", {"name": "Bo Wrench", "secret": PINS["Bo Wrench"]}))
+        assert off == err(call(b, "/login/tech", {"name": "Nobody Here", "secret": "123456"})) == (401, b"Wrong name or PIN.")
+        s.acc.until[("name", "al fixit")] = time.time() + 5 * 3600  # a day-cap lock: hours, not minutes
+        assert err(call(b, "/login/tech", {"name": "Al Fixit", "secret": "1"})) == (429, b"Too many tries. Wait 5 hours.")
+        s.acc.until[("name", "al fixit")] = time.time() + 90 * 60
+        assert err(call(b, "/login/tech", {"name": "Al Fixit", "secret": "1"})) == (429, b"Too many tries. Wait 90 min.")
+        s.acc.hashing, s.acc.hash_wait = threading.BoundedSemaphore(1), 0.05
+        s.acc.hashing.acquire()  # every hashing slot taken
+        code, page = call(b, "/login/admin", {"name": ADMIN, "secret": PASSWORD})
+        assert code == 429 and b"The server is busy" in page and call.headers["Retry-After"] == "5"
+
+
+def read_code():
+    with open(shop.SETUP, encoding="utf8") as f:
+        return f.read().strip()
+
+
+def test_first_run_setup():
+    with Server(admin=False) as s:
+        b = s.base
+        assert not os.path.exists(shop.SETUP)
+        shop.make_setup_code(s.acc)
+        code = read_code()
+        assert re.fullmatch(r"[\w-]{12}", code)
+        shop.make_setup_code(s.acc)  # a restart keeps a live code
+        assert read_code() == code
+        assert b'action="/setup"' in call(b, "/setup")[1]
+        form = {"code": code, "name": "First Boss", "password": "made-up-pass-5", "again": "made-up-pass-5"}
+        assert call(b, "/setup", {**form, "again": "other-pass-55"})[0] == 400  # code kept: not used yet
+        assert call(b, "/setup", {**form, "password": "short", "again": "short"})[0] == 400
+        for i in range(5):
+            assert call(b, "/setup", {**form, "code": f"wrong{i}"})[0] == 401
+        status, page = call(b, "/setup", form)  # 5 wrong codes: even the right one waits
+        assert status == 429 and b"Wait 10 min." in page and 590 <= int(call.headers["Retry-After"]) <= 600
+        assert call(b, "/setup", form, headers={"CF-Connecting-IP": "203.0.113.7"})[0] == 303  # another client
+        assert call.headers["Location"] == "/admin"
+        c = sid()
+        assert call(b, "/api/me", cookie=c)[1]["name"] == "First Boss" and not os.path.exists(shop.SETUP)
+        assert call(b, "/setup")[0] == 404
+        assert call(b, "/setup", form, headers={"CF-Connecting-IP": "203.0.113.8"})[0] == 404  # used once only
+        shop.make_setup_code(s.acc)  # with an admin: no code made
+        assert not os.path.exists(shop.SETUP)
+        log = s.log()
+        assert "made-up-pass-5" not in log and code not in log and "First Boss" not in log
+
+
+def test_setup_code_expires():
+    with Server(admin=False) as s:
+        shop.make_setup_code(s.acc)
+        old = read_code()
+        os.utime(shop.SETUP, (time.time() - 86401, time.time() - 86401))
+        form = {"code": old, "name": "First Boss", "password": "made-up-pass-5", "again": "made-up-pass-5"}
+        assert call(s.base, "/setup", form)[0] == 401  # over 24 hours old
+        shop.make_setup_code(s.acc)  # the next start makes a new one
+        assert read_code() != old
 
 
 if __name__ == "__main__":
