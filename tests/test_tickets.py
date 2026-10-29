@@ -3,10 +3,12 @@ from contextlib import contextmanager
 from datetime import date
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from tickets import Line, Ticket, Store, Stale, Invalid, Refused, normalize, edit, move, totals, MOVES
+from tickets import Line, Ticket, Store, Stale, Invalid, Refused, normalize, edit, move, totals, to_draft, MOVES
+from prices import load_catalog
 
 DESK = {"first": " jane ", "last": "doe", "phone": "555 010 0000", "year": "2019", "make": "cadillac",
         "model": " cts   v ", "plate": "xks-4827", "request": "oil change, brakes squeak", "color": "red"}
+CAT = load_catalog(os.path.join(ROOT, "parts.csv"))
 
 
 @contextmanager
@@ -222,6 +224,51 @@ def test_store_threads():
         for _ in range(20):
             s.create(DESK)
         assert len(s.list()) == 21
+
+
+def approved_ticket(**kw):
+    t = Ticket(id=7, status="approved", first="JANE", last="DOE", phone="(555)010-0000", year="2019",
+               make="CADILLAC", model="ATS", plate="XKS-4827", request="brakes squeak", mechanic="Sam",
+               odometer="98431", notes="rear tires worn", lines=[
+                   Line("front brake pads", 1, 120.0, 90.0, id=4),
+                   Line("wiper insert", 2, 15.5, id=9),
+                   Line("diag", labor=60.0),
+                   Line("check rattle", code="X", id=2),
+                   Line("cabin filter", price=30.0, labor=20.0, code="CAB")])
+    for k, v in kw.items():
+        setattr(t, k, v)
+    return t
+
+
+def test_to_draft_header_and_notes():
+    d = to_draft(approved_ticket(), CAT, today=date(2026, 3, 5))
+    assert d.id == "7" and d.make == "cadillac"
+    h = {k: v.value for k, v in d.header.items()}
+    assert h == {"first": "JANE", "last": "DOE", "phone": "(555)010-0000", "year_make": "2019 CADILLAC",
+                 "year": "2019", "make": "CADILLAC", "model": "ATS", "plate": "XKS-4827", "odometer": "98431",
+                 "tech": "Sam", "date": "03/05/26"}, h
+    assert {v.source for v in d.header.values()} == {"desk"}
+    assert d.notes == ["Customer: brakes squeak", "rear tires worn", "CHECK RATTLE"]
+    d = to_draft(approved_ticket(plate="", odometer="", request="", notes="", status="filled", lines=[]), CAT,
+                 today=date(2026, 3, 5))
+    assert "plate" not in d.header and "odometer" not in d.header  # missing stays missing
+    assert d.notes == [] and d.lines == [] and d.header["date"].value == "03/05/26"
+
+
+def test_to_draft_lines():
+    d = to_draft(approved_ticket(), CAT)
+    assert [(ln.id, ln.code, ln.desc, ln.price, ln.qty, ln.kind, ln.covers, ln.cost) for ln in d.lines] == [
+        (1, "FBP", "FRONT BRAKE PADS", 120.0, 1, "part", [], None),
+        (2, "INSTALL-PART", "Remove & Install: FRONT BRAKE PADS", 90.0, 1, "labor", [1], None),
+        (3, "", "WIPER INSERT", 15.5, 2, "part", [], None),  # no match, no labor
+        (4, "LABOR", "DIAG", 60.0, 1, "labor", [], None),
+        (5, "CAB", "CABIN FILTER", 30.0, 1, "part", [], None),  # ticket code wins
+        (6, "INSTALL-PART", "Remove & Install: CABIN FILTER", 20.0, 1, "labor", [5], None)]
+
+
+def test_to_draft_refuses_unapproved():
+    for st in ("waiting", "working", "review"):
+        raises(Refused, to_draft, approved_ticket(status=st), CAT)
 
 
 if __name__ == "__main__":

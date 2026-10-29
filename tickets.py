@@ -244,6 +244,39 @@ def totals(ticket):
     return {"parts": float(parts), "labor": float(labor), "total": float(parts + labor)}
 
 
+def to_draft(ticket, catalog, today=None):
+    """Approved (or filled) ticket -> draft.Draft for the InvoMax fill. Header values come from the desk;
+    year/make are also kept apart for the Vehicles dropdowns. A part's code is the ticket's, else
+    prices.match, else "". Lines with neither price nor labor go to notes."""
+    from draft import Draft, Value, Line as DLine
+    from prices import match
+    if ticket.status not in ("approved", "filled"):
+        raise Refused(f"a {ticket.status} ticket isn't ready for InvoMax")
+    t = ticket
+    vals = {"first": t.first, "last": t.last, "phone": t.phone, "year_make": squash(f"{t.year} {t.make}"),
+            "year": t.year, "make": t.make, "model": t.model, "plate": t.plate, "odometer": t.odometer,
+            "tech": t.mechanic, "date": (today or date.today()).strftime("%m/%d/%y")}
+    d = Draft(id=str(t.id), make=t.make.lower(), header={k: Value(v, "desk") for k, v in vals.items() if v})
+    d.notes = [s for s in (t.request and f"Customer: {t.request}", t.notes) if s]
+
+    def add(ln):
+        ln.id = len(d.lines) + 1
+        d.lines.append(ln)
+        return ln.id
+
+    for ln in t.lines:
+        desc = ln.desc.upper()
+        if ln.price is not None:
+            part = add(DLine(ln.code or match(ln.desc, catalog or {}) or "", desc, ln.price, qty=ln.qty))
+            if ln.labor:
+                add(DLine("INSTALL-PART", f"Remove & Install: {desc}", ln.labor, kind="labor", covers=[part]))
+        elif ln.labor:
+            add(DLine("LABOR", desc, ln.labor, kind="labor"))
+        else:
+            d.notes.append(desc)
+    return d
+
+
 def from_dict(d):
     names = {f.name for f in dc_fields(Ticket)}
     t = Ticket(**{k: v for k, v in d.items() if k in names})
