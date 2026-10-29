@@ -400,7 +400,12 @@ async function syncOpen(changed) {
   }
   if (!S.newer) return;
   if (editingNow()) renderBanner();  // never overwrite what the desk is typing
-  else loadTicket(S.newer);
+  else {
+    const was = S.cur;
+    loadTicket(S.newer);
+    if (was.status === "approved" && S.cur.status === "approved" && S.cur.totals?.total !== was.totals?.total)
+      tError("Prices changed on another device — check InvoMax has the same.");
+  }
 }
 
 /* ---------- new ticket ---------- */
@@ -463,7 +468,7 @@ async function openTicket(id) {
   }
 }
 
-function editable(t) { return t.status === "waiting" || t.status === "review"; }
+function editable(t) { return ["waiting", "review", "approved"].includes(t.status); }  // prices stay open until filled
 
 function markDirty() { S.dirty = true; }
 
@@ -788,7 +793,8 @@ async function approve() {
 }
 
 async function markFilled() {
-  if (!confirm("Mark this ticket as filled in InvoMax? It leaves the board.")) return;
+  if (!confirm((S.dirty ? "Save your changes and mark filled? Make sure InvoMax has the same prices."
+                        : "Mark this ticket as filled in InvoMax?") + " It leaves the board.")) return;
   const t = await move("filled");
   if (t) { S.dirty = false; leaveTicket(); flash("Marked filled: " + fullName(t) + ".", "ok"); }
 }

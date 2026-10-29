@@ -8,7 +8,7 @@
 3. **Desk review (iPad).** The ticket shows up for review with customer, vehicle, mechanic, every line, and totals (parts, labor, sum — no tax: InvoMax computes the final totals). Staff can fix any field or line, **Send back** to the mechanic with a note (→ working), or **Approve** (→ approved, "Ready for InvoMax").
 4. **InvoMax (shop PC).** An approved ticket converts to a `draft.Draft` (`tickets.to_draft`) for the InvoMax fill. InvoMax prints the company copy (the customer signs on paper) and the customer's copy; the tool never clicks Print. The real InvoMax driver is still being built (see HANDOFF), so this plan ends at the draft plus a **Filled** mark the desk sets by hand.
 
-Statuses: `waiting → working → review → approved → filled`; `review → working` (send back). Any other move is refused.
+Statuses: `waiting → working → review → approved → filled`; `review → working` (send back). Any other move is refused. Prices and labor are never locked before `filled`: the mechanic edits them while `working`, the desk in `waiting`, `review` and `approved` (owner, 2026-10-29).
 
 ## Decisions (owner, 2026-10-29)
 - Signature on paper, from InvoMax's printout. No signature capture.
@@ -57,7 +57,7 @@ Each task: an implementer subagent, then two senior reviewers in parallel (A: sp
 
 ### T3 — `shop.py` server + API
 - As in Architecture. Reuse `phone.load_pin` (path argument) and the login/lockout pattern; do not change `phone.py`'s behaviour.
-- Mechanic-only edits are limited to lines/odometer/notes, and only while the ticket is `working`; desk edits allowed in waiting/review.
+- Mechanic-only edits are limited to lines/odometer/notes, and only while the ticket is `working`; desk edits allowed in waiting/review/approved (until filled).
 - `mechanics.txt` made with one placeholder line when missing.
 - `tests/test_shop.py`: full flow over HTTP (login, create, accept, add lines, finish, send back, finish, approve, filled), 401 without cookie, 409 on stale version and on a bad move, catalog hints.
 

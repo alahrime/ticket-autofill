@@ -191,11 +191,11 @@ def normalize(fields, create=False):
 
 
 def edit(ticket, fields, who):
-    """Merge typed fields onto ticket in place. who: "desk" (waiting/review, any field) or
+    """Merge typed fields onto ticket in place. who: "desk" (waiting/review/approved, any field) or
     "mechanic" (working only: lines, odometer, notes). Unknown keys are ignored, as in normalize.
     Raises Refused (not allowed now / not theirs to change) or Invalid (bad values)."""
     if who == "desk":
-        if ticket.status not in ("waiting", "review"):
+        if ticket.status not in ("waiting", "review", "approved"):  # prices stay open until filled
             raise Refused(f"the desk can't change a {ticket.status} ticket")
     elif who == "mechanic":
         if ticket.status != "working":
@@ -206,6 +206,8 @@ def edit(ticket, fields, who):
     else:
         raise ValueError(f"who must be desk or mechanic, not {who!r}")
     clean, errors = normalize(fields)
+    if "lines" in clean and not clean["lines"] and ticket.status in ("review", "approved"):
+        errors.setdefault("lines", "keep at least one line")  # finishing needed one; don't bill an empty ticket
     if errors:
         raise Invalid(errors)
     for k, v in clean.items():

@@ -146,14 +146,17 @@ def test_shop_flow():
         code, t = call(base, url, {"version": 9, "who": "desk", "notes": "customer waiting"}, c)
         assert code == 200 and t["notes"] == "customer waiting"
         assert mv({"version": 10, "to": "approved"})[1]["status"] == "approved"
-        for who in ("mechanic", "desk"):
-            code, r = call(base, url, {"version": 11, "who": who, "notes": "late"}, c)
-            assert code == 409 and r["ticket"]["notes"] == "customer waiting" and r["ticket"]["version"] == 11
-        code, r = mv({"version": 11, "to": "working", "note": "again"})
-        assert code == 409 and r["ticket"]["status"] == "approved" and r["ticket"]["version"] == 11  # refused move
-        code, t = mv({"version": 11, "to": "filled"})
-        assert code == 200 and t["status"] == "filled" and t["version"] == 12
-        assert call(base, url, {"version": 12, "who": "desk", "notes": "late"}, c)[0] == 409
+        code, r = call(base, url, {"version": 11, "who": "mechanic", "notes": "late"}, c)
+        assert code == 409 and r["ticket"]["notes"] == "customer waiting" and r["ticket"]["version"] == 11
+        priced = [dict(ln, price=ln["price"] and ln["price"] + 5, labor=ln["labor"] and ln["labor"] + 10) for ln in t["lines"]]
+        code, t = call(base, url, {"version": 11, "who": "desk", "lines": priced}, c)  # prices stay editable after approval
+        assert code == 200 and t["status"] == "approved" and t["version"] == 12
+        assert [(ln["price"], ln["labor"]) for ln in t["lines"]] == [(ln["price"], ln["labor"]) for ln in priced]
+        code, r = mv({"version": 12, "to": "working", "note": "again"})
+        assert code == 409 and r["ticket"]["status"] == "approved" and r["ticket"]["version"] == 12  # refused move
+        code, t = mv({"version": 12, "to": "filled"})
+        assert code == 200 and t["status"] == "filled" and t["version"] == 13
+        assert call(base, url, {"version": 13, "who": "desk", "notes": "late"}, c)[0] == 409
 
         assert call(base, "/api/tickets/999", cookie=c)[0] == 404
         assert call(base, "/api/tickets/999/move", {"version": 1, "to": "working"}, c)[0] == 404

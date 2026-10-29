@@ -135,14 +135,22 @@ def test_edit():
     raises(Refused, edit, t, {"notes": "x"}, "mechanic")
     t.status = "working"
     raises(Refused, edit, t, {"first": "x"}, "desk")
+    for st, ok in (("approved", True), ("filled", False)):  # the desk can fix prices until the ticket is filled
+        a = Ticket(status=st, lines=[Line("pads", 1, 100.0, 100.0, "FBP", 1)])
+        if ok:
+            assert edit(a, {"lines": [{"desc": "pads", "price": 90, "labor": 80, "code": "FBP", "id": 1}]}, "desk").lines[0].price == 90
+            assert "lines" in raises(Invalid, edit, a, {"lines": []}, "desk").errors and a.lines[0].price == 90
+        else:
+            raises(Refused, edit, a, {"lines": []}, "desk")
     edit(t, {"lines": [{"desc": "oil", "price": 30}], "odometer": "98,431", "status": "filled"}, "mechanic")
     assert t.lines == [Line("oil", 1, 30.0, None, "", 1)] and t.odometer == "98431" and t.status == "working"
     assert "first" in str(raises(Refused, edit, t, {"first": "x", "notes": "y"}, "mechanic"))
     assert t.first == "JANET" and t.notes == "call first"
     t.status = "review"
     raises(Refused, edit, t, {"notes": "x"}, "mechanic")
-    edit(t, {"lines": []}, "desk")
-    assert t.lines == [] and t.odometer == "98431"
+    assert "lines" in raises(Invalid, edit, t, {"lines": []}, "desk").errors  # review keeps at least one line
+    edit(t, {"lines": [{"desc": "oil", "price": 35}]}, "desk")
+    assert t.lines[0].price == 35 and t.odometer == "98431"
     raises(ValueError, edit, t, {}, "customer")
 
 
