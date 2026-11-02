@@ -6,6 +6,7 @@ from prices import load_catalog, load_overrides, save_override, position, DEFAUL
 from draft import from_job, needs, line_by_id
 from inspection import read_receipt
 import report
+from shopwin import ShopWindow
 import invomax
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +44,8 @@ class App(tk.Tk):
         sp.bind("<Return>", self.reprice)
         sp.bind("<FocusOut>", self.reprice)
         ttk.Button(bar, text="Inspection report", command=lambda: ReportWindow(self)).pack(side="right")
+        ttk.Button(bar, text="Shop tickets", command=self.open_shop).pack(side="right")
+        self.shop_win = None
 
         form = ttk.Frame(self)
         form.pack(fill="x")
@@ -64,6 +67,11 @@ class App(tk.Tk):
         self.note = tk.Text(self, height=3)
         self.note.pack(fill="x")
         ttk.Button(self, text="Fill InvoMax", command=self.do_fill).pack(fill="x")
+
+    def open_shop(self):  # one window: it holds its own tickets.db connection
+        if self.shop_win and self.shop_win.winfo_exists():
+            return self.shop_win.lift()
+        self.shop_win = ShopWindow(self, CATALOG)
 
     # --- photo -> jobs
     def open_photo(self):
