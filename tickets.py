@@ -1,7 +1,7 @@
 """Shop tickets: desk -> mechanic -> desk review -> InvoMax. Model, status rules, cleaning, totals and the SQLite store."""
 from __future__ import annotations
 import json, re, sqlite3, threading
-from dataclasses import dataclass, field, asdict, fields as dc_fields
+from dataclasses import dataclass, field, asdict, replace, fields as dc_fields
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -10,7 +10,9 @@ UPPER = ("first", "last", "make", "model", "plate")
 TEXT = ("request", "mechanic", "odometer", "notes")
 LONG = ("request", "notes")  # up to 2000 chars; other text fields 80
 MECHANIC_KEYS = {"lines", "odometer", "notes"}
-MAX_LINES, MAX_MONEY, MAX_QTY = 100, 1e6, 1e4
+MAX_LINES, MAX_MONEY, MAX_QTY, MAX_DEPOSITS = 100, 1e6, 1e4, 50
+METHODS = ("cash", "card", "check", "other")  # how a deposit was paid
+DEPOSIT_DAYS = 366  # a deposit's date is at most about a year from today, either way
 MOVES = {("waiting", "working"), ("working", "review"), ("review", "working"),
          ("review", "approved"), ("approved", "filled")}
 
@@ -22,6 +24,15 @@ class Line:
     price: float | None = None   # part price each; None = labor-only line
     labor: float | None = None   # labor charge (installing the part, or the service)
     code: str = ""               # catalog code when matched
+    id: int = 0
+
+
+@dataclass
+class Deposit:
+    amount: float
+    method: str = "cash"
+    date: str = ""       # ISO YYYY-MM-DD
+    note: str = ""
     id: int = 0
 
 
@@ -41,6 +52,7 @@ class Ticket:
     odometer: str = ""
     notes: str = ""
     lines: list = field(default_factory=list)  # Line
+    deposits: list = field(default_factory=list)  # Deposit; the desk's only, never shown to mechanics
     back_note: str = ""   # desk's note when sent back; cleared when the mechanic finishes again
     created: str = ""     # ISO time, seconds
     updated: str = ""
@@ -117,17 +129,57 @@ def clean_line(d):
     qty = money(1 if d.get("qty") in (None, "") else d["qty"], "qty", MAX_QTY)
     if not qty:
         raise ValueError("qty must be more than 0")
-    try:
-        lid = max(int(d.get("id") or 0), 0)
-    except (TypeError, ValueError, OverflowError):  # 1e400 in JSON is inf
-        lid = 0
     return Line(desc, int(qty) if qty == int(qty) else qty, money(d.get("price"), "price"),
-                money(d.get("labor"), "labor"), text(d.get("code"), "code", 40).upper(), lid)
+                money(d.get("labor"), "labor"), text(d.get("code"), "code", 40).upper(), item_id(d))
 
 
-def normalize(fields, create=False):
+def item_id(d):
+    try:
+        return max(int(d.get("id") or 0), 0)
+    except (TypeError, ValueError, OverflowError):  # 1e400 in JSON is inf
+        return 0
+
+
+def clean_deposit(d, kept=()):
+    """kept: ids of deposits already stored; only new ones must be dated within DEPOSIT_DAYS of today."""
+    if isinstance(d, Deposit):
+        d = asdict(d)
+    if not isinstance(d, dict):
+        raise ValueError("bad deposit")
+    amount = money(d.get("amount"), "amount")
+    if not amount:
+        raise ValueError("amount must be more than 0")
+    method = text(d.get("method"), "method", 20).lower() or "cash"
+    if method not in METHODS:
+        raise ValueError(f"method must be {', '.join(METHODS)}")
+    day = text(d.get("date"), "date", 10) or date.today().isoformat()
+    try:
+        when = re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", day) and date.fromisoformat(day)
+    except ValueError:
+        when = None
+    if not when:
+        raise ValueError("date must be a real day, YYYY-MM-DD")
+    did = item_id(d)
+    if did not in kept and abs((when - date.today()).days) > DEPOSIT_DAYS:  # a typo in the year, not a real deposit
+        raise ValueError("date must be within a year of today")
+    return Deposit(amount, method, day, text(d.get("note"), "note", 200), did)
+
+
+def renumber(items):
+    """Keep each item's id; new (0) or repeated ones get the next free number, so ids stay stable."""
+    top, seen = max((x.id for x in items if x.id > 0), default=0), set()
+    for x in items:
+        if x.id <= 0 or x.id in seen:
+            top += 1
+            x.id = top
+        seen.add(x.id)
+    return items
+
+
+def normalize(fields, create=False, kept=()):
     """Typed fields -> (clean values, errors {field: message}). Only known keys are kept.
-    At create, first/last/phone/year/make/model are required; on an edit they can't be blanked."""
+    At create, first/last/phone/year/make/model are required; on an edit they can't be blanked.
+    kept: ids of the stored deposits (exempt from the date window)."""
     out, errors, raw = {}, {}, {}
     for k in UPPER + TEXT + ("phone", "year"):
         if k in fields:
@@ -176,14 +228,22 @@ def normalize(fields, create=False):
                 except ValueError as e:
                     errors["lines"] = f"line {i}: {e}"
                     break
-            top = max((ln.id for ln in clean if ln.id > 0), default=0)
-            seen = set()
-            for ln in clean:
-                if ln.id <= 0 or ln.id in seen:
-                    top += 1
-                    ln.id = top
-                seen.add(ln.id)
-            out["lines"] = clean
+            out["lines"] = renumber(clean)
+    if "deposits" in fields:
+        deps = fields["deposits"]
+        if not isinstance(deps, list):
+            errors["deposits"] = "deposits must be a list"
+        elif len(deps) > MAX_DEPOSITS:
+            errors["deposits"] = f"at most {MAX_DEPOSITS} deposits"
+        else:
+            clean = []
+            for i, d in enumerate(deps, 1):
+                try:
+                    clean.append(clean_deposit(d, kept))
+                except ValueError as e:
+                    errors["deposits"] = f"deposit {i}: {e}"
+                    break
+            out["deposits"] = renumber(clean)
     for k in REQUIRED:
         if k not in errors and (create or k in out) and not out.get(k):
             errors[k] = f"{k} is required"
@@ -191,21 +251,23 @@ def normalize(fields, create=False):
 
 
 def edit(ticket, fields, who):
-    """Merge typed fields onto ticket in place. who: "desk" (waiting/review/approved, any field) or
-    "mechanic" (working only: lines, odometer, notes). Unknown keys are ignored, as in normalize.
-    Raises Refused (not allowed now / not theirs to change) or Invalid (bad values)."""
+    """Merge typed fields onto ticket in place. who: "desk" (waiting/review/approved: any field; working:
+    deposits alone) or "mechanic" (working only: lines, odometer, notes). Unknown keys are ignored, as in
+    normalize. Raises Refused (not allowed now / not theirs to change) or Invalid (bad values)."""
+    known = set(fields) & set(UPPER + TEXT + REQUIRED + ("lines", "deposits"))
     if who == "desk":
-        if ticket.status not in ("waiting", "review", "approved"):  # prices stay open until filled
+        if ticket.status not in ("waiting", "review", "approved") and not (
+                ticket.status == "working" and known == {"deposits"}):  # prices stay open until filled
             raise Refused(f"the desk can't change a {ticket.status} ticket")
     elif who == "mechanic":
         if ticket.status != "working":
             raise Refused(f"the phone can't change a {ticket.status} ticket")
-        bad = sorted((set(UPPER + TEXT + REQUIRED) & set(fields)) - MECHANIC_KEYS)
+        bad = sorted(known - MECHANIC_KEYS)
         if bad:
             raise Refused(f"the phone can't change {', '.join(bad)}")
     else:
         raise ValueError(f"who must be desk or mechanic, not {who!r}")
-    clean, errors = normalize(fields)
+    clean, errors = normalize(fields, kept={x.id for x in ticket.deposits})  # stored deposits keep their dates
     if "lines" in clean and not clean["lines"] and ticket.status in ("review", "approved"):
         errors.setdefault("lines", "keep at least one line")  # finishing needed one; don't bill an empty ticket
     if errors:
@@ -239,17 +301,20 @@ def move(ticket, to, mechanic=None, note=""):
 
 
 def totals(ticket):
-    """{"parts": sum of qty*price, "labor": sum of labor, "total"}; each line rounded half-up to cents (no tax)."""
+    """parts (sum of qty*price), labor, total (parts + labor) and deposits (paid), each line rounded half-up to cents.
+    No tax or supplies: InvoMax adds those, so the balance due is InvoMax's total less the deposits."""
     d = lambda v: Decimal(str(v))
     parts = sum((cents(d(ln.qty) * d(ln.price)) for ln in ticket.lines if ln.price is not None), Decimal(0))
     labor = sum((cents(d(ln.labor)) for ln in ticket.lines if ln.labor is not None), Decimal(0))
-    return {"parts": float(parts), "labor": float(labor), "total": float(parts + labor)}
+    paid = sum((cents(d(x.amount)) for x in ticket.deposits), Decimal(0))
+    return {"parts": float(parts), "labor": float(labor), "total": float(parts + labor), "deposits": float(paid)}
 
 
 def to_draft(ticket, catalog, today=None):
     """Approved (or filled) ticket -> draft.Draft for the InvoMax fill. Header values come from the desk;
     year/make are also kept apart for the Vehicles dropdowns. A part's code is the ticket's, else
-    prices.match, else "". Lines with neither price nor labor go to notes."""
+    prices.match, else "". Lines with neither price nor labor go to notes, then a note per deposit
+    (InvoMax takes them off its total)."""
     from draft import Draft, Value, Line as DLine
     from prices import match
     if ticket.status not in ("approved", "filled"):
@@ -276,6 +341,8 @@ def to_draft(ticket, catalog, today=None):
             add(DLine("LABOR", desc, ln.labor, kind="labor"))
         else:
             d.notes.append(desc)
+    for x in t.deposits:
+        d.notes.append(f"Deposit ${x.amount:,.2f} ({x.method}, {x.date})" + (f": {x.note}" if x.note else ""))
     return d
 
 
@@ -283,6 +350,7 @@ def from_dict(d):
     names = {f.name for f in dc_fields(Ticket)}
     t = Ticket(**{k: v for k, v in d.items() if k in names})
     t.lines = [ln if isinstance(ln, Line) else Line(**ln) for ln in t.lines]
+    t.deposits = [x if isinstance(x, Deposit) else Deposit(**x) for x in t.deposits]
     return t
 
 
@@ -341,15 +409,24 @@ class Store:
         return [self._ticket(r) for r in rows]
 
     def save(self, ticket, version):
-        """Write ticket if version is the stored one (else raise Stale); returns it with version + 1."""
+        """Write ticket if version is the stored one (else raise Stale); returns it with version + 1.
+        Check and write are one transaction, so the PC app's process can't slip a save in between."""
         with self.lock:
-            row = self.db.execute("SELECT id, status, data FROM tickets WHERE id = ?", (ticket.id,)).fetchone()
-            if row is None:
-                raise KeyError(ticket.id)
-            cur = self._ticket(row)
-            if cur.version != version:
-                raise Stale(cur)
-            ticket.version, ticket.updated, ticket.created = version + 1, now(), cur.created
-            self.db.execute("UPDATE tickets SET status = ?, data = ? WHERE id = ?",
-                            (ticket.status, self._data(ticket), ticket.id))
+            self.db.execute("BEGIN IMMEDIATE")  # takes the write lock first (waits up to 5 s for another process)
+            try:
+                row = self.db.execute("SELECT id, status, data FROM tickets WHERE id = ?", (ticket.id,)).fetchone()
+                if row is None:
+                    raise KeyError(ticket.id)
+                cur = self._ticket(row)
+                if cur.version != version:
+                    raise Stale(cur)
+                new = replace(ticket, version=version + 1, updated=now(), created=cur.created)
+                self.db.execute("UPDATE tickets SET status = ?, data = ? WHERE id = ?",
+                                (new.status, self._data(new), new.id))
+                self.db.execute("COMMIT")
+            except BaseException:
+                if self.db.in_transaction:  # a failed COMMIT may have ended it already
+                    self.db.execute("ROLLBACK")
+                raise
+        ticket.version, ticket.updated, ticket.created = new.version, new.updated, new.created
         return ticket

@@ -27,3 +27,7 @@
 
 ## Not in this plan
 Moving `phone.py` onto accounts; email/SMS to customers; customer-facing bill view; signature capture.
+
+## Follow-up (owner, 2026-11-02)
+- **B1 Deposits (no tax here).** Our totals are raw prices: InvoMax adds the 6% tax and its supplies charge, so `totals()` is Parts, Labor, Total (before tax) and Deposits paid, with no tax and no balance (it would be wrong without InvoMax's tax and supplies; the desk takes deposits off InvoMax's total). Deposits are recorded by the admin only (amount, method cash/card/check/other, a date within a year of today, optional note), several per ticket, at any status until filled, including while the mechanic works; removable by the admin. Mechanics and the check-in iPad never see deposits. `to_draft` adds each deposit as a note ("Deposit $200.00 (cash, 2026-11-02)").
+- **P1 Shop tickets on the shop PC.** A "Shop tickets" window in the PC app (`app.py`, `run.bat`) lists approved tickets from `tickets.db` (refreshing every few seconds), shows the InvoMax entry sheet for the selected one (header values, lines in order, notes, totals) with copy buttons, and **Mark filled**. It reads the same `tickets.db` as `shop.py` on this PC. Typing into InvoMax by itself stays the next stage (HANDOFF: driver + live trials).

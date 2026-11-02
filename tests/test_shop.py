@@ -177,7 +177,8 @@ def test_full_flow():
                  {"desc": "brake fluid flush", "labor": 80}]
         code, t = call(b, url, {"version": 3, "lines": lines, "odometer": "45,120"}, al)
         assert code == 200 and t["version"] == 4 and t["odometer"] == "45120"
-        assert t["totals"] == {"parts": 100.0, "labor": 180.0, "total": 280.0}
+        assert t["totals"] == {"parts": 100.0, "labor": 180.0, "total": 280.0}  # phone: no deposits
+        assert "deposits" not in t
         code, r = call(b, url, {"version": 3, "notes": "late"}, al)
         assert code == 409 and r["ticket"]["version"] == 4 and r["ticket"]["notes"] == ""  # stale
         assert call(b, url, {"version": "4", "notes": "x"}, al)[0] == 400
@@ -194,7 +195,8 @@ def test_full_flow():
         assert [t["id"] for t in call(b, "/api/tickets?status=review", cookie=a)[1]["tickets"]] == [tid]
         lines[0].update(qty=2, price="50.50")
         code, t = call(b, url, {"version": 5, "who": "mechanic", "lines": lines, "first": "Joan"}, a)  # desk rules
-        assert code == 200 and t["first"] == "JOAN" and t["totals"] == {"parts": 101.0, "labor": 180.0, "total": 281.0}
+        assert code == 200 and t["first"] == "JOAN" and t["totals"] == {"parts": 101.0, "labor": 180.0, "total": 281.0, "deposits": 0}
+        assert t["deposits"] == []
         mv = lambda body, c=a: call(b, url + "/move", body, c)
         assert mv({"version": 6, "to": "working"})[0] == 409  # sending back needs a note
         assert mv({"version": 6, "to": "working", "note": ["x"]})[0] == 400
@@ -248,6 +250,49 @@ def test_full_flow():
         for secret in ["JANE", "FIXIT", "WRENCH", ADMIN.upper(), PASSWORD.upper(), *PINS.values(),
                        *(c.split("=", 1)[1].upper() for c in (a, k, al, bo))]:
             assert secret not in log.upper()
+
+
+def test_deposits_admin_only():
+    with Server() as s:
+        b = s.base
+        a, al, k = admin(b), tech(b, "Al Fixit"), kiosk(b)
+        kid = call(b, "/api/tickets", {**CAR, "deposits": [{"amount": 50}]}, k)[1]["id"]
+        assert call(b, f"/api/tickets/{kid}", cookie=a)[1]["deposits"] == []  # check-in can't take money
+        code, t = call(b, "/api/tickets", CAR, a)
+        url, v = f"/api/tickets/{t['id']}", t["version"]
+        dep = {"amount": "200", "method": "cash", "date": time.strftime("%Y-%m-%d"), "note": "at drop-off"}
+        code, t = call(b, url, {"version": v, "deposits": [dep]}, a)  # waiting
+        assert code == 200 and t["deposits"] == [{**dep, "amount": 200.0, "id": 1}]
+        assert t["totals"] == {"parts": 0, "labor": 0, "total": 0, "deposits": 200}
+        mech = lambda t: ("deposits" not in t and list(t["totals"]) == ["parts", "labor", "total"])
+        assert mech(call(b, url, cookie=al)[1])
+        assert all(mech(x) for x in call(b, "/api/tickets", cookie=al)[1]["tickets"])
+        code, t = call(b, url + "/move", {"version": t["version"], "to": "working"}, al)
+        assert code == 200 and mech(t)
+        code, t = call(b, url, {"version": t["version"], "lines": [{"desc": "pads", "price": 100, "labor": 50}]}, al)
+        assert code == 200 and mech(t) and t["totals"]["total"] == 150
+        code, r = call(b, url, {"version": t["version"], "deposits": []}, al)
+        assert code == 409 and "deposits" in r["error"] and mech(r["ticket"])  # the phone can't touch them
+        assert call(b, url, {"version": t["version"] - 1, "notes": "late"}, al)[1]["ticket"].keys() == r["ticket"].keys()
+
+        v = t["version"]
+        code, t = call(b, url, {"version": v, "deposits": [{"id": 1, **dep}, {"amount": 9.5, "method": "card"}]}, a)  # working
+        assert code == 200 and [d["id"] for d in t["deposits"]] == [1, 2] and t["totals"]["deposits"] == 209.5
+        code, r = call(b, url, {"version": t["version"], "deposits": [], "notes": "x"}, a)
+        assert code == 409 and len(r["ticket"]["deposits"]) == 2  # working: deposits alone
+        code, r = call(b, url, {"version": t["version"], "deposits": [{"amount": 5, "method": "venmo"}]}, a)
+        assert code == 400 and "deposits" in r["errors"]
+        assert call(b, url, cookie=a)[1]["totals"]["deposits"] == 209.5
+        t = call(b, url + "/move", {"version": t["version"], "to": "review"}, al)[1]
+        assert mech(t) and mech(call(b, url, cookie=al)[1])
+        code, t = call(b, url, {"version": t["version"], "deposits": [{"id": 2, "amount": 9.5, "method": "card"}]}, a)
+        assert code == 200 and [d["id"] for d in t["deposits"]] == [2]  # removed one (review)
+        t = call(b, url + "/move", {"version": t["version"], "to": "approved"}, a)[1]
+        code, t = call(b, url, {"version": t["version"], "deposits": t["deposits"] + [{"amount": 149.5}]}, a)
+        assert code == 200 and t["totals"]["deposits"] == 159 and [d["id"] for d in t["deposits"]] == [2, 3]
+        t = call(b, url + "/move", {"version": t["version"], "to": "filled"}, a)[1]
+        assert call(b, url, {"version": t["version"], "deposits": []}, a)[0] == 409  # filled: closed
+        assert call(b, url, cookie=k)[0] == 403
 
 
 def test_roles_refused_at_the_wrong_door():

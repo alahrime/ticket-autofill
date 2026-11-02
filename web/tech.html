@@ -574,9 +574,14 @@ function enqueue(fn) {
 }
 const isStale = e => e.status === 409 && e.data.error === "changed on another device";
 
+const LINE_KEYS = ["id", "desc", "qty", "price", "labor", "code"];
+const sameLines = (a, b) => (a || []).length === (b || []).length &&
+  a.every((x, i) => LINE_KEYS.every(k => (x[k] ?? null) === (b[i][k] ?? null)));
+
 // build(t) -> {lines} from the newest known copy, or null for a fields-only save.
 // fields: odometer/notes values captured now. A fields-only save that hits a stale version is retried once
-// on the new version (last write wins); a lines save is not (it would undo the other device's lines).
+// on the new version (last write wins); a lines save only when the new version has the same lines this phone
+// built on (the desk took a deposit, say), else it would undo the other device's lines.
 async function runSave(id, build, fields, keepalive) {
   for (let tries = 0; ; tries++) {
     const t = known[id];
@@ -598,7 +603,8 @@ async function runSave(id, build, fields, keepalive) {
       saved();
       return true;
     } catch (e) {
-      if (!build && tries === 0 && isStale(e) && e.data.ticket && mineNow(e.data.ticket)) {
+      if (tries === 0 && isStale(e) && e.data.ticket && mineNow(e.data.ticket) &&
+          (!build || sameLines(e.data.ticket.lines, t.lines))) {
         remember(e.data.ticket);
         continue;
       }

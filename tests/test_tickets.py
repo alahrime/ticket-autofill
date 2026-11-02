@@ -1,14 +1,17 @@
 import os, sys, tempfile, threading
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from tickets import Line, Ticket, Store, Stale, Invalid, Refused, normalize, edit, move, totals, to_draft, MOVES
+from tickets import (Line, Deposit, Ticket, Store, Stale, Invalid, Refused, normalize, edit, move, totals, to_draft,
+                     from_dict, MOVES)
 from prices import load_catalog
 
 DESK = {"first": " jane ", "last": "doe", "phone": "555 010 0000", "year": "2019", "make": "cadillac",
         "model": " cts   v ", "plate": "xks-4827", "request": "oil change, brakes squeak", "color": "red"}
 CAT = load_catalog(os.path.join(ROOT, "parts.csv"))
+TODAY, DAY = date.today(), timedelta(days=1)
+YESTERDAY = (TODAY - DAY).isoformat()
 
 
 @contextmanager
@@ -157,11 +160,88 @@ def test_edit():
 def test_totals():
     t = Ticket(lines=[Line("pads", qty=2, price=45.555, labor=80), Line("diag", labor=60.1),
                       Line("wiper", qty=3, price=0.1)])
-    assert totals(t) == {"parts": 91.41, "labor": 140.1, "total": 231.51}
-    assert totals(Ticket()) == {"parts": 0, "labor": 0, "total": 0}
+    assert totals(t) == {"parts": 91.41, "labor": 140.1, "total": 231.51, "deposits": 0}  # no tax: InvoMax adds it
+    assert list(totals(t)) == ["parts", "labor", "total", "deposits"]  # shown in this order
+    assert totals(Ticket()) == {"parts": 0, "labor": 0, "total": 0, "deposits": 0}
     assert totals(Ticket(lines=[Line("x", qty=1.5, price=3.33), Line("y", labor=1.005)]))["total"] == 6.01
     # each line is rounded first: 0.015 -> 0.02 twice, not 0.03 -> 0.03
     assert totals(Ticket(lines=[Line("a", qty=1.5, price=0.01), Line("b", qty=1.5, price=0.01)]))["parts"] == 0.04
+
+
+def test_deposits_total():
+    t = Ticket(lines=[Line("x", labor=100)], deposits=[Deposit(80, "cash", "2026-11-01"), Deposit(20.5, "card", "2026-11-02")])
+    assert totals(t) == {"parts": 0, "labor": 100, "total": 100, "deposits": 100.5}  # paying past the total is kept as is
+    t.deposits.append(Deposit(0.1))
+    assert totals(t)["deposits"] == 100.6  # in cents, no float drift
+
+
+def test_normalize_deposits():
+    out, err = normalize({"deposits": [{"amount": "$1,200.005", "method": " Card ", "date": YESTERDAY, "note": " half "},
+                                       {"amount": 5, "id": 7}]})
+    assert not err and out["deposits"] == [Deposit(1200.01, "card", YESTERDAY, "half", 8),
+                                           Deposit(5, "cash", date.today().isoformat(), "", 7)]  # defaults; new ids follow the top one
+    out, _ = normalize({"deposits": [{"amount": 1, "id": 3}, {"amount": 2}, {"amount": 3, "id": 3}, {"amount": 4, "id": -1}]})
+    assert [x.id for x in out["deposits"]] == [3, 4, 5, 6]  # kept, new and repeated ones get the next free id
+    for bad in ([{"amount": 0}], [{"amount": ""}], [{"amount": "-5"}], [{"amount": "ten"}], [{"amount": 1000000.01}],
+                [{"amount": 5, "method": "venmo"}], [{"amount": 5, "date": "11/02/2026"}], [{"amount": 5, "date": "2026-02-30"}],
+                [{"amount": 5, "date": "2026-1-2"}], [{"amount": 5, "date": (TODAY + 367 * DAY).isoformat()}],
+                [{"amount": 5, "date": (TODAY - 367 * DAY).isoformat()}], [{"amount": 5, "date": "1926-11-02"}], [{"amount": 5, "note": "x" * 201}], [{"amount": 5, "note": ["x"]}],
+                ["5"], [None], {"amount": 5}, "5", [{"amount": 1}] * 51):
+        assert "deposits" in normalize({"deposits": bad})[1], bad
+    assert normalize({"deposits": [{"amount": 1000000, "note": "x" * 200}]})[1] == {}
+    for days in (-365, 365):  # a year either way is fine: a late entry, a post-dated check
+        assert normalize({"deposits": [{"amount": 1, "date": (TODAY + days * DAY).isoformat()}]})[1] == {}, days
+    assert "within a year" in normalize({"deposits": [{"amount": 1, "date": (TODAY + 400 * DAY).isoformat()}]})[1]["deposits"]
+
+
+def test_old_stored_deposits_keep_their_dates():
+    old = (TODAY - 730 * DAY).isoformat()
+    t = Ticket(status="approved", lines=[Line("x", labor=1)], deposits=[Deposit(100, "cash", old, id=1)])
+    edit(t, {"deposits": [{"amount": 100, "method": "cash", "date": old, "id": 1}, {"amount": 5}]}, "desk")  # add one
+    assert [(x.id, x.date) for x in t.deposits] == [(1, old), (2, TODAY.isoformat())]
+    edit(t, {"deposits": [{"amount": 100, "date": old, "id": 1}]}, "desk")  # remove the new one
+    assert [x.id for x in t.deposits] == [1]
+    for bad in ({"amount": 5, "date": old}, {"amount": 5, "date": old, "id": 9}):  # new, so the window applies
+        assert "within a year" in raises(Invalid, edit, t, {"deposits": [{"amount": 100, "date": old, "id": 1}, bad]}, "desk").errors["deposits"]
+    assert "real day" in raises(Invalid, edit, t, {"deposits": [{"amount": 100, "date": "2024-02-30", "id": 1}]}, "desk").errors["deposits"]
+    edit(t, {"deposits": []}, "desk")
+    assert t.deposits == []
+    assert normalize({"deposits": []}) == ({"deposits": []}, {})
+
+
+def test_deposits_desk_only_until_filled():
+    dep = {"deposits": [{"amount": 200, "method": "cash", "date": YESTERDAY}]}
+    for st in ("waiting", "working", "review", "approved"):
+        t = Ticket(status=st, lines=[Line("x", labor=1)])
+        edit(t, dep, "desk")
+        assert t.deposits == [Deposit(200, "cash", YESTERDAY, "", 1)], st
+    t = Ticket(status="working", lines=[Line("x", labor=1)])
+    raises(Refused, edit, t, {**dep, "notes": "x"}, "desk")  # working: deposits alone, nothing else
+    raises(Refused, edit, t, {"notes": "x"}, "desk")
+    assert "deposits" in str(raises(Refused, edit, t, dep, "mechanic"))
+    raises(Refused, edit, t, {**dep, "notes": "x"}, "mechanic")
+    assert t.deposits == [] and t.notes == ""
+    edit(t, {**dep, "version": 3, "color": "red"}, "desk")  # unknown keys don't count
+    assert len(t.deposits) == 1
+    raises(Refused, edit, Ticket(status="filled"), dep, "desk")
+    t = Ticket(status="review", lines=[Line("x", labor=1)], deposits=[Deposit(5, id=1), Deposit(6, id=2)])
+    edit(t, {"deposits": [{"amount": 6, "id": 2}]}, "desk")  # removing one
+    assert [x.id for x in t.deposits] == [2]
+    assert "deposits" in raises(Invalid, edit, t, {"deposits": [{"amount": 0}]}, "desk").errors
+    assert [x.id for x in t.deposits] == [2]  # nothing half-applied
+
+
+def test_old_tickets_without_deposits_load():
+    t = from_dict({"id": 3, "status": "approved", "first": "OLD", "lines": [{"desc": "oil", "price": 40}]})
+    assert t.deposits == [] and totals(t)["total"] == 40
+    with store() as s:
+        s.db.execute("INSERT INTO tickets (id, status, data) VALUES (5, 'review', ?)",
+                     ('{"first": "OLD", "lines": [{"desc": "oil", "qty": 1, "price": 40, "labor": null, "code": "", "id": 1}]}',))
+        t = s.get(5)
+        assert t.deposits == [] and t.lines[0].price == 40
+        edit(t, {"deposits": [{"amount": 10, "date": YESTERDAY}]}, "desk")
+        s.save(t, 1)
+        assert s.get(5).deposits == [Deposit(10, "cash", YESTERDAY, "", 1)]
 
 
 def test_store_create_get_list():
@@ -208,6 +288,36 @@ def test_store_save_versions_and_stale():
         assert e.ticket.notes == "from the phone" and e.ticket.version == 3
         assert s.get(t.id).notes == "from the phone"
         raises(KeyError, s.save, Ticket(id=42), 1)
+
+
+def test_store_two_processes():  # shop.py and the PC app each open tickets.db: the version check holds across them
+    with tempfile.TemporaryDirectory() as d:
+        web, pc = Store(os.path.join(d, "tickets.db")), Store(os.path.join(d, "tickets.db"))
+        try:
+            t = web.create(DESK)
+            mine, theirs = web.get(t.id), pc.get(t.id)
+            mine.notes = "desk"
+            web.save(mine, 1)
+            theirs.notes = "pc"
+            e = raises(Stale, pc.save, theirs, 1)
+            assert e.ticket.notes == "desk" and theirs.version == 1  # the refused copy is left as it was
+            assert pc.save(e.ticket, 2).version == 3  # nothing left locked after the refusal
+            raises(KeyError, pc.save, Ticket(id=42), 1)
+            assert not pc.db.in_transaction and not web.db.in_transaction  # refused saves end their transaction
+            got = pc.get(t.id)
+            got.notes = "waits"
+            web.db.execute("BEGIN IMMEDIATE")  # the other process mid-save: this one waits its turn
+            done = []
+            th = threading.Thread(target=lambda: done.append(pc.save(got, 3).version))
+            th.start()
+            th.join(0.5)
+            assert not done
+            web.db.execute("COMMIT")
+            th.join(5)
+            assert done == [4] and web.get(t.id).notes == "waits"
+        finally:
+            web.close()
+            pc.close()
 
 
 def test_store_threads():
@@ -272,6 +382,15 @@ def test_to_draft_lines():
         (4, "LABOR", "DIAG", 60.0, 1, "labor", [], None),
         (5, "CAB", "CABIN FILTER", 30.0, 1, "part", [], None),  # ticket code wins
         (6, "INSTALL-PART", "Remove & Install: CABIN FILTER", 20.0, 1, "labor", [5], None)]
+
+
+def test_to_draft_deposits():
+    d = to_draft(approved_ticket(), CAT)
+    assert d.notes == ["Customer: brakes squeak", "rear tires worn", "CHECK RATTLE"]  # no deposit notes
+    d = to_draft(approved_ticket(deposits=[Deposit(200, "cash", "2026-11-02", id=1),
+                                           Deposit(1250.5, "card", "2026-11-03", "parts", id=2)]), CAT)
+    assert d.notes[3:] == ["Deposit $200.00 (cash, 2026-11-02)", "Deposit $1,250.50 (card, 2026-11-03): parts"]  # no balance
+    assert not any(hasattr(d, k) for k in ("tax_rate", "totals", "deposits"))  # the PC app calls totals() itself
 
 
 def test_to_draft_refuses_unapproved():

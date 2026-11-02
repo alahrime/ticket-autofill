@@ -32,6 +32,7 @@ PAGES = {"/admin": "admin", "/tech": "mechanic", "/checkin": "kiosk"}  # page ->
 HOME = {v: k for k, v in PAGES.items()}
 KIOSK = ("first", "last", "phone", "year", "make", "model", "plate", "request")  # what check-in may fill
 WHO = {"admin": "desk", "mechanic": "mechanic"}  # tickets.edit rules by role
+MECHANIC_TOTALS = ("parts", "labor", "total")  # no deposits on the phone
 
 
 def hints(q, path=None):
@@ -64,8 +65,13 @@ def vehicles():
     return _vehicles[VEHICLES]
 
 
-def as_json(t):
-    return {**asdict(t), "totals": tickets.totals(t)}
+def as_json(t, role):
+    """A ticket for the page: the admin sees everything; a mechanic no deposits, nor what was paid."""
+    d, tot = asdict(t), tickets.totals(t)
+    if role != "admin":
+        del d["deposits"]
+        tot = {k: tot[k] for k in MECHANIC_TOTALS}
+    return {**d, "totals": tot}
 
 
 def same(a, b):
@@ -225,11 +231,11 @@ class Handler(Web):
                                           .encode()).hexdigest()[:32]
             if self.headers.get("If-None-Match") == tag:  # the pages poll every 4 s: nothing changed, nothing sent
                 return self.reply(304, b"", headers=[("ETag", tag)])
-            return self.reply(200, {"tickets": [as_json(t) for t in found]}, headers=[("ETag", tag)])
+            return self.reply(200, {"tickets": [as_json(t, role) for t in found]}, headers=[("ETag", tag)])
         m = TICKET.fullmatch(path)
         if m and not m[2]:
             t = self.store.get(int(m[1]))
-            return self.reply(200, as_json(t)) if t and self.sees(s, t, True) else self.reply(404, {"error": "not found"})
+            return self.reply(200, as_json(t, role)) if t and self.sees(s, t, True) else self.reply(404, {"error": "not found"})
         if role != "admin":
             return self.refuse()
         if path == "/api/mechanics":
@@ -267,7 +273,7 @@ class Handler(Web):
             d = self.data()
             return self.reply(200, {"id": self.store.create({k: d[k] for k in KIOSK if k in d}).id})
         if path == "/api/tickets" and role == "admin":
-            return self.reply(200, as_json(self.store.create(self.data())))
+            return self.reply(200, as_json(self.store.create(self.data()), role))
         m = TICKET.fullmatch(path)
         if m and role != "kiosk":
             return self.ticket(s, int(m[1]), bool(m[2]))
@@ -403,11 +409,11 @@ class Handler(Web):
                 self.move(s, t, d)
             else:
                 tickets.edit(t, d, WHO[s["role"]])
-            self.reply(200, as_json(self.store.save(t, version)))
+            self.reply(200, as_json(self.store.save(t, version), s["role"]))
         except tickets.Stale as e:
-            self.reply(409, {"error": str(e), "ticket": as_json(e.ticket)})
+            self.reply(409, {"error": str(e), "ticket": as_json(e.ticket, s["role"])})
         except tickets.Refused as e:  # a ValueError too: caught before run()'s 400
-            self.reply(409, {"error": str(e), "ticket": as_json(self.store.get(t.id))})  # the stored one, unedited
+            self.reply(409, {"error": str(e), "ticket": as_json(self.store.get(t.id), s["role"])})  # the stored one, unedited
 
     def move(self, s, t, d):
         to, mechanic, note = d.get("to"), d.get("mechanic"), d.get("note")
