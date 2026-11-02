@@ -19,7 +19,11 @@ from dataclasses import dataclass, field
 NEVER = {"done", "charge", "print", "clear", "dial number", "continue", "fast quote", "change", "delete",
          "custom vehicle", "void this transaction", "erase this transaction",
          "make changes to this transaction", "change the transaction date"}
-NO_DOUBLE_CLICK = {"plate", "vin"}
+NO_DOUBLE_CLICK = {"plate", "vin"}  # and any control whose name contains one of these (vehicles.vin)
+
+
+def no_double_click(ctl):
+    return any(w in ctl for w in NO_DOUBLE_CLICK)
 # Invoice-window areas (x1, y1, x2, y2) no click may land in, from the probe log.
 REFUSED_AREAS = {"Clear": (90, 335, 160, 370), "Done": (1280, 335, 1350, 370)}
 KEYS = {"{ENTER}", "{TAB}"}
@@ -43,7 +47,16 @@ class Check:
                      tuple(p.fill(values) for p in self.parts))
 
     def test(self, d):
-        """-> (passed, what was seen)."""
+        """-> (passed, what was seen). A driver error (box not found, can't be read) is a failed check, so
+        polling goes on; a refusal (an exception with .refused) stops at once."""
+        try:
+            return self._test(d)
+        except RuntimeError as e:
+            if getattr(e, "refused", False):
+                raise
+            return False, f"error: {e}"
+
+    def _test(self, d):
         k = self.kind
         if k == "dialog":
             got = d.dialog()
@@ -66,6 +79,9 @@ class Check:
         if k == "focus":
             got = d.focused()
             return got == self.a, f"focus on {got!r}"
+        if k == "not_focus":
+            got = d.focused()
+            return got is not None and got != self.a, f"focus on {got!r}"
         if k == "checked":
             return d.checked(self.a), f"{self.a} checked = {d.checked(self.a)}"
         if k == "menu_has":
@@ -83,7 +99,7 @@ class Check:
             return f" {'or' if self.kind == 'any' else 'and'} ".join(map(str, self.parts))
         return {"dialog": f"window {self.a!r}", "gone": f"window {self.a!r} closed", "no_dialog": "no window open",
                 "text": f"{self.a} = {self.b!r}", "filled": f"{self.a} filled", "empty": f"{self.a} empty",
-                "focus": f"focus on {self.a}", "checked": f"{self.a} checked", "menu_has": f"menu with {self.a!r}",
+                "focus": f"focus on {self.a}", "not_focus": f"focus moved off {self.a}", "checked": f"{self.a} checked", "menu_has": f"menu with {self.a!r}",
                 "caption": f"button {self.a!r}"}[self.kind]
 
 
@@ -94,6 +110,7 @@ def text(ctl, value): return Check("text", ctl, value)
 def filled(ctl): return Check("filled", ctl)
 def empty(ctl): return Check("empty", ctl)
 def focus(ctl): return Check("focus", ctl)
+def not_focus(ctl): return Check("not_focus", ctl)
 def checked(ctl): return Check("checked", ctl)
 def menu_has(item): return Check("menu_has", item)
 def caption(c): return Check("caption", c)
@@ -187,7 +204,10 @@ RECIPES = {
         steps=(
             double_click("name.first", expect=dialog("Customers"), say="Open the Customers search"),
             click("customers.by_{by}", expect=checked("customers.by_{by}"), say="Search by {by}"),
-            set_("customers.search", "{text}", typed=True, say="Type {text}"),
+            # readable effects first; the typed text itself is only readable by copy-back
+            set_("customers.search", "{text}", typed=True,
+                 expect=any_of(gone("Customers"), filled("name.first"), not_focus("customers.search"),
+                               text("customers.search", "{text}")), say="Type {text}"),
         )),
     "customer_new": Recipe(  # spec 5.3
         require=(dialog("Customers"),),
@@ -204,6 +224,9 @@ RECIPES = {
     "customers_exit": Recipe(
         require=(dialog("Customers"),),
         steps=(press("Exit", expect=gone("Customers"), say="Close the Customers search"),)),
+    "vehicles_cancel": Recipe(  # back out of Vehicles without choosing (trial stage 3.2)
+        require=(dialog("Vehicles"),),
+        steps=(press("Cancel", expect=gone("Vehicles"), say="Close the Vehicles window"),)),
     "vehicle_open": Recipe(  # spec 5.5
         require=(no_dialog(), filled("name.first")),
         steps=(click("year_make", expect=dialog("Vehicles"), say="Open the Vehicles window"),)),
@@ -249,7 +272,7 @@ def _guard(name, n, step, d, done, allowed):
             _refuse(name, n, step, f"{step.target!r} is never pressed by the tool", done)
         if c not in allowed:
             _refuse(name, n, step, f"{step.target!r} isn't in any recipe", done)
-    if step.kind == "double_click" and step.target in NO_DOUBLE_CLICK:
+    if step.kind == "double_click" and no_double_click(step.target):
         _refuse(name, n, step, f"{step.target} is never double-clicked", done)
     if step.kind == "key" and step.target not in KEYS:
         _refuse(name, n, step, f"key {step.target!r}", done)
@@ -322,13 +345,19 @@ def run(name, values, d, recipes=None, now=time.monotonic, sleep=time.sleep, on_
             on_step(n, step.say)
         value = step.value.format(**values)
         start = now()
-        _act(step, d, value)
-        retry = (RETRY, lambda: _act(step, d, value)) if step.kind == "click" and step.tries > 1 else None
         check = step.expect.fill(values) if step.expect else None
-        if check:
-            ok, got = _wait(check, d, step.timeout, now, sleep, retry)
-            if not ok:
-                raise StepFailed(name, n, step.say, str(check), got, done)
+        try:
+            _act(step, d, value)
+            retry = (RETRY, lambda: _act(step, d, value)) if step.kind == "click" and step.tries > 1 else None
+            if check:
+                ok, got = _wait(check, d, step.timeout, now, sleep, retry)
+                if not ok:
+                    raise StepFailed(name, n, step.say, str(check), got, done)
+        except StepFailed:
+            raise
+        except Exception as e:  # the driver refused or failed: stop here, saying what was done so far
+            why = "refused" if getattr(e, "refused", False) else "error"
+            raise StepFailed(name, n, step.say, str(check) if check else "the step to run", f"{why}: {e}", done) from e
         if check and _about_windows(check):
             window = d.dialog()
         elif d.dialog() != window:  # this step wasn't meant to open or close a window

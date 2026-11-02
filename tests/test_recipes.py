@@ -130,6 +130,64 @@ def test_every_recipe_press_is_allowed_and_none_is_on_the_never_list():
     assert r.ALLOWED and not (r.ALLOWED & r.NEVER)
 
 
+def test_vehicles_cancel_backs_out():
+    f = FakeInvoMax(lag=0.3)
+    f.windows = ["Vehicles"]
+    go("vehicles_cancel", {}, f)
+    assert f.dialog() is None and f.actions == [("press", "Cancel")]
+
+
+class Refusal(RuntimeError):
+    refused = True
+
+
+def test_driver_read_error_is_a_failed_check_and_polling_goes_on():
+    f = FakeInvoMax()
+    orig, calls = f.focused, []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("TLMDEdit#6 isn't on screen")
+        return orig()
+    f.focused = flaky
+    go("customer_by_plate", {"plate": "XKS-4827"}, f)
+    assert len(calls) >= 3
+    f = FakeInvoMax()
+    f.focused = lambda: (_ for _ in ()).throw(RuntimeError("not readable"))
+    e = fails("customer_by_plate", {"plate": "XKS-4827"}, f)
+    assert e.step_no == 1 and "error: not readable" in e.got
+
+
+def test_refusal_in_a_check_stops_at_once():
+    f = FakeInvoMax()
+    f.focused = lambda: (_ for _ in ()).throw(Refusal("Refused: emergency stop"))
+    e = fails("customer_by_plate", {"plate": "XKS-4827"}, f)
+    assert e.step_no == 1 and e.got.startswith("refused:") and f.now() < 1
+
+
+def test_action_error_becomes_step_failed_with_what_was_done():
+    f = FakeInvoMax()
+
+    def boom(ctl, value, typed):
+        raise Refusal("Refused: a menu is open")
+    f.set_text = boom
+    e = fails("customer_by_plate", {"plate": "XKS-4827"}, f)
+    assert e.step_no == 2 and "refused: Refused: a menu is open" == e.got and [n for n, _, _ in e.done] == [1]
+    f = FakeInvoMax()
+    f.set_text = lambda *a: (_ for _ in ()).throw(RuntimeError("SendInput failed"))
+    e = fails("customer_by_plate", {"plate": "XKS-4827"}, f)
+    assert e.got == "error: SendInput failed"
+
+
+def test_customer_search_check_passes_on_a_readable_effect():
+    f = FakeInvoMax()
+    orig = f.set_text
+    f.set_text = lambda ctl, value, typed: None if ctl == "customers.search" else orig(ctl, value, typed)
+    go("customer_search", {"by": "license", "text": "XKS-4827"}, f)  # text unreadable, focus moved off the box
+    assert f.dialog() == "Customers"
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

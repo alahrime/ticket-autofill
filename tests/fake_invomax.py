@@ -144,6 +144,8 @@ class FakeInvoMax:
                 self.fields["name.last"] = self.fields.get("custinfo.last", "")
                 self.fields["phone"] = self.fields.get("custinfo.phone", "")
             self.later(save)
+        elif top == "Vehicles" and caption == "Cancel":
+            self.later(lambda: self.windows.remove("Vehicles"))
         elif top == "Phone Number" and caption == "OK":
             self.fields["phone"] = self.fields["phone.text"]
             self.windows.pop()
