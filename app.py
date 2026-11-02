@@ -6,7 +6,7 @@ from prices import load_catalog, load_overrides, save_override, position, DEFAUL
 from draft import from_job, needs, line_by_id
 from inspection import read_receipt
 import report
-from shopwin import ShopWindow
+from shopwin import ShopWindow, app_fields, app_row, list_row
 import invomax
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +26,9 @@ class App(tk.Tk):
         self.jobs, self.job, self.draft, self.shown = [], None, None, []
         self.codes, self.sides, self.edits, self.deleted = {}, {}, {}, set()
         self.filled = False
+        self.ticket, self.loaded = None, None  # shop ticket in view (else photo mode); its form as loaded
+        self.tnotes, self.changed = [], ""  # title notes in ticket mode; why Shop tickets has a different copy
+        self.reading, self.mid_read = False, False  # a photo read is running; the ticket was loaded during one
 
         bar = ttk.Frame(self)
         bar.pack(fill="x")
@@ -35,11 +38,11 @@ class App(tk.Tk):
             b.pack(side="left")
         self.job_box = ttk.Combobox(bar, state="readonly", width=28)
         self.job_box.pack(side="left")
-        self.job_box.bind("<<ComboboxSelected>>", lambda e: self.show_job(self.job_box.current()))
+        self.job_box.bind("<<ComboboxSelected>>", lambda e: self.ticket or self.show_job(self.job_box.current()))
         ttk.Label(bar, text=" Markup ×").pack(side="left")
         self.markup = tk.StringVar(value=str(DEFAULT_MARKUP))
-        sp = ttk.Spinbox(bar, from_=1, to=5, increment=0.1, width=4, textvariable=self.markup,
-                         command=self.reprice)
+        self.markup_sp = sp = ttk.Spinbox(bar, from_=1, to=5, increment=0.1, width=4, textvariable=self.markup,
+                                          command=self.reprice)  # disabled while a shop ticket is in view
         sp.pack(side="left")
         sp.bind("<Return>", self.reprice)
         sp.bind("<FocusOut>", self.reprice)
@@ -56,8 +59,8 @@ class App(tk.Tk):
             self.entries[k] = tk.Entry(form, textvariable=self.vars[k], width=32)
             self.entries[k].grid(row=r, column=1, sticky="w")
 
-        self.tree = ttk.Treeview(self, columns=("code", "desc", "cost", "price"), show="headings", height=10)
-        for c, w in (("code", 100), ("desc", 320), ("cost", 60), ("price", 70)):
+        self.tree = ttk.Treeview(self, columns=("code", "desc", "qty", "cost", "price"), show="headings", height=10)
+        for c, w in (("code", 100), ("desc", 320), ("qty", 40), ("cost", 60), ("price", 70)):
             self.tree.heading(c, text=c.title())
             self.tree.column(c, width=w)
         self.tree.pack(fill="both", expand=True)
@@ -72,6 +75,55 @@ class App(tk.Tk):
         if self.shop_win and self.shop_win.winfo_exists():
             return self.shop_win.lift()
         self.shop_win = ShopWindow(self, CATALOG)
+
+    # --- shop ticket -> fields, lines, notes
+    def form(self):
+        return {k: v.get() for k, v in self.vars.items()}, self.note.get("1.0", "end-1c")
+
+    def unsaved(self):
+        """A photo job in view, or a shop ticket that was edited or filled since it was loaded."""
+        return bool(self.job) or bool(self.ticket and (self.edits or self.deleted or self.filled or self.form() != self.loaded))
+
+    def ticket_title(self, note=None):
+        if note and note not in self.tnotes:
+            self.tnotes.append(note)
+        self.title(f"Ticket Autofill — shop ticket #{self.ticket.id}" + "".join(f" ({n})" for n in self.tnotes))
+
+    def ticket_changed(self, fresh):
+        """Shop tickets has a newer copy of the ticket in view (ShopWindow.refresh)."""
+        if not self.ticket or fresh.id != self.ticket.id or self.changed:
+            return
+        self.changed = "filled in Shop tickets" if fresh.status == "filled" else "newer version in Shop tickets — Load again"
+        self.ticket_title(self.changed)
+
+    def load_ticket(self, ticket, draft):
+        """Shop ticket (approved, as tickets.to_draft made it) -> the fields, lines and notes. False if not replaced."""
+        _, name, car = list_row(ticket)[:3]
+        self.lift()
+        if self.ticket and self.ticket.id == ticket.id:
+            q = (f"Ticket #{ticket.id} was already filled here. Reload it?" if self.filled and not (
+                self.edits or self.deleted or self.form() != self.loaded) else
+                f"Reload ticket #{ticket.id} and lose your changes here?")
+        else:
+            q = f"Replace what's in Ticket Autofill with shop ticket #{ticket.id}?"
+        if self.unsaved() and not messagebox.askyesno("Replace?", q, parent=self):
+            return False
+        for k, v in app_fields(draft, self.vars).items():
+            self.vars[k].set(v)
+            self.entries[k].config(bg="white")
+        self.tree.delete(*self.tree.get_children())
+        self.shown = [(self.tree.insert("", "end", values=app_row(ln)), ln) for ln in draft.lines]
+        self.note.delete("1.0", "end")
+        self.note.insert("1.0", "\n".join(draft.notes))
+        self.jobs, self.job, self.draft, self.ticket = [], None, draft, ticket
+        self.codes, self.sides, self.edits, self.deleted = {}, {}, {}, set()
+        self.filled, self.tnotes, self.changed, self.mid_read = False, [], "", self.reading
+        self.job_box["values"] = [f"Shop ticket #{ticket.id} — {name} — {car}"]
+        self.job_box.current(0)
+        self.markup_sp.state(["disabled"])  # the ticket's prices are the ticket's
+        self.ticket_title()
+        self.loaded = self.form()
+        return True
 
     # --- photo -> jobs
     def open_photo(self):
@@ -93,6 +145,7 @@ class App(tk.Tk):
     def load(self, path):
         # Reading can take minutes on a CPU-only PC: do it on a worker thread, poll from Tk.
         result = []
+        self.reading = True
         threading.Thread(target=lambda: result.append(read_photo(path)), daemon=True).start()
         for b in self.photo_btns:
             b.state(["disabled"])
@@ -102,10 +155,15 @@ class App(tk.Tk):
     def finish_load(self, path, result):
         if not result:
             return self.after(200, self.finish_load, path, result)
+        self.reading = False
         for b in self.photo_btns:
             b.state(["!disabled"])
+        jobs, err = result[0]
+        if self.ticket and (self.unsaved() or self.mid_read) and not messagebox.askyesno(
+                "Replace?", f"The photo is read. Replace shop ticket #{self.ticket.id} with it?", parent=self):
+            return self.ticket_title()  # keep the ticket
         self.title("Ticket Autofill")
-        self.jobs, err = result[0]
+        self.jobs = jobs
         if err:
             messagebox.showwarning("Couldn't read page", err)
         if not self.jobs:  # nothing read: show the photo and empty fields for manual entry
@@ -119,6 +177,8 @@ class App(tk.Tk):
 
     def show_job(self, i):
         self.job = job = self.jobs[i]
+        self.ticket = None  # back to photo mode
+        self.markup_sp.state(["!disabled"])
         for k, v in self.vars.items():
             v.set(job.fields.get(k, ""))
             self.entries[k].config(bg=FLAG_BG if k in job.flags else "white")
@@ -162,6 +222,8 @@ class App(tk.Tk):
 
     # --- lines
     def reprice(self, _event=None):
+        if self.ticket:  # a shop ticket's prices are the ticket's (the spinbox is disabled)
+            return
         try:
             markup = float(self.markup.get())
             if markup <= 0:
@@ -177,7 +239,8 @@ class App(tk.Tk):
                 continue
             ln.price = self.edits.get(ln.id, ln.price)
             cost = "" if ln.cost is None else f"{ln.cost:.2f}"
-            iid = self.tree.insert("", "end", values=(ln.code, ln.desc, cost, f"{ln.price:.2f}{'?' if ln.unsure else ''}"))
+            iid = self.tree.insert("", "end", values=(ln.code, ln.desc, f"{ln.qty:g}", cost,
+                                                      f"{ln.price:.2f}{'?' if ln.unsure else ''}"))
             self.shown.append((iid, ln))
 
     def edit_price(self, event):
@@ -191,6 +254,8 @@ class App(tk.Tk):
         ln.price = new
         self.edits[ln.id] = new
         self.tree.set(iid, "price", f"{new:.2f}")
+        if self.ticket:  # shop ticket: just this price, no saved override
+            return self.ticket_title("prices changed here only")
         code = line_by_id(self.draft, ln.covers[0]).code if ln.labor else ln.code  # overrides are keyed by part code
         make = self.draft.make
         if messagebox.askyesno("Keep price?", f"Keep ${new:.2f} {ln.kind} for {code} on {make or 'unknown make'}?"):
@@ -206,6 +271,12 @@ class App(tk.Tk):
 
     def do_fill(self):
         fields = {k: v.get().strip() for k, v in self.vars.items() if v.get().strip()}
+        if self.ticket:  # year/make/model/date apart, for the Vehicles dropdowns; a typed year_make stays as typed
+            h = self.draft.header
+            fields.update({k: h[k].value for k in ("year", "make", "model", "date") if k in h and k not in fields})
+            if self.changed and not messagebox.askyesno(
+                    "Ticket changed", f"Ticket #{self.ticket.id}: {self.changed}. Fill with what's here anyway?", parent=self):
+                return
         if self.filled and not messagebox.askyesno("Already filled", "Already filled - fill again?"):
             return
         self.withdraw()

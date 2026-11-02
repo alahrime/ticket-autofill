@@ -67,6 +67,17 @@ def line_text(ln):
     return f"{pad}{ln.code or '(no code)'}  {ln.desc}  qty {ln.qty:g}  {usd(ln.price or 0)} each  {ln.kind}"
 
 
+def app_fields(draft, keys):
+    """Draft header -> {key: text} for the Ticket Autofill fields (plate as InvoMax keeps it; missing -> "")."""
+    v = lambda k: draft.header[k].value if k in draft.header else ""
+    return {k: invomax_plate(v(k)) if k == "plate" else v(k) for k in keys}
+
+
+def app_row(ln):
+    """Draft line -> (code, desc, qty, cost, price) for the main window's list; labor indented as on the sheet."""
+    return (ln.code, ("    " if ln.kind == "labor" else "") + ln.desc, f"{ln.qty:g}", "", plain(ln.price))
+
+
 def entry_sheet(ticket, draft, totals):
     """The plain-text InvoMax entry sheet."""
     out = [f"Ticket #{ticket.id} ({ticket.status})"]
@@ -113,6 +124,7 @@ class ShopWindow(tk.Toplevel):
         self.tree.tag_configure("filled", foreground="gray")
         self.tree.pack(fill="y", expand=True)
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.show())
+        self.tree.bind("<Double-1>", lambda e: self.load(self.tickets.get(self.tree.identify_row(e.y))))
 
         right = ttk.Frame(self)
         right.pack(side="left", fill="both", expand=True)
@@ -121,6 +133,8 @@ class ShopWindow(tk.Toplevel):
         ttk.Button(btns, text="Copy everything", command=lambda: self.copy(self.sheet)).pack(side="left", fill="x", expand=True)
         self.fill_btn = ttk.Button(btns, text="Mark filled", command=self.mark_filled)
         self.fill_btn.pack(side="left", fill="x", expand=True)
+        self.load_btn = ttk.Button(btns, text="Load into Ticket Autofill", command=lambda: self.load(self.current))
+        self.load_btn.pack(side="left", fill="x", expand=True)
         canvas = tk.Canvas(right, width=720, height=560, highlightthickness=0)
         bar = ttk.Scrollbar(right, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=bar.set)
@@ -164,6 +178,14 @@ class ShopWindow(tk.Toplevel):
             self.tree.selection_set(sel[0])  # fires <<TreeviewSelect>>; show() skips an unchanged ticket
         n = sum(t.status == "approved" for t in ts)
         self.status.config(text=f"{n} ready for InvoMax   Updated {datetime.now():%H:%M:%S}")
+        mine = getattr(self.master, "ticket", None)  # the ticket in the main window: tell it if it changed here
+        if mine:
+            try:
+                fresh = self.store.get(mine.id)
+            except Exception:
+                fresh = None
+            if fresh and (fresh.version != mine.version or fresh.status != mine.status):
+                self.master.ticket_changed(fresh)
         self.show()  # redraws only if the selected ticket changed
 
     # --- entry sheet
@@ -178,6 +200,7 @@ class ShopWindow(tk.Toplevel):
         top = self.canvas.yview()[0] if same else 0.0
         self.current, self.sheet = None, ""
         self.fill_btn.state(["disabled"])
+        self.load_btn.state(["disabled"])
         for w in self.body.winfo_children():
             w.destroy()
         if not t:
@@ -192,7 +215,8 @@ class ShopWindow(tk.Toplevel):
             return ttk.Label(self.body, text=f"Can't show ticket #{t.id}: {e}", foreground="red",
                              wraplength=600).grid(row=0, column=0, sticky="w")
         self.current, self.sheet = t, sheet
-        self.fill_btn.state(["!disabled" if t.status == "approved" else "disabled"])
+        for b in (self.fill_btn, self.load_btn):
+            b.state(["!disabled" if t.status == "approved" else "disabled"])
         self.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         self.canvas.yview_moveto(top)  # same ticket, new version: stay where the reader was
@@ -245,6 +269,21 @@ class ShopWindow(tk.Toplevel):
         r += 1
         for label, v in total_rows(tot):
             row(label, v, f=bold if label == "Total" else font)
+
+    def load(self, t):
+        """Approved ticket -> the main window's fields, lines and notes (App.load_ticket), then bring that window up."""
+        if not t:
+            return
+        if t.status != "approved":
+            return self.status.config(text=f"Ticket #{t.id} is {t.status}: only approved tickets load into Ticket Autofill")
+        try:
+            draft = tickets.to_draft(t, self.catalog)
+        except Exception as e:
+            return messagebox.showwarning("Can't load", f"Ticket #{t.id}: {e}", parent=self)
+        self.master.deiconify()  # it may be minimized (or withdrawn during a fill)
+        if self.master.load_ticket(t, draft):
+            self.master.lift()
+            self.master.focus_force()
 
     def mark_filled(self):
         t = self.current
