@@ -22,6 +22,14 @@ One-time setup (done 2026-10-27): `cloudflared tunnel create inspection`; its co
 ## Learning InvoMax (probe)
 Double-click `probe.bat`: a small window opens. Click **▶ Start watching**, then use InvoMax as usual; **⏸ Pause** / **▶ Resume** at any time. It only watches: it never clicks, types or saves anything in InvoMax. It logs what changes (windows opening, box contents, where clicks land) to `probe/watch-YYYY-MM-DD.log`, and saves a picture of each InvoMax pop-up it can't read (choice boxes, Yes/No boxes, menus) to `probe/shots/`. The log holds customer data, so `probe/` is git-ignored and stays on this PC. Close the probe window to stop. `python probe.py map` dumps InvoMax's controls once.
 
+## Trying a recipe on InvoMax (trial mode)
+Double-click `trial.bat`. **This one is not read-only**: it runs one recipe per **▶ Run** click. Pick the recipe, fill its values (plate, search text, odometer…) and Run. **Dry run** is on by default and logs what it would do without sending anything; do a dry run first. Unticking it asks "Run <recipe> LIVE on InvoMax?" and it goes back on after every live run, so each live run is confirmed again. Run one stage at a time, and only after the owner's OK for that stage. Leave **Allow copy-back** off unless the owner agreed (it presses Ctrl+A, Ctrl+C in an InvoMax box).
+- It only starts when InvoMax is maximized and shows what the recipe starts from (most need an empty invoice; `odometer` and `vehicle_open` use the customer on screen; `customers_exit` / `vehicles_cancel` need their window open).
+- **Stop:** hold **Esc** or push the mouse into the **top-left corner** of the screen.
+- It stops at the first surprise and never retries. Afterwards it says what is left: **clear the invoice by hand** (the tool never presses Clear) and close any window it names.
+- Stage order: `customer_search`, `customers_exit`, `customer_by_plate`, `odometer`, `vehicle_open`, `vehicles_cancel` (the vehicle stages need the customer the plate lookup loads).
+- Each step's check, what was seen and how long it took go to `probe/trial-YYYY-MM-DD.log`.
+
 ## Shop tickets (check-in iPad, mechanic phones, admin)
 Three links on **https://shop.japaneseautoservice1.com**, each with its own sign-in:
 - **`/checkin` — customer check-in (shop iPad).** The customer types their first and last name, phone, year / make / model, plate (optional) and what they need. They see nothing else; the screen thanks them and clears itself. To set an iPad up: sign in on it at `/admin`, open **Mechanics & admins**, tap **Use this iPad for check-in** (don't let Safari save your password there; turn on Guided Access to keep customers on the page). **Sign out all check-in iPads** undoes it.

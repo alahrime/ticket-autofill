@@ -636,6 +636,28 @@ def test_check_prints_reads_and_sends_nothing():
     assert invomax.check(drv(w), out.append) == 1
 
 
+def test_clip_owner_recreated_when_its_window_is_gone():
+    class U:
+        def __init__(self):
+            self.alive, self.made = set(), []
+
+        def IsWindow(self, h):
+            return h in self.alive
+
+        def CreateWindowExW(self, *a):
+            h = 500 + len(self.made)
+            self.made.append(h)
+            self.alive.add(h)
+            return h
+    w = invomax.Win32.__new__(invomax.Win32)  # no real Windows calls
+    w.u, w.wt, w._owner = U(), type("WT", (), {"HWND": staticmethod(lambda x: x)}), None
+    first = w._clip_owner()
+    assert w._clip_owner() == first and w.u.made == [first]  # reused while it exists
+    w.u.alive.discard(first)  # destroyed when the thread that made it ended
+    second = w._clip_owner()
+    assert second != first and w.u.made == [first, second]
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

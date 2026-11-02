@@ -13,10 +13,10 @@ Read first:
 | Pricing (`prices.py`) | Done; placeholder `parts.csv`. |
 | Draft model (`draft.py`) | Done: `Value`, `Line` (part / labor / remark, qty, cost, covers, stable id), `Draft`, `from_job`, `needs`. Not done: `questions()`, `answer()`, `expected_totals()` (spec section 3). |
 | Step runner (`recipes.py`) | Done and tested **against the fake only** (`tests/fake_invomax.py`). The recipes are `customer_by_plate`, `customer_search`, `customer_new`, `customers_exit`, `vehicle_open`, `vehicle_choose`, `phone_set` and `odometer`. |
-| Real driver (`invomax.py`) | **Not built.** It still holds the old `fill()` / `FIELD_MAP` stubs, which the window's Fill button calls ("control map isn't set up yet"). |
+| Real driver (`invomax.py`) | Built 2026-11-02 (`invomax.Driver`): dry run by default, copy-back off by default, layered refusals, Esc/corner stop, `python invomax.py check` read-only. Not yet run on the real InvoMax; `customers.exit`, `vehicles.engine`, `phone.text` unmapped and `phone` unconfirmed. `fill()` (the window's Fill button) still says "isn't set up yet". |
 | Parts / labor / remark / note recipes | Steps known from the probe (spec 5.7); not written. They need pictures of the untitled choice boxes. |
 | Side panel (`panel.py`), draft store, Wi-Fi page | Not started. |
-| Probe (`probe.py`, `probe.bat`) | Done. Read-only watch with Start/Pause; it logs to `probe/` and saves pictures of unreadable pop-ups to `probe/shots/` (git-ignored, customer data). |
+| Probe (`probe.py`, `probe.bat`) | Done. Read-only watch with Start/Pause; it logs to `probe/` and saves pictures of unreadable pop-ups to `probe/shots/` (git-ignored, customer data). Trial mode (`trial.bat`) is built but hasn't been run on InvoMax yet (see Next 3). |
 | Shop tickets (`tickets.py`, `accounts.py`, `shop.py`, `pinweb.py`, `web/admin.html`, `web/tech.html`, `web/checkin.html`, `shop.bat`) | Done 2026-10-29 (plans `plans/2026-10-29-shop-tickets.md`, `plans/2026-10-29-shop-accounts-deploy.md`): customer check-in kiosk → mechanic accounts (name + PIN) → admin review (username + password) → approved → `tickets.to_draft`, live at https://shop.japaneseautoservice1.com through the `inspection` tunnel. Year / make / model hints from `vehicles.json` (NHTSA). Not done: moving `phone.py` onto `pinweb.PinHandler`/accounts (ask the owner: logs the phone out once), feeding approved drafts to the InvoMax fill, checking InvoMax accepts a part line with a blank code, starting `shop.bat`/`phone.bat` at boot. |
 | Inspection report (`inspection.py`, `report.py`, `phone.py`) | Added by another session in `6f73778`; separate from InvoMax filling. It adds the `python-docx` and `winocr` dependencies and a Cloudflare tunnel for the phone page. |
 
@@ -46,6 +46,13 @@ Do these in order and stop at the first surprise. Every stage runs on **an empty
    4. `odometer` on that loaded invoice.
 
    Use the timings to set step timeouts.
+
+   **Built (2026-11-02, not yet run on InvoMax):** `trial.bat` / `python probe.py trial`. The trial window lists the recipes in stage order: `customer_search`, `customers_exit`, `customer_by_plate`, `odometer`, `vehicle_open`, `vehicles_cancel`. The two vehicle recipes come last because they need the customer that the plate lookup loads, so `vehicle_open` can't run directly after stage 1. Rules:
+   - Dry run first. Dry run is on by default; a live run asks for confirmation and dry run goes back on afterwards. One stage per owner OK. Copy-back stays off until the owner agrees.
+   - It starts only on a maximized InvoMax showing the recipe's starting state.
+   - Hold Esc or push the mouse into the top-left corner to stop.
+   - It never retries. After a live run it reads (read-only) what is left and says what to clear or close by hand.
+   - Log: `probe/trial-YYYY-MM-DD.log`.
 4. **Saving recipes need the owner's OK first.** `customer_new` creates a real customer record and `vehicle_choose` saves a vehicle. Agree on a made-up test customer the owner is happy to keep or delete by hand.
 5. Then: pictures of the choice boxes (run the probe while using Labor), the parts/labor/remark/note recipes, `questions()` / `answer()`, and the side panel.
 

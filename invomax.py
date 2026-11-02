@@ -315,6 +315,7 @@ class Win32:
         u.GetParent.restype = wintypes.HWND
         u.GetForegroundWindow.restype = wintypes.HWND
         u.IsChild.argtypes = [wintypes.HWND, wintypes.HWND]
+        u.IsWindow.argtypes = [wintypes.HWND]
         u.GetMenu.restype = wintypes.HMENU
         u.GetSubMenu.restype = wintypes.HMENU
         u.GetClipboardData.restype = ctypes.c_void_p
@@ -481,6 +482,8 @@ class Win32:
 
     # clipboard (copy-back), opened with our own message-only window as the owner
     def _clip_owner(self):
+        if self._owner and not self.u.IsWindow(self._owner):  # destroyed (e.g. its thread ended): make a new one
+            self._owner = None
         if not self._owner:
             HWND_MESSAGE = self.wt.HWND(-3)
             self._owner = self.u.CreateWindowExW(0, "STATIC", "invomax-clipboard", 0, 0, 0, 0, 0,

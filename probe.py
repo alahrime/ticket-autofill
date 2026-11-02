@@ -7,10 +7,15 @@ clicked. Logs hold customer data, so they go to probe/ (git-ignored, stays on th
 
     python probe.py watch    window with Start / Pause; logs to probe/watch-YYYY-MM-DD.log
     python probe.py map      dump every InvoMax window's controls to probe/map-*.txt
+    python probe.py trial    NOT read-only: runs one trial recipe (spec 5.8) with Run; logs to
+                             probe/trial-YYYY-MM-DD.log. Dry run is on by default (nothing is sent).
 """
 from __future__ import annotations
-import ctypes, os, sys, time
+import ctypes, os, string, sys, threading, time
+from collections import namedtuple
 from ctypes import wintypes
+
+import recipes as R
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "probe")
@@ -359,11 +364,503 @@ def do_watch():
     root.mainloop()
 
 
+# --- trial mode (spec 5.8): one recipe for real, every step's check and timing logged
+# HANDOFF "Next" 3 stage order: the vehicle stages need the customer the plate lookup loads.
+TRIAL_RECIPES = ("customer_search", "customers_exit", "customer_by_plate", "odometer", "vehicle_open",
+                 "vehicles_cancel")
+CHOICES = {"by": ("license", "last_name", "first_name", "phone", "code", "business_name")}
+DRY_RUN_DEFAULT = True      # and it goes back ON after every live run
+COPYBACK_DEFAULT = False    # copy-back types Ctrl+A, Ctrl+C into InvoMax: owner's OK first
+IDLE_MS = 600               # nobody touched the mouse or keyboard for this long before a run starts
+IDLE_GIVE_UP = 15.0         # seconds to wait for that before giving up
+NOTHING_SENT = "Nothing was sent to InvoMax."
+Row = namedtuple("Row", "n say check seen ms result")
+
+
+def placeholders(recipe):
+    """{names} a recipe needs, in order of first use (require checks, then steps; key steps' {ENTER} isn't one)."""
+    out = []
+
+    def scan(s):
+        for _, name, _, _ in string.Formatter().parse(s or ""):
+            if name and name not in out:
+                out.append(name)
+
+    def scan_check(c):
+        if c:
+            scan(c.a), scan(c.b)
+            for p in c.parts:
+                scan_check(p)
+    for c in recipe.require:
+        scan_check(c)
+    for s in recipe.steps:
+        if s.kind != "key":
+            scan(s.target)
+        scan(s.value), scan(s.say), scan_check(s.expect)
+        if s.when and s.when not in out:
+            out.append(s.when)
+    return out
+
+
+def step_checks(recipe, values):
+    """-> {step no: its check filled with values, or None}."""
+    return {n: (s.expect.fill(values) if s.expect else None) for n, s in enumerate(recipe.steps, 1)}
+
+
+def start_rule(recipe):
+    """-> (dialog that must be on top or None, needs a customer on screen) from the recipe's require."""
+    want = next((c.a for c in recipe.require if c.kind == "dialog"), None)
+    customer = any(c.kind == "filled" and c.a == "name.first" for c in recipe.require)
+    return want, customer
+
+
+def needs_text(recipe):
+    want, customer = start_rule(recipe)
+    if want:
+        return f"Needs the {want} window open on the invoice."
+    if customer:
+        return "Needs a customer on the invoice; uses the customer on screen."
+    return "Needs an empty invoice with no window open on it."
+
+
+def start_check(recipe, seen):
+    """seen: {"invoice": bool, "error": str, "window": why the invoice window isn't ready or None,
+    "dialog": title|None, "name.first": str, "name.last": str} (from read_start) -> (ok, message).
+    Refuses unless InvoMax shows what this recipe starts from."""
+    if not seen.get("invoice"):
+        return False, seen.get("error") or "InvoMax isn't open."
+    if seen.get("window"):
+        return False, f"{seen['window']}. Maximize InvoMax on the main screen first."
+    if seen.get("error"):
+        return False, f"couldn't read the invoice: {seen['error']}"
+    want, customer = start_rule(recipe)
+    top = seen.get("dialog")
+    first, last = (seen.get("name.first") or "").strip(), (seen.get("name.last") or "").strip()
+    if want:
+        if top != want:
+            return False, f"the {want} window isn't open on top (on top: {top or 'the invoice'})."
+        return True, f"Uses the {want} window on screen."
+    if top:
+        return False, f"close the {top!r} window first; the invoice must have nothing open on it."
+    if customer:
+        if not first:
+            return False, "this recipe needs a customer on the invoice; Name is empty."
+        return True, "Uses the customer on screen."
+    if first or last:
+        return False, "the invoice isn't empty (Name has a customer). Clear it by hand first."
+    return True, "Empty invoice."
+
+
+def read_start(d, window_problem=None):
+    """Read-only: what start_check needs, through the driver (WM_GETTEXT reads of the Name boxes).
+    window_problem() -> why the invoice window isn't ready for actions (invomax.window_ok), or None."""
+    try:
+        seen = {"invoice": True, "dialog": d.dialog()}
+        if window_problem:
+            seen["window"] = window_problem()
+    except RuntimeError as e:
+        return {"invoice": False, "error": str(e)}
+    try:
+        seen["name.first"] = d.text("name.first")
+        seen["name.last"] = d.text("name.last")
+    except RuntimeError as e:
+        seen["error"] = str(e)
+    return seen
+
+
+def read_after(d):
+    """Read-only, after a live run: what the trial left on screen. -> {"dialog", "name.first"} or {"error"}."""
+    try:
+        return {"dialog": d.dialog(), "name.first": d.text("name.first")}
+    except Exception as e:  # noqa: BLE001 - shown as "check by hand"
+        return {"error": str(e)}
+
+
+def leftovers(after):
+    """What staff must undo by hand after a live run, from read_after."""
+    if after.get("error"):
+        return [f"Couldn't read InvoMax after the run ({clip(after['error'])}). "
+                "Check it and clear by hand anything the trial left."]
+    out = []
+    if after.get("dialog"):
+        out.append(f"Close the {after['dialog']} window by hand (or run customers_exit / vehicles_cancel).")
+    if (after.get("name.first") or "").strip():
+        out.append("Clear the invoice by hand (the tool never presses Clear).")
+    return out or ["Nothing is left on the invoice."]
+
+
+def missing_values(names, values):
+    return [n for n in names if not (values.get(n) or "").strip()]
+
+
+def wait_idle(idle_ms, emergency, now=time.monotonic, sleep=time.sleep, need=IDLE_MS, give_up=IDLE_GIVE_UP):
+    """Wait until nobody has used the mouse or keyboard for need ms. -> None to go, else why not.
+    The emergency stop always wins."""
+    start = now()
+    while True:
+        if emergency():
+            return "stopped: emergency stop before the start (Esc held or mouse in the top-left corner)"
+        if idle_ms() >= need:
+            return None
+        if now() - start >= give_up:
+            return f"didn't start: the mouse or keyboard kept being used for {give_up:.0f} s"
+        sleep(0.05)
+
+
+class _Replay:
+    """Answers a check from what the driver last returned, so 'seen' is logged without reading InvoMax again."""
+
+    def __init__(self, seen):
+        self.seen = seen
+
+    def _get(self, key):
+        if key not in self.seen:
+            raise RuntimeError("not read during this step")
+        ok, v = self.seen[key]
+        if not ok:
+            raise v
+        return v
+
+    def dialog(self): return self._get(("dialog",))
+    def focused(self): return self._get(("focused",))
+    def menu_items(self): return self._get(("menu_items",))
+    def captions(self): return self._get(("captions",))
+    def text(self, ctl): return self._get(("text", ctl))
+    def checked(self, ctl): return self._get(("checked", ctl))
+
+
+class Stopped(RuntimeError):
+    refused = True  # recipes.run stops at once on this
+
+
+class Recorder:
+    """Wraps the driver for recipes.run: passes everything through and remembers the last result of each read.
+    emergency() is checked on every read too, so Esc stops a run while a check is still polling."""
+
+    def __init__(self, d, emergency=None):
+        self._d, self._seen, self._emergency = d, {}, emergency
+
+    def __getattr__(self, name):
+        return getattr(self._d, name)
+
+    def _rec(self, key, fn, *a):
+        if self._emergency and self._emergency():
+            why = "emergency stop (Esc held or mouse in the top-left corner)"
+            if hasattr(self._d, "stopped"):
+                self._d.stopped = self._d.stopped or why  # the driver refuses everything after this
+            raise Stopped(f"Stopped: {why}.")
+        try:
+            v = fn(*a)
+        except Exception as e:
+            self._seen[key] = (False, e)
+            raise
+        self._seen[key] = (True, v)
+        return v
+
+    def take(self):
+        """-> a replay of the reads since the last take()."""
+        r, self._seen = _Replay(self._seen), {}
+        return r
+
+    def dialog(self): return self._rec(("dialog",), self._d.dialog)
+    def focused(self): return self._rec(("focused",), self._d.focused)
+    def menu_items(self): return self._rec(("menu_items",), self._d.menu_items)
+    def captions(self): return self._rec(("captions",), self._d.captions)
+    def text(self, ctl): return self._rec(("text", ctl), self._d.text, ctl)
+    def checked(self, ctl): return self._rec(("checked", ctl), self._d.checked, ctl)
+
+
+def _seen(check, replay):
+    if check is None:
+        return "-"
+    if replay is None:
+        return "not read"
+    try:
+        return check.test(replay)[1]
+    except Exception as e:  # a recorded refusal
+        return f"error: {e}"
+
+
+def classify(exc):
+    """Exception from a trial (None = it passed) -> 'OK' | 'stopped' | 'StepFailed' | 'Refused' | 'error'."""
+    if exc is None:
+        return "OK"
+    if "emergency stop" in str(exc):
+        return "stopped"
+    if isinstance(exc, R.StepFailed):
+        return "StepFailed"
+    if getattr(exc, "refused", False):
+        return "Refused"
+    return "error"
+
+
+def run_trial(name, values, d, now=time.monotonic, sleep=time.sleep, emergency=None):
+    """Run one recipe once through recipes.run. Never retries, never acts after a failure.
+    -> (rows [Row], kind from classify, the exception or None)."""
+    recipe = R.RECIPES[name]
+    checks = step_checks(recipe, values)
+    say = {n: s.say.format(**values) for n, s in enumerate(recipe.steps, 1)}
+    rec = Recorder(d, emergency)
+    snaps, marks, cur = {}, {}, [None]
+
+    def on_step(n, _say):
+        r = rec.take()
+        if cur[0] is not None:
+            snaps[cur[0]] = r
+        cur[0], marks[n] = n, now()
+
+    exc = None
+    try:
+        done = R.run(name, values, rec, now=now, sleep=sleep, on_step=on_step)
+        if cur[0] is not None:
+            snaps[cur[0]] = rec.take()
+    except R.StepFailed as e:
+        exc, done = e, list(e.done)
+    except Exception as e:
+        # outside a step's try: the require checks (cur is None), or the window reads after step cur's check
+        # passed / before the next step. Step cur did its action and passed its check, so it counts as done.
+        exc = e
+        if cur[0] is not None:
+            snaps[cur[0]] = rec.take()
+        done = [(n, say[n], None) for n in sorted(snaps)]
+    rows = []
+    for n, s, secs in done:
+        ms = round(secs * 1000) if secs is not None else round((marks.get(n + 1, now()) - marks[n]) * 1000)
+        rows.append(Row(n, say[n], str(checks[n]) if checks[n] else "-", _seen(checks[n], snaps.get(n)), ms, "ok"))
+    if isinstance(exc, R.StepFailed):
+        ms = round((now() - marks[exc.step_no]) * 1000) if exc.step_no in marks else 0
+        rows.append(Row(exc.step_no, exc.say or "start checks", exc.expected, exc.got, ms, "failed"))
+    elif exc is not None:
+        n = (cur[0] or 0) + 1 if cur[0] else 0
+        if not n:
+            what, check = "start checks", "-"
+        elif n in say:
+            what, check = say[n], str(checks[n]) if checks[n] else "-"
+        else:
+            what, check = "after the last step", "-"
+        rows.append(Row(n, what, check, f"{type(exc).__name__}: {exc}", 0, classify(exc)))
+    return rows, classify(exc), exc
+
+
+def step_line(recipe, row):
+    return (f"{recipe} step {row.n}: {row.say} | check: {row.check} | saw: {clip(row.seen)} | "
+            f"{row.ms} ms | {row.result}")
+
+
+def final_line(recipe, kind, exc, rows):
+    done = sum(1 for r in rows if r.result == "ok")
+    if kind == "OK":
+        return f"{recipe} final: OK ({done} steps)"
+    if isinstance(exc, R.StepFailed):
+        where = f"step {exc.step_no} ({exc.say})" if exc.step_no else "before starting"
+        return f"{recipe} final: {kind} at {where}: saw {clip(exc.got)}; {done} steps done"
+    return f"{recipe} final: {kind}: {clip(str(exc))}; {done} steps done"
+
+
+def result_lines(recipe, kind, exc, rows, dry_run, sent, after=None):
+    """What the trial window shows after a run. sent: input reached InvoMax (a live run whose driver acted);
+    after: read_after() for live runs that sent input."""
+    head = f"{recipe}: {kind}"
+    out = [head + (" (dry run)" if dry_run else "")]
+    for r in rows:
+        if r.result == "ok":
+            out.append(f"  ✓ {r.n}. {r.say}  {r.ms} ms")
+        else:
+            out.append(f"  ✗ {r.n}. {r.say}  ({r.result} after {r.ms} ms)")
+            out.append(f"      expected: {r.check}")
+            out.append(f"      saw: {clip(r.seen)}")
+    if kind != "OK":
+        if exc is not None and not rows:
+            out.append(f"  {clip(str(exc))}")
+        out.append("Stopped here; nothing more was pressed and nothing is retried.")
+    if sent:
+        out += leftovers(after or {"error": "not read"})
+    else:
+        out.append(NOTHING_SENT)
+    return out
+
+
+class TrialLog:
+    def __init__(self, path):
+        self.path, self.lock = path, threading.Lock()
+
+    def write(self, line):
+        """Best effort: a log that can't be written never hides a result."""
+        try:
+            with self.lock:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(f"{_stamp()}  {line}\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def trial_work(name, values, dry_run, copyback, make_win, make_driver, log, now=time.monotonic,
+               sleep=time.sleep):
+    """The worker thread's job: wait for idle input, run once, read what's left (live runs), log.
+    Never raises. -> (name, rows, kind, exc, dry_run, sent, after)."""
+    rows, kind, exc, sent, after, d = [], "error", None, False, None, None
+    try:
+        w = make_win()  # fresh per run: its clipboard owner window belongs to this thread
+        d = make_driver(w, dry_run, copyback)
+        emergency = lambda: w.esc_down() or w.in_stop_corner()
+        why = wait_idle(w.idle_ms, emergency, now, sleep)
+        if why:
+            exc = RuntimeError(why)
+            kind = "stopped" if why.startswith("stopped") else "error"
+        else:
+            rows, kind, exc = run_trial(name, values, d, now, sleep, emergency=emergency)
+            sent = not dry_run and bool(getattr(d, "done", None))
+            if sent:
+                after = read_after(d)
+    except Exception as e:  # noqa: BLE001 - shown and logged, never retried
+        kind, exc = "error", e
+        sent = not dry_run and bool(getattr(d, "done", None))  # it may have acted before failing
+    try:  # best effort: a log failure never hides the result
+        for r in rows:
+            log(step_line(name, r))
+        log(final_line(name, kind, exc, rows))
+        if after is not None:
+            log(f"{name} after: {after}")
+    except Exception:  # noqa: BLE001
+        pass
+    return name, rows, kind, exc, dry_run, sent, after
+
+
+def do_trial():
+    """Small always-on-top window: pick a trial recipe, fill its values, Run. One run per click."""
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    import invomax
+    log = TrialLog(os.path.join(OUT, time.strftime("trial-%Y-%m-%d.log")))
+    names = [n for n in TRIAL_RECIPES if n in R.RECIPES]
+    reader = invomax.Win32()  # reads only (start checks); also makes this process DPI aware before Tk starts
+    root = tk.Tk()
+    root.title("InvoMax trial")
+    root.attributes("-topmost", True)
+    root.resizable(False, False)
+    tk.Label(root, text="STOP: hold Esc or push the mouse into the top-left corner to stop",
+             fg="white", bg="#b00020", font=("Segoe UI", 12, "bold"), wraplength=340, padx=6, pady=6
+             ).pack(fill="x", padx=8, pady=(8, 6))
+    pick = tk.StringVar(value=names[0])
+    ttk.Combobox(root, textvariable=pick, values=names, state="readonly").pack(fill="x", padx=8)
+    needs = tk.StringVar()
+    ttk.Label(root, textvariable=needs, wraplength=340).pack(anchor="w", padx=8, pady=(2, 4))
+    box = ttk.Frame(root)
+    box.pack(fill="x", padx=8)
+    vals = {}  # placeholder -> StringVar, kept across recipe changes
+    dry = tk.BooleanVar(value=DRY_RUN_DEFAULT)
+    copyback = tk.BooleanVar(value=COPYBACK_DEFAULT)
+
+    def dry_changed():
+        if not dry.get() and not messagebox.askyesno("Live run", f"Run {pick.get()} LIVE on InvoMax?", parent=root):
+            dry.set(True)
+
+    ttk.Checkbutton(root, text="Dry run (nothing is sent to InvoMax)", variable=dry,
+                    command=dry_changed).pack(anchor="w", padx=8)
+    ttk.Checkbutton(root, text="Allow copy-back", variable=copyback).pack(anchor="w", padx=8)
+    tk.Label(root, text="Copy-back presses Ctrl+A, Ctrl+C in an InvoMax box and puts the clipboard back. "
+             "Only with the owner's OK.", fg="#b00020", wraplength=340, justify="left").pack(anchor="w", padx=8)
+    btn = ttk.Button(root, text="▶ Run")
+    btn.pack(fill="x", padx=8, pady=6)
+    out = tk.Text(root, width=52, height=12, wrap="word", state="disabled")
+    out.pack(padx=8, pady=(0, 8))
+
+    def show(lines):
+        out.config(state="normal")
+        out.delete("1.0", "end")
+        out.insert("end", "\n".join(lines))
+        out.config(state="disabled")
+
+    def changed(*_):
+        dry.set(True)  # a live run is confirmed for one named recipe
+        recipe = R.RECIPES[pick.get()]
+        needs.set(needs_text(recipe))
+        for w in box.winfo_children():
+            w.destroy()
+        for i, p in enumerate(placeholders(recipe)):
+            v = vals.setdefault(p, tk.StringVar(value=CHOICES.get(p, ("",))[0]))
+            ttk.Label(box, text=p).grid(row=i, column=0, sticky="w", padx=(0, 6), pady=1)
+            if p in CHOICES:
+                ttk.Combobox(box, textvariable=v, values=CHOICES[p], state="readonly", width=24).grid(row=i, column=1)
+            else:
+                ttk.Entry(box, textvariable=v, width=26).grid(row=i, column=1)
+
+    st = {"result": None}
+
+    def restore():
+        root.deiconify()
+        root.attributes("-topmost", True)
+        btn.config(state="normal")
+
+    def run():
+        try:
+            name = pick.get()
+            recipe = R.RECIPES[name]
+            values = {p: vals[p].get().strip() for p in placeholders(recipe)}
+            miss = missing_values(list(values), values)
+            if miss:
+                show([f"Fill in: {', '.join(miss)}"])
+                return
+            is_dry, cb = dry.get(), copyback.get()
+            d = invomax.Driver(win=reader, dry_run=True, allow_copyback=False)  # start checks only read
+
+            def window_problem():
+                h = reader.invoice()
+                return invomax.window_ok(reader.rect(h), reader.zoomed(h)) if h else None
+            ok, msg = start_check(recipe, read_start(d, window_problem))
+            if not ok:
+                log.write(f"--- {name} not started: {msg}")
+                show([f"Didn't start: {msg}", NOTHING_SENT])
+                return
+            log.write(f"--- trial {name} {values} dry_run={is_dry} copyback={cb}; {msg}")
+            btn.config(state="disabled")
+            root.withdraw()
+
+            def make_driver(w, dry_run, allow_copyback):
+                return invomax.Driver(win=w, dry_run=dry_run, allow_copyback=allow_copyback,
+                                      log=lambda s: log.write(f"  driver: {s}"))
+
+            def work():
+                res = None
+                try:
+                    res = trial_work(name, values, is_dry, cb, invomax.Win32, make_driver, log.write)
+                finally:
+                    st["result"] = res or (name, [], "error", RuntimeError("the trial stopped unexpectedly"),
+                                           is_dry, False, None)
+
+            threading.Thread(target=work, daemon=True).start()
+            poll()
+        except Exception as e:  # noqa: BLE001 - nothing is retried; the window always comes back
+            log.write(f"--- trial error before the run: {e!r}")
+            restore()
+            show([f"Error: {e}", NOTHING_SENT])
+
+    def poll():
+        if st["result"] is None:
+            root.after(100, poll)
+            return
+        name, rows, kind, exc, was_dry, sent, after = st["result"]
+        st["result"] = None
+        if not was_dry:
+            dry.set(True)  # every live run is confirmed again
+        restore()
+        show(result_lines(name, kind, exc, rows, was_dry, sent, after))
+
+    pick.trace_add("write", changed)
+    btn.config(command=run)
+    changed()
+    show(["Pick a recipe, fill its values, then Run.", "Each Run runs it once; nothing is retried."])
+    root.mainloop()
+
+
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "watch"
     if mode == "map":
         do_map()
     elif mode == "watch":
         do_watch()
+    elif mode == "trial":
+        do_trial()
     else:
         sys.exit(__doc__)
