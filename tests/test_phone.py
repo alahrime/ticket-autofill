@@ -46,15 +46,17 @@ def server():
 def test_phone_flow():
     srv, base = server()
     try:
-        assert b'name="pin"' in call(base, "/")[0]  # PIN page until logged in
+        home = call(base, "/")[0]  # landing page needs no PIN: two links
+        assert b'href="/scan"' in home and phone.SHOP.encode() in home and b'name="pin"' not in home
+        assert b'name="pin"' in call(base, "/scan")[0]  # PIN page until logged in
         assert status(base, "/read", b"x") == 401 and status(base, "/word", {"rows": []}) == 401
         assert status(base, "/login", b"pin=111111") == 401
         try:
             call(base, "/login", b"pin=482913")
         except urllib.error.HTTPError as e:  # 303 is not followed
-            assert e.code == 303
+            assert e.code == 303 and e.headers["Location"] == "/scan"
             cookie = e.headers["Set-Cookie"].split(";")[0]
-        assert b"Add receipt photos" in call(base, "/", cookie=cookie)[0]
+        assert b"Add receipt photos" in call(base, "/scan", cookie=cookie)[0]
 
         assert status(base, "/warm", b"", cookie) == 404
         row = json.loads(call(base, "/read", b"\xff\xd8 fake jpeg", cookie)[0])  # the reply is the row

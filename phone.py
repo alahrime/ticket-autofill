@@ -20,6 +20,7 @@ LOG = os.path.join(HERE, "phone.log")  # one line per request: time, path, statu
 MAX_TRIES, LOCKOUT = 5, 600  # wrong PINs allowed per 10 minutes, from anyone
 FIELDS = ("date", "car", "vin6", "miles")
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+SHOP = "https://shop.japaneseautoservice1.com/"  # shop tickets (shop.py, own sign-ins), same tunnel
 TUNNEL = ["cloudflared", "tunnel", "--config", os.path.expanduser(r"~\.cloudflared\inspection.yml"),
           "--logfile", os.path.join(HERE, "cloudflared.log"), "run"]
 
@@ -110,11 +111,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.fails.append(now)
                 return self.reply(401, login_page("Wrong PIN."), "text/html; charset=utf-8")
             self.fails.clear()
-        self.reply(303, b"", "text/plain", [("Location", "/"), ("Set-Cookie",
+        self.reply(303, b"", "text/plain", [("Location", "/scan"), ("Set-Cookie",
                    f"pin={self.token()}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict")])
 
     def do_GET(self):
-        if self.path != "/":
+        if self.path == "/":  # landing page: two links, nothing behind it, so no PIN
+            return self.reply(200, HOME.encode(), "text/html; charset=utf-8")
+        if self.path != "/scan":
             return self.reply(404, {"error": "not found"})
         self.reply(200, PAGE.encode() if self.authed() else login_page(), "text/html; charset=utf-8")
 
@@ -154,6 +157,18 @@ def serve(port=PORT, tunnel=False):
     if tunnel:
         threading.Thread(target=keep_tunnel, daemon=True).start()
     server.serve_forever()
+
+
+HOME = f"""<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Japanese Auto Service</title>
+<style>body{{font:16px system-ui,sans-serif;margin:0;padding:40px 16px;background:#f4f4f4;color:#222;text-align:center}}
+a{{display:block;max-width:320px;margin:16px auto;padding:22px 12px;border-radius:12px;background:#1f5fbf;color:#fff;
+text-decoration:none;font-size:22px}} a small{{display:block;font-size:14px;opacity:.85;margin-top:4px}}</style></head><body>
+<h1>Japanese Auto Service</h1>
+<a href="/scan">Inspection report<small>Scan receipts into the Word file</small></a>
+<a href="{SHOP}">Shop tickets<small>Customer check-in, mechanics, billing</small></a>
+</body></html>"""
 
 
 def login_page(msg=""):
@@ -201,7 +216,7 @@ button:disabled{opacity:.5}
 #bottom input{font:inherit;padding:6px;border:1px solid #ccc;border-radius:6px;width:5em}
 #files a{margin-right:12px}
 </style></head><body>
-<h1>Inspection report</h1>
+<h1><a href="/" style="text-decoration:none">&lsaquo;</a> Inspection report</h1>
 <input type="file" id="pick" accept="image/*" multiple hidden>
 <button id="add">Add receipt photos</button> <button id="go" hidden></button>
 <div id="status"></div><div id="list"></div>
