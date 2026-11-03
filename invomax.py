@@ -48,9 +48,9 @@ MENU_OK = {"change number"}
 RECT_SLACK = 4                             # px a class+index control may sit away from its mapped rect
 COPYBACK_CLASSES = ("TLMDEdit",)           # answer neither WM_GETTEXT nor UI Automation
 CHUNK = 1                                  # characters typed between two safety checks
-# Before typing, empty the box: InvoMax pre-fills some (Odometer In gets the last visit's reading) and typing
-# appended to it (trial 2026-11-03). Keys only, no Ctrl+A and no clipboard; one key per safety check.
-CLEAR_KEYS = ("{END}", "+{HOME}", "{BACKSPACE}")
+# Never sent: in an InvoMax header box Backspace clears the whole invoice like the Clear button
+# (trial 2026-11-03, the saved customer was untouched). Delete is banned with it until proven safe.
+NEVER_KEYS = ("{BACKSPACE}", "{BKSP}", "{BS}", "{DELETE}", "{DEL}")
 RECENT_INPUT_MS = 500                      # someone used the mouse/keyboard this recently: refuse
 FOCUS_WAIT = 1.0                           # seconds a click has to put the focus in its box
 # Top-level windows of the InvoMax process that are never "the dialog on top".
@@ -813,10 +813,15 @@ class Driver:
             send()
             self._own_input = self.now()
 
+    def _send(self, keys):
+        if any(k in keys.upper() for k in NEVER_KEYS):
+            raise Refused(f"Refused: {keys!r} is never sent (Backspace clears the InvoMax invoice).")
+        self.w.type(keys)
+
     def _type(self, desc, win, ctl, value):
         """Type value in chunks of CHUNK characters, checking before each chunk."""
         guard = lambda: self._guard_typing(win, ctl, desc)
-        self._do(desc, guard, *[functools.partial(self.w.type, esc(c)) for c in chunks(value)])
+        self._do(desc, guard, *[functools.partial(self._send, esc(c)) for c in chunks(value)])
 
     def _point(self, name):
         """-> (screen point, top window, target hwnd or None, expected class or '') for a control name."""
@@ -866,8 +871,6 @@ class Driver:
         # in a dry run the click didn't happen, so the focus can't be on ctl yet
         want = None if (self.dry_run and clicked) else ctl
         if typed or loc.needs_copyback or loc.cls not in ("TEdit", "Edit", "TMaskEdit"):
-            self._do(f"clear {ctl} (End, Shift+Home, Backspace)", lambda: self._guard_typing(win, want, f"clearing {ctl}"),
-                     *[functools.partial(self.w.type, k) for k in CLEAR_KEYS])
             self._type(f"type {value!r} into {ctl}", win, want, value)
         else:
             h, _ = self._hwnd(ctl, win)
@@ -886,7 +889,7 @@ class Driver:
             raise Refused(f"Refused: {keys} with the focus on {f!r}, which isn't a mapped box in "
                           f"{title or 'the invoice'}.")
         self._do(f"press {keys} in {f}", lambda: self._guard_typing(win, f, f"the key {keys}"),
-                 lambda: self.w.type(keys))
+                 lambda: self._send(keys))
 
     @_action
     def pick(self, ctl, text):
@@ -987,7 +990,7 @@ class Driver:
         saved = self.w.clip_get() if formats else None
         seq = self.w.clip_seq()
         try:
-            self._do(f"copy-back {ctl} (Ctrl+A, Ctrl+C)", guard, lambda: self.w.type("^a^c"))
+            self._do(f"copy-back {ctl} (Ctrl+A, Ctrl+C)", guard, lambda: self._send("^a^c"))
             got, start = None, self.now()
             while self.now() - start < 0.5:
                 s = self.w.clip_seq()
