@@ -334,6 +334,7 @@ def test_dry_run_logs_and_sends_nothing():
     d.key("{ENTER}")
     assert w.input == []
     assert d.out == ["DRY RUN, would click plate at (1515, 253)", "DRY RUN, would click plate at (1515, 253)",
+                     "DRY RUN, would clear plate (End, Shift+Home, Backspace)",
                      "DRY RUN, would type 'XKS-4827' into plate", "DRY RUN, would press {ENTER} in plate"]
 
 
@@ -341,7 +342,7 @@ def test_live_click_then_typing_in_chunks():
     w, hs = invoice()
     d = drv(w, live=True)
     d.set_text("plate", "XKS-4827", typed=True)
-    assert w.input == [("click", 1515, 253, False)] + [("type", c) for c in "XKS-4827"]
+    assert w.input == [("click", 1515, 253, False)] + [("type", k) for k in invomax.CLEAR_KEYS] + [("type", c) for c in "XKS-4827"]
     d.key("{ENTER}")
     assert w.input[-1] == ("type", "{ENTER}")
 
@@ -352,7 +353,7 @@ def test_guard_rechecked_between_chunks():
     d = drv(w, live=True)
     w.on_type = lambda keys: w.open("", "Tmsgs", (800, 400, 1100, 560))  # a Yes/No box pops up mid-typing
     assert "Refused" in raises(Refused, d.set_text, "odometer.in", "123456789", typed=True)
-    assert w.input == [("type", "1")] and d.stopped  # one key, then the pop-up stops it
+    assert w.input == [("type", "{END}")] and d.stopped  # one key, then the pop-up stops it
 
 
 def test_refusals_before_any_input():
@@ -482,7 +483,7 @@ def test_emergency_stop_esc_and_corner():
     w.on_type = lambda keys: setattr(w, "esc", True)  # Esc pressed during typing
     w.focus_h = hs["TLMDEdit#5"]
     raises(Refused, d.set_text, "odometer.in", "98431", typed=True)
-    assert w.input == [("type", "9")]
+    assert w.input == [("type", "{END}")]
 
 
 def test_recent_user_input_refuses():
@@ -498,7 +499,15 @@ def test_own_input_isnt_taken_for_the_users():
     w.on_type = lambda keys: setattr(w, "idle", 0)  # our own keystrokes reset the idle time
     w.focus_h = hs["TLMDEdit#5"]
     d.set_text("odometer.in", "98431", typed=True)
-    assert w.input == [("type", c) for c in "98431"]
+    assert w.input == [("type", k) for k in invomax.CLEAR_KEYS] + [("type", c) for c in "98431"]
+
+
+def test_dropdowns_are_never_typed_into():
+    w, hs = invoice()
+    d = drv(w, live=True)
+    d.controls = dict(d.controls, **{"vehicles.year": Loc(window="Vehicles", cls="TRzComboBox", index=0)})
+    assert "dropdown" in raises(Refused, d.set_text, "vehicles.year", "2015", True)
+    assert w.input == []
 
 
 def test_control_characters_are_refused():

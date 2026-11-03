@@ -48,6 +48,9 @@ MENU_OK = {"change number"}
 RECT_SLACK = 4                             # px a class+index control may sit away from its mapped rect
 COPYBACK_CLASSES = ("TLMDEdit",)           # answer neither WM_GETTEXT nor UI Automation
 CHUNK = 1                                  # characters typed between two safety checks
+# Before typing, empty the box: InvoMax pre-fills some (Odometer In gets the last visit's reading) and typing
+# appended to it (trial 2026-11-03). Keys only, no Ctrl+A and no clipboard; one key per safety check.
+CLEAR_KEYS = ("{END}", "+{HOME}", "{BACKSPACE}")
 RECENT_INPUT_MS = 500                      # someone used the mouse/keyboard this recently: refuse
 FOCUS_WAIT = 1.0                           # seconds a click has to put the focus in its box
 # Top-level windows of the InvoMax process that are never "the dialog on top".
@@ -847,6 +850,8 @@ class Driver:
         if has_control_chars(value):
             raise Refused(f"Refused: the value for {ctl} has a control character.")
         loc = locate(ctl, self.controls)
+        if "ComboBox" in (loc.cls or ""):  # End / Shift+Home would change the pick; use pick() for dropdowns
+            raise Refused(f"Refused: {ctl} is a dropdown; it is picked from, never typed into.")
         win = self._action_window(loc, ctl)
         clicked = False
         if self.focused() != ctl:
@@ -861,6 +866,8 @@ class Driver:
         # in a dry run the click didn't happen, so the focus can't be on ctl yet
         want = None if (self.dry_run and clicked) else ctl
         if typed or loc.needs_copyback or loc.cls not in ("TEdit", "Edit", "TMaskEdit"):
+            self._do(f"clear {ctl} (End, Shift+Home, Backspace)", lambda: self._guard_typing(win, want, f"clearing {ctl}"),
+                     *[functools.partial(self.w.type, k) for k in CLEAR_KEYS])
             self._type(f"type {value!r} into {ctl}", win, want, value)
         else:
             h, _ = self._hwnd(ctl, win)
