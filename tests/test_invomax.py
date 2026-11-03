@@ -93,6 +93,8 @@ class FakeWin:
         child, _ = self.at_point(x, y)
         if self.focus_follows_click and child in self.parents:
             self.focus_h = child
+        if getattr(self, "on_click", None):
+            self.on_click()
 
     def type(self, keys):
         self.input.append(("type", keys))
@@ -564,6 +566,32 @@ def test_only_characters_enter_and_tab_are_sent():
         d._send(keys)
     assert [k for _, k in w.input] == ["7", "X", "-", "{+}", "{(}", "{ENTER}", "{TAB}"]
     assert "{BACKSPACE}" not in invomax.KEYS and "{DEL}" not in invomax.KEYS
+
+
+def test_double_click_is_two_guarded_clicks():
+    w, hs = invoice()
+    d = drv(w, live=True)
+    d.click("odometer.in", double=True)
+    assert w.input == [("click", 1496, 288, False)] * 2
+    w, hs = invoice()  # a box opens after the first click: no second click
+    w.on_click = lambda: w.open("", "Tmsgs", (800, 400, 1100, 560))
+    d = drv(w, live=True)
+    raises(Refused, d.click, "odometer.in", True)
+    assert w.input == [("click", 1496, 288, False)] and d.stopped
+    w, hs = invoice()  # Esc held after the first click: no second click
+    w.on_click = lambda: setattr(w, "esc", True)
+    raises(Refused, drv(w, live=True).click, "odometer.in", True)
+    assert w.input == [("click", 1496, 288, False)]
+    w, hs = invoice()  # the owner moves the mouse during the pause: no second click
+    d = drv(w, live=True)
+    real_sleep = d.sleep
+
+    def sleep(s):
+        real_sleep(s)
+        w.idle = 50  # input 50 ms ago, after our first click
+    d.sleep = sleep
+    assert "someone used the mouse" in raises(Refused, d.click, "odometer.in", True)
+    assert w.input == [("click", 1496, 288, False)]
 
 
 def test_dropdowns_are_never_typed_into():

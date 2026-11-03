@@ -104,8 +104,9 @@ class FakeInvoMax:
                     self.focus = "vin"
                 self.later(load)
         elif self.focus == "odometer.in":
-            def copy():
-                self.fields["odometer.out"] = self.fields["odometer.in"]
+            def copy():  # InvoMax copies the reading only into an empty Odometer Out (owner, 2026-11-03)
+                if not self.fields.get("odometer.out"):
+                    self.fields["odometer.out"] = self.fields["odometer.in"]
                 self.focus = "odometer.out"
             self.later(copy)
         elif self.focus == "odometer.out":

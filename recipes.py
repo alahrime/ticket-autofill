@@ -262,6 +262,10 @@ RECIPES = {
             set_("phone.text", "{phone}", say="Type the phone"),
             press("OK", expect=all_of(gone("Phone Number"), text("phone", "{phone}")), say="Press OK"),
         )),
+    "odometer_select": Recipe(  # trial only: the double-click alone, watched for 3 s (focus jump, 2026-11-03)
+        require=(no_dialog(), filled("name.first")),
+        steps=(double_click("odometer.in", expect=all_of(focus("odometer.in"), filled("name.first")), settle=3.0,
+                            say="Double-click the odometer box and wait"),)),
     "odometer": Recipe(  # spec 5.6; stops on the mechanic box, which staff fill by hand
         require=(no_dialog(), filled("name.first")),
         steps=(

@@ -30,7 +30,7 @@ def test_diff_lists_added_changed_removed():
 
 # --- trial mode
 def test_trial_recipes_exist_in_plan_order():
-    assert TRIAL_RECIPES == ("customer_search", "customers_exit", "customer_by_plate", "odometer", "vehicle_open",
+    assert TRIAL_RECIPES == ("customer_search", "customers_exit", "customer_by_plate", "odometer_select", "odometer", "vehicle_open",
                              "vehicles_cancel")
     assert all(n in R.RECIPES for n in TRIAL_RECIPES)
 

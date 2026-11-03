@@ -55,6 +55,10 @@ CHUNK = 1                                  # characters typed between two safety
 SENDABLE = {"{ENTER}", "{TAB}", "^a^c"}
 RECENT_INPUT_MS = 500                      # someone used the mouse/keyboard this recently: refuse
 FOCUS_WAIT = 1.0                           # seconds a click has to put the focus in its box
+# The owner's double-click is two clicks ~0.2 s apart (watch log 2026-11-03); the tool's used to be one
+# instant burst, and after it InvoMax moved the focus from Odometer In to the parts grid. Trial: human pace.
+DOUBLE_GAP = 0.2
+DOUBLE_MAX = 0.45                          # s; a later second click wouldn't make a double-click (Windows: 0.5)
 # Top-level windows of the InvoMax process that are never "the dialog on top".
 NOT_DIALOGS = {INVOICE_CLASS, "TApplication", "TLMDShapeHintWindow", "SysShadow", "ComboLBox", "#32768",
                "tooltips_class32"}
@@ -444,7 +448,8 @@ class Win32:
 
     # input (only ever called by Driver when dry_run is False, right after its guards)
     def click(self, x, y, double=False):
-        """One SendInput batch: absolute move, left down, left up (twice for a double-click)."""
+        """One SendInput batch: absolute move, left down, left up (twice for a double-click).
+        The driver sends a double-click as two single clicks DOUBLE_GAP apart, guarded in between."""
         ct, wt = self.ct, self.wt
 
         class MOUSEINPUT(ct.Structure):
@@ -815,8 +820,8 @@ class Driver:
             self._emergency()
             self._recent_input()
             guard()
-            send()
-            self._own_input = self.now()
+            if send() is not False:  # False: a pause, not input of ours (the user-input check must still see theirs)
+                self._own_input = self.now()
 
     def _send(self, keys):
         if not (keys in SENDABLE or len(keys) == 1 and keys not in _SPECIAL or esc(keys[1:-1]) == keys
@@ -853,8 +858,19 @@ class Driver:
             if self._point(ctl) != (pt, top, target, under):
                 raise Refused(f"Refused: {ctl} moved since it was found.")
             self._guard_point(ctl, pt, top, target, under, double)
-        self._do(f"{'double-click' if double else 'click'} {ctl} at {pt}", guard,
-                 lambda: self.w.click(*pt, double=double))
+        if not double:
+            self._do(f"click {ctl} at {pt}", guard, lambda: self.w.click(*pt))
+        else:  # two clicks at a person's pace, every check run again before the second one
+            # (_do runs the Esc / corner / user-input checks and guard before each of the three inputs)
+            first = {}
+
+            def second():
+                if self.now() - first["t"] > DOUBLE_MAX:
+                    raise Refused(f"Refused: the second click on {ctl} would come too late for a double-click.")
+                self.w.click(*pt)
+            self._do(f"double-click {ctl} at {pt}", guard,
+                     lambda: (self.w.click(*pt), first.update(t=self.now())),
+                     lambda: self.sleep(max(0.0, DOUBLE_GAP - (self.now() - first["t"]))) or False, second)
 
     @_action
     def set_text(self, ctl, value, typed):
