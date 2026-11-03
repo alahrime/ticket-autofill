@@ -90,6 +90,18 @@ def test_odometer_stops_on_mechanic_box():
     assert f.actions[-1] == ("key", "{ENTER}")  # nothing typed into the mechanic box
 
 
+def test_mechanic_after_odometer_and_odometer_never_from_the_mechanic_box():
+    f = FakeInvoMax()
+    go("customer_by_plate", {"plate": "XKS-4827"}, f)
+    go("odometer", {"odometer": "98431"}, f)
+    go("mechanic", {"mechanic": "JOHN"}, f)
+    assert f.fields["mechanic"] == "JOHN" and f.focus == "mechanic"
+    e = fails("odometer", {"odometer": "98431"}, f)  # the focus is on the mechanic box now
+    assert e.step_no == 0
+    n = len(f.actions)
+    assert go("mechanic", {"mechanic": ""}, f) == [] and len(f.actions) == n  # no mechanic: nothing typed
+
+
 def test_odometer_replaces_the_prefilled_reading():
     f = FakeInvoMax()
     go("customer_by_plate", {"plate": "XKS-4827"}, f)

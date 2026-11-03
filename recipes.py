@@ -232,6 +232,12 @@ RECIPES = {
             press("Save", expect=all_of(dialog("Vehicles"), text("name.first", "{first}")), timeout=10.0,
                   say="Press Save"),
         )),
+    # the shop ticket's mechanic, typed where the odometer recipe leaves the focus. Typing adds to what's in the
+    # box (it can't be read without copy-back), so Fill runs this once, right after odometer, on a new invoice.
+    "mechanic": Recipe(
+        require=(no_dialog(), filled("name.first"), focus("mechanic")),
+        steps=(set_("mechanic", "{mechanic}", typed=True, expect=all_of(focus("mechanic"), filled("name.first")),
+                    settle=1.5, when="mechanic", say="Type the mechanic {mechanic}"),)),
     "customers_exit": Recipe(
         require=(dialog("Customers"),),
         steps=(press("Exit", expect=gone("Customers"), say="Close the Customers search"),)),
@@ -273,7 +279,8 @@ RECIPES = {
                                                     filled("name.first")), settle=1.5,
                      say="Click the odometer box and read it back"),)),
     "odometer": Recipe(  # spec 5.6; stops on the mechanic box
-        require=(no_dialog(), filled("name.first")),
+        # leaving the mechanic box moved the focus to the parts grid (trials 2026-11-03): odometer comes first
+        require=(no_dialog(), filled("name.first"), not_focus("mechanic")),
         steps=(
             # as staff do it (watch log 2026-11-03): a double-click selects the old reading; the typed number
             # replaces it (staff press Backspace first; the tool doesn't: keys other than characters and Enter
