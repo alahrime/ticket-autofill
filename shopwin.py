@@ -10,7 +10,8 @@ from prices import load_catalog
 REFRESH_MS = 4000
 FILLED_CAP = 200  # newest filled tickets looked at for "Show filled (today)"
 HEADER = (("first", "First name"), ("last", "Last name"), ("phone", "Phone"), ("year_make", "Year/Make"),
-          ("model", "Model"), ("plate", "Plate"), ("odometer", "Odometer"), ("tech", "Mechanic"), ("date", "Date"))
+          ("model", "Model"), ("plate", "Plate"), ("vin", "VIN"), ("odometer", "Odometer"), ("tech", "Mechanic"),
+          ("date", "Date"))
 COLS = (("id", "#", 45), ("name", "Name", 140), ("vehicle", "Vehicle", 170), ("total", "Total", 75), ("age", "Age", 50))
 TOTALS_HEAD = "Ticket totals (before tax — InvoMax adds tax and supplies; take deposits off InvoMax's total)"
 
@@ -62,6 +63,11 @@ def header_rows(draft):
     return [(label, invomax_plate(v(k)) if k == "plate" else v(k)) for k, label in HEADER]
 
 
+def header_flag(draft, k):
+    """Why to double-check header value k (e.g. "VIN check digit fails"); "" if nothing."""
+    return draft.header[k].flag if k in draft.header else ""
+
+
 def line_text(ln):
     pad = "    " if ln.kind == "labor" else ""
     return f"{pad}{ln.code or '(no code)'}  {ln.desc}  qty {ln.qty:g}  {usd(ln.price or 0)} each  {ln.kind}"
@@ -81,7 +87,10 @@ def app_row(ln):
 def entry_sheet(ticket, draft, totals):
     """The plain-text InvoMax entry sheet."""
     out = [f"Ticket #{ticket.id} ({ticket.status})"]
-    out += [f"{label}: {v}" for label, v in header_rows(draft)]
+    for (k, _), (label, v) in zip(HEADER, header_rows(draft)):
+        out.append(f"{label}: {v}")
+        if header_flag(draft, k):
+            out.append(f"{label} warning: {header_flag(draft, k)}")
     out += ["", "Lines:"] + [line_text(ln) for ln in draft.lines]
     if draft.notes:
         out += ["", "Notes:"] + draft.notes
@@ -241,8 +250,11 @@ class ShopWindow(tk.Toplevel):
                       foreground="white", background="#c0392b", padding=4).grid(row=r, column=0, columnspan=3, sticky="ew")
             r += 1
         row(f"Ticket #{t.id}", t.status, f=bold)
-        for label, v in header_rows(draft):
+        for (k, _), (label, v) in zip(HEADER, header_rows(draft)):
             row(label, v, v)
+            if header_flag(draft, k):
+                ttk.Label(self.body, text=header_flag(draft, k), font=font, foreground="red").grid(row=r, column=1, sticky="w")
+                r += 1
         row("Lines", f=bold)
         grid = ttk.Frame(self.body)
         grid.grid(row=r, column=0, columnspan=3, sticky="w", padx=4)

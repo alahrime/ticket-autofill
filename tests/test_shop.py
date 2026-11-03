@@ -295,6 +295,29 @@ def test_deposits_admin_only():
         assert call(b, url, cookie=k)[0] == 403
 
 
+def test_vin():  # made-up VINs
+    with Server() as s:
+        b = s.base
+        a, al, bo, k = admin(b), tech(b, "Al Fixit"), tech(b, "Bo Wrench"), kiosk(b)
+        kid = call(b, "/api/tickets", {**CAR, "vin": "2T1BR32614C809083"}, k)[1]["id"]
+        t = call(b, f"/api/tickets/{kid}", cookie=a)[1]
+        assert t["vin"] == "" and t["vin_warning"] == ""  # check-in can't set it
+        url = f"/api/tickets/{kid}"
+        t = call(b, url + "/move", {"version": t["version"], "to": "working"}, al)[1]
+        assert call(b, url, {"version": t["version"], "vin": "1HGCM82633A004352"}, bo)[0] == 404  # not Bo's job
+        code, t = call(b, url, {"version": t["version"], "vin": "2t1br 32614c80908"}, al)
+        assert code == 200 and t["vin"] == "2T1BR32614C80908" and t["vin_warning"] == "VIN has 16 characters, not 17"
+        code, t = call(b, url, {"version": t["version"], "lines": [{"desc": "pads", "price": 100}]}, al)
+        t = call(b, url + "/move", {"version": t["version"], "to": "review"}, al)[1]
+        t = call(b, url + "/move", {"version": t["version"], "to": "approved"}, a)[1]
+        assert t["vin_warning"] == "VIN has 16 characters, not 17"
+        code, t = call(b, url, {"version": t["version"], "vin": "2T1BR32614C809083"}, a)  # the desk fixes it until filled
+        assert code == 200 and t["vin"] == "2T1BR32614C809083" and t["vin_warning"] == ""
+        assert call(b, "/api/tickets?status=approved", cookie=a)[1]["tickets"][0]["vin_warning"] == ""
+        t = call(b, url + "/move", {"version": t["version"], "to": "filled"}, a)[1]
+        assert call(b, url, {"version": t["version"], "vin": "1HGCM82633A004352"}, a)[0] == 409
+
+
 def test_roles_refused_at_the_wrong_door():
     with Server() as s:
         b = s.base

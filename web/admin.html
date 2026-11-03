@@ -46,6 +46,7 @@ main{padding:12px 16px 40px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px 14px}
 .grid .wide{grid-column:1/-1}
 .ferr{color:#b00;font-size:14px;margin-top:4px}
+.fwarn{color:#7a5600;font-size:14px;margin-top:4px}
 .box{background:#fff;border-radius:10px;padding:14px;margin:0 0 14px}
 .box h2{font-size:19px;margin:0 0 10px}
 .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
@@ -197,6 +198,7 @@ const FIELDS = [  // [key, label, extra attributes]; mechanic is handled apart (
   ["make", "Make", {...NAMEISH, list: "make-list"}],
   ["model", "Model", {...NAMEISH, list: "model-list"}],
   ["plate", "Plate", NAMEISH],
+  ["vin", "VIN", NAMEISH],
   ["odometer", "Odometer", {inputMode: "numeric"}],
 ];
 const TEXTS = [["request", "What the customer wants done"], ["notes", "Notes"]];
@@ -600,7 +602,8 @@ function loadTicket(t) {
     grid.append(el("div", {},
       el("label", {for: "t-" + k, text: label}),
       el("input", {id: "t-" + k, name: k, value: t[k] || "", readOnly: !ed, autocomplete: "off", ...extra}),
-      el("div", {class: "ferr", "data-for": k})));
+      el("div", {class: "ferr", "data-for": k}),
+      k === "vin" && t.vin_warning ? el("div", {class: "fwarn", text: t.vin_warning}) : null));  // saved anyway: just a warning
   }
   grid.append(mechanicField(t));
   for (const [k, label] of TEXTS) {

@@ -20,14 +20,15 @@ COST_RE = re.compile(r"\$\s*(\d+(?:\.\d{1,2})?)")
 # VIN transliteration and weights (49 CFR 565)
 _T = dict(zip("ABCDEFGHJKLMNPRSTUVWXYZ", [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 7, 9, 2, 3, 4, 5, 6, 7, 8, 9]))
 _W = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
+_DIGITS = "0123456789"
 _SWAP = {"0": "D", "D": "0", "1": "L", "L": "1", "5": "S", "S": "5", "8": "B", "B": "8",
          "2": "Z", "Z": "2", "6": "G", "G": "6"}
 
 
 def vin_valid(v):
-    if len(v) != 17 or any(c not in _T and not c.isdigit() for c in v):
+    if len(v) != 17 or any(c not in _T and c not in _DIGITS for c in v):  # ASCII only: int("²") fails
         return False
-    s = sum((int(c) if c.isdigit() else _T[c]) * w for c, w in zip(v, _W)) % 11
+    s = sum((int(c) if c in _DIGITS else _T[c]) * w for c, w in zip(v, _W)) % 11
     return v[8] == ("X" if s == 10 else str(s))
 
 

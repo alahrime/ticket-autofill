@@ -66,12 +66,13 @@ def vehicles():
 
 
 def as_json(t, role):
-    """A ticket for the page: the admin sees everything; a mechanic no deposits, nor what was paid."""
+    """A ticket for the page: the admin sees everything; a mechanic no deposits, nor what was paid.
+    vin_warning is worked out here, not stored, so both pages say the same."""
     d, tot = asdict(t), tickets.totals(t)
     if role != "admin":
         del d["deposits"]
         tot = {k: tot[k] for k in MECHANIC_TOTALS}
-    return {**d, "totals": tot}
+    return {**d, "totals": tot, "vin_warning": tickets.vin_warning(t.vin)}
 
 
 def same(a, b):

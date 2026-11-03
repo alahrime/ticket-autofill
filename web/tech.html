@@ -40,6 +40,8 @@ label input,label textarea{margin-top:4px}
 .err{color:#b00}
 .ferr{color:#b00;font-size:15px;margin:4px 0 0;white-space:pre-wrap}
 .ferr:empty{display:none}
+.fwarn{color:#7a5600;font-size:15px;margin:4px 0 0}
+.fwarn:empty{display:none}
 #msg{background:#fde2e2;color:#900;padding:12px;border-radius:8px;margin:8px 0;white-space:pre-wrap}
 #msg.ok{background:#e2f5e2;color:#185c18}
 #net{color:#900;font-size:14px}
@@ -107,6 +109,9 @@ label input,label textarea{margin-top:4px}
 
   <label>Odometer <input id="odo" inputmode="numeric" autocomplete="off" maxlength="9"></label>
   <p id="odoerr" class="ferr" role="alert"></p>
+  <label>VIN <input id="vin" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="30"></label>
+  <p id="vinerr" class="ferr" role="alert"></p>
+  <p id="vinwarn" class="fwarn"></p>
   <label>Notes <textarea id="notes" maxlength="2000"></textarea></label>
   <p id="noteserr" class="ferr" role="alert"></p>
 
@@ -116,7 +121,8 @@ label input,label textarea{margin-top:4px}
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const FIELDS = [["odo", "odometer"], ["notes", "notes"]];  // box id, ticket field
+const FIELDS = [["odo", "odometer", "odoerr"], ["vin", "vin", "vinerr"], ["notes", "notes", "noteserr"]];  // box id, ticket field, error box id
+const errBox = k => { const f = FIELDS.find(x => x[1] === k); return f ? $(f[2]) : null; };
 let me = "", uid = "", reloading = false, list = [], etag = "", cur = null, editing = null, formStart = "", code = "", hintDesc = "";
 let queue = Promise.resolve(), pending = 0, polling = false, hintSeq = 0, hintTimer = 0, savedTimer = 0, fieldTimer = 0;
 const known = {};   // id -> newest copy of that ticket this phone saved or loaded; queued saves take their version from it
@@ -176,12 +182,12 @@ function errText(e) {
   return e && e.status > 0 ? `The shop PC had a problem (${e.status}).` : "Something went wrong.";
 }
 function clearFieldErrors() {
-  for (const id of ["lerr", "odoerr", "noteserr"]) $(id).textContent = "";
+  for (const id of ["lerr", ...FIELDS.map(f => f[2])]) $(id).textContent = "";
 }
 function showErrors(e) {  // 400: each message next to its field; the rest at the top
   const errs = (e.data && e.data.errors) || {}, rest = [];
   for (const [k, v] of Object.entries(errs)) {
-    const box = k === "odometer" ? $("odoerr") : k === "notes" ? $("noteserr") : k === "lines" && editing ? $("lerr") : null;
+    const box = errBox(k) || (k === "lines" && editing ? $("lerr") : null);
     if (box) box.textContent = cap(v);
     else rest.push(cap(v));
   }
@@ -240,7 +246,7 @@ function goHome() {  // no questions asked: callers deal with an open line first
   if (location.hash) location.hash = "";
   else route();
 }
-function leaveJob() {  // keeps the odometer/notes typed so far (sent with the ticket's own version), then forgets the job
+function leaveJob() {  // keeps the boxes typed so far (sent with the ticket's own version), then forgets the job
   if (!cur) return;
   saveFields();
   cur = null;
@@ -315,7 +321,7 @@ function forgetOthers() {  // phones may be shared: drop drafts (and the old nam
     for (const k of drop) localStorage.removeItem(k);
   } catch (e) { /* private mode */ }
 }
-function myDrafts() {  // ids of jobs with odometer/notes typed on this phone that never reached the server
+function myDrafts() {  // ids of jobs with odometer/VIN/notes typed on this phone that never reached the server
   const out = [];
   try {
     const mine = draftPrefix();
@@ -340,11 +346,11 @@ $("signout").addEventListener("submit", async ev => {
     if (!discardLine()) return signDone();
     closeForm();
     say("");
-    saveFields();  // typed odometer/notes go first
+    saveFields();  // typed odometer/VIN/notes go first
     await queue;
     if (reloading) return;  // the session was already gone: the sign-in page is on its way
     const left = myDrafts().length || Object.keys(dirtyBoxes()).length;
-    if (left && !confirm("Some odometer or notes changes haven't reached the shop yet and will be lost. Sign out anyway?")) return signDone();
+    if (left && !confirm("Some odometer, VIN or notes changes haven't reached the shop yet and will be lost. Sign out anyway?")) return signDone();
     if (navigator.onLine === false) {  // the POST wouldn't get there: keep everything
       say("You're offline — sign out when you're back online.");
       return signDone();
@@ -482,15 +488,16 @@ async function loadJob(id) {
     goHome();
   }
 }
-// What the server would store for a typed value: trimmed; odometer without commas/spaces (as tickets.normalize).
-const tidy = (k, v) => k === "odometer" ? v.trim().replace(/[, ]/g, "") : v.trim();
-function dirtyBoxes() {  // odometer/notes typed but not yet on the server: {field: value as typed}
+// What the server would store for a typed value: trimmed; odometer without commas/spaces, VIN without any
+// space and upper case (as tickets.normalize).
+const tidy = (k, v) => k === "odometer" ? v.trim().replace(/[, ]/g, "") : k === "vin" ? v.replace(/[\s\x1c-\x1f\x85]/g, "").toUpperCase() : v.trim();
+function dirtyBoxes() {  // odometer/VIN/notes typed but not yet on the server: {field: value as typed}
   const out = {};
   if (!cur) return out;
   for (const [id, k] of FIELDS) if (tidy(k, $(id).value) !== (cur[k] || "")) out[k] = $(id).value;
   return out;
 }
-// Unsaved odometer/notes are also kept on the phone per job until saved (survives a closed tab or dead battery).
+// Unsaved odometer/VIN/notes are also kept on the phone per job until saved (survives a closed tab or dead battery).
 // Keyed by account too (tech.draft.<user id>.<ticket id>): a shared phone never hands one mechanic's typing to another.
 const draftPrefix = () => "tech.draft." + uid + ".";
 const draftKey = id => draftPrefix() + id;
@@ -534,7 +541,11 @@ function setCur(t) {
       fieldTimer = setTimeout(saveFields, 800);
     }
   }
+  showVinWarning();
   keepDraft();
+}
+function showVinWarning() {  // the server's warning for the stored VIN; hidden while a different one is typed
+  $("vinwarn").textContent = cur && tidy("vin", $("vin").value) === (cur.vin || "") ? cur.vin_warning || "" : "";
 }
 function renderLines() {
   const box = $("lines");
@@ -579,7 +590,7 @@ const sameLines = (a, b) => (a || []).length === (b || []).length &&
   a.every((x, i) => LINE_KEYS.every(k => (x[k] ?? null) === (b[i][k] ?? null)));
 
 // build(t) -> {lines} from the newest known copy, or null for a fields-only save.
-// fields: odometer/notes values captured now. A fields-only save that hits a stale version is retried once
+// fields: odometer/VIN/notes values captured now. A fields-only save that hits a stale version is retried once
 // on the new version (last write wins); a lines save only when the new version has the same lines this phone
 // built on (the desk took a deposit, say), else it would undo the other device's lines.
 async function runSave(id, build, fields, keepalive) {
@@ -596,8 +607,9 @@ async function runSave(id, build, fields, keepalive) {
         for (const [bid, k] of FIELDS) {
           const box = $(bid);  // the server tidies values ("45,120" -> "45120"): show its copy, but not mid-typing
           if (k in fields && box.value === fields[k] && document.activeElement !== box) box.value = r.data[k] || "";
-          if (k in fields) $(k === "odometer" ? "odoerr" : "noteserr").textContent = "";
+          if (k in fields) errBox(k).textContent = "";
         }
+        showVinWarning();
         if (build) $("lerr").textContent = "";
       }
       saved();
@@ -609,7 +621,7 @@ async function runSave(id, build, fields, keepalive) {
         continue;
       }
       conflict(id, e, build ? "Changed on another device, so that change wasn't saved. Showing the latest; try again." : "", !!build);
-      if (build && isStale(e)) {  // typed odometer/notes go again on the new version
+      if (build && isStale(e)) {  // typed boxes go again on the new version
         for (const k in fields) if (queued[k] === fields[k]) delete queued[k];
         saveFields();
       }
@@ -626,7 +638,7 @@ function save(id, build, fields, keepalive, now) {
   p.finally(() => { for (const k in fields) if (queued[k] === fields[k]) delete queued[k]; });
   return p;
 }
-function saveFields(keepalive) {  // send typed odometer/notes not already on their way
+function saveFields(keepalive) {  // send typed odometer/VIN/notes not already on their way
   if (!cur) return Promise.resolve(true);
   const f = saveableBoxes();
   if (!Object.keys(f).length) return Promise.resolve(true);
@@ -669,11 +681,11 @@ function conflict(id, e, staleText, lines) {
   }
 }
 
-const typing = () => { keepDraft(); clearTimeout(fieldTimer); fieldTimer = setTimeout(saveFields, 800); };
-$("odo").addEventListener("input", typing);
-$("notes").addEventListener("input", typing);
-$("odo").addEventListener("change", () => saveFields());
-$("notes").addEventListener("change", () => saveFields());
+const typing = () => { keepDraft(); showVinWarning(); clearTimeout(fieldTimer); fieldTimer = setTimeout(saveFields, 800); };
+for (const [id] of FIELDS) {
+  $(id).addEventListener("input", typing);
+  $(id).addEventListener("change", () => saveFields());
+}
 document.addEventListener("visibilitychange", () => {
   if (signingOut) return;
   if (document.hidden) { keepDraft(); saveFields(true); } else poll();
@@ -786,7 +798,7 @@ $("lineform").addEventListener("submit", async ev => {
   $("lsave").disabled = false;
   if (ok && editing && editing.id === id) closeForm();
 });
-function saveableBoxes() {  // typed odometer/notes ride along with a lines save
+function saveableBoxes() {  // typed odometer/VIN/notes ride along with a lines save
   clearTimeout(fieldTimer);
   const f = dirtyBoxes();
   for (const k of Object.keys(f)) if (queued[k] === f[k]) delete f[k];
@@ -812,8 +824,8 @@ $("finish").addEventListener("click", async () => {
     saveFields();
     await queue;
     if (!cur || cur.id !== id) return;
-    if (Object.keys(dirtyBoxes()).length) {  // odometer/notes didn't save: say so and stay
-      if (!$("odoerr").textContent && !$("noteserr").textContent && $("msg").hidden) say("Couldn't save the odometer or notes. Try again.");
+    if (Object.keys(dirtyBoxes()).length) {  // a typed box didn't save: say so and stay
+      if (FIELDS.every(f => !$(f[2]).textContent) && $("msg").hidden) say("Couldn't save the odometer, VIN or notes. Try again.");
       return;
     }
     await enqueue(async () => {

@@ -4,12 +4,13 @@ import json, re, sqlite3, threading
 from dataclasses import dataclass, field, asdict, replace, fields as dc_fields
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from read import vin_valid
 
 REQUIRED = ("first", "last", "phone", "year", "make", "model")
 UPPER = ("first", "last", "make", "model", "plate")
-TEXT = ("request", "mechanic", "odometer", "notes")
+TEXT = ("request", "mechanic", "odometer", "vin", "notes")
 LONG = ("request", "notes")  # up to 2000 chars; other text fields 80
-MECHANIC_KEYS = {"lines", "odometer", "notes"}
+MECHANIC_KEYS = {"lines", "odometer", "vin", "notes"}
 MAX_LINES, MAX_MONEY, MAX_QTY, MAX_DEPOSITS = 100, 1e6, 1e4, 50
 METHODS = ("cash", "card", "check", "other")  # how a deposit was paid
 DEPOSIT_DAYS = 366  # a deposit's date is at most about a year from today, either way
@@ -50,6 +51,7 @@ class Ticket:
     request: str = ""
     mechanic: str = ""
     odometer: str = ""
+    vin: str = ""         # as typed, upper case without spaces; vin_warning says if it looks wrong
     notes: str = ""
     lines: list = field(default_factory=list)  # Line
     deposits: list = field(default_factory=list)  # Deposit; the desk's only, never shown to mechanics
@@ -94,6 +96,19 @@ def text(v, name, limit=80):
     if len(v) > limit:
         raise ValueError(f"{name} is too long (max {limit})")
     return v
+
+
+def vin_warning(vin):
+    """Why a VIN looks wrong ("" when empty or valid). Only ever a warning: the VIN is stored as typed."""
+    if not vin or vin_valid(vin):
+        return ""
+    if not re.fullmatch(r"[A-Z0-9]+", vin):
+        return "VIN has characters other than letters and digits"
+    if len(vin) != 17:
+        return f"VIN has {len(vin)} character{'s' if len(vin) != 1 else ''}, not 17"
+    if re.search(r"[IOQ]", vin):
+        return "VIN can't have I, O or Q (1 or 0?)"
+    return "VIN check digit fails"
 
 
 def cents(x):
@@ -198,6 +213,10 @@ def normalize(fields, create=False, kept=()):
         out["odometer"] = out["odometer"].replace(",", "").replace(" ", "")
         if not re.fullmatch(r"[0-9]{0,7}", out["odometer"]):
             errors["odometer"] = "odometer must be up to 7 digits"
+    if "vin" in out:
+        out["vin"] = re.sub(r"[\s\ufeff]", "", out["vin"]).upper()  # no lookalike swaps: a person typed it
+        if len(out["vin"]) > 80:  # upper() can lengthen: ß -> SS
+            errors["vin"] = "vin is too long (max 80)"
     if "phone" in raw:
         digits = re.sub(r"[^0-9]", "", raw["phone"])
         if len(digits) == 10:
@@ -252,7 +271,7 @@ def normalize(fields, create=False, kept=()):
 
 def edit(ticket, fields, who):
     """Merge typed fields onto ticket in place. who: "desk" (waiting/review/approved: any field; working:
-    deposits alone) or "mechanic" (working only: lines, odometer, notes). Unknown keys are ignored, as in
+    deposits alone) or "mechanic" (working only: lines, odometer, vin, notes). Unknown keys are ignored, as in
     normalize. Raises Refused (not allowed now / not theirs to change) or Invalid (bad values)."""
     known = set(fields) & set(UPPER + TEXT + REQUIRED + ("lines", "deposits"))
     if who == "desk":
@@ -312,9 +331,9 @@ def totals(ticket):
 
 def to_draft(ticket, catalog, today=None):
     """Approved (or filled) ticket -> draft.Draft for the InvoMax fill. Header values come from the desk;
-    year/make are also kept apart for the Vehicles dropdowns. A part's code is the ticket's, else
-    prices.match, else "". Lines with neither price nor labor go to notes, then a note per deposit
-    (InvoMax takes them off its total)."""
+    year/make are also kept apart for the Vehicles dropdowns; a VIN that looks wrong is flagged. A part's code
+    is the ticket's, else prices.match, else "". Lines with neither price nor labor go to notes, then a note
+    per deposit (InvoMax takes them off its total)."""
     from draft import Draft, Value, Line as DLine
     from prices import match
     if ticket.status not in ("approved", "filled"):
@@ -324,6 +343,8 @@ def to_draft(ticket, catalog, today=None):
             "year": t.year, "make": t.make, "model": t.model, "plate": t.plate, "odometer": t.odometer,
             "tech": t.mechanic, "date": (today or date.today()).strftime("%m/%d/%y")}
     d = Draft(id=str(t.id), make=t.make.lower(), header={k: Value(v, "desk") for k, v in vals.items() if v})
+    if t.vin:
+        d.header["vin"] = Value(t.vin, "desk", flag=vin_warning(t.vin))
     d.notes = [s for s in (t.request and f"Customer: {t.request}", t.notes) if s]
 
     def add(ln):
