@@ -93,9 +93,9 @@ def test_odometer_stops_on_mechanic_box():
 def test_odometer_replaces_the_prefilled_reading():
     f = FakeInvoMax()
     go("customer_by_plate", {"plate": "XKS-4827"}, f)
-    f.fields["odometer.in"] = "41200"  # InvoMax fills in the last visit's reading
+    f.fields["odometer.in"] = f.fields["odometer.out"] = "41200"  # InvoMax fills in the last visit's readings
     go("odometer", {"odometer": "45420"}, f)
-    assert f.fields["odometer.in"] == "45420" and f.fields["odometer.out"] == "45420"
+    assert f.fields["odometer.in"] == "45420" and f.fields["odometer.out"] == "45420" and f.focus == "mechanic"
     assert ("double_click", "odometer.in") in f.actions and ("key", "{BACKSPACE}") not in f.actions
 
 

@@ -266,7 +266,7 @@ RECIPES = {
         require=(no_dialog(), filled("name.first")),
         steps=(double_click("odometer.in", expect=all_of(focus("odometer.in"), filled("name.first")), settle=3.0,
                             say="Double-click the odometer box and wait"),)),
-    "odometer": Recipe(  # spec 5.6; stops on the mechanic box, which staff fill by hand
+    "odometer": Recipe(  # spec 5.6; stops on the mechanic box
         require=(no_dialog(), filled("name.first")),
         steps=(
             # as staff do it (watch log 2026-11-03): a double-click selects the old reading; the typed number
@@ -277,8 +277,12 @@ RECIPES = {
             set_("odometer.in", "{odometer}", typed=True, enter=True,
                  expect=all_of(focus("odometer.out"), filled("name.first")), settle=1.5,
                  say="Type {odometer} and press Enter"),
-            key("{ENTER}", expect=all_of(focus("mechanic"), filled("name.first")), settle=1.5,
-                say="Move on to the mechanic box"),
+            # Odometer Out keeps an old reading (owner, 2026-11-03); billing wants Out = In, so it's set the same way
+            double_click("odometer.out", expect=all_of(focus("odometer.out"), filled("name.first")), settle=1.5,
+                         say="Double-click the second odometer box"),
+            set_("odometer.out", "{odometer}", typed=True, enter=True,
+                 expect=all_of(focus("mechanic"), filled("name.first")), settle=1.5,
+                 say="Type {odometer} again and press Enter"),
         )),
 }
 

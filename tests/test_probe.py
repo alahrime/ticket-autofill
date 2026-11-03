@@ -38,7 +38,7 @@ def test_trial_recipes_exist_in_plan_order():
 def test_placeholders_from_recipe():
     assert placeholders(R.RECIPES["customer_search"]) == ["by", "text"]
     assert placeholders(R.RECIPES["customer_by_plate"]) == ["plate"]
-    assert placeholders(R.RECIPES["odometer"]) == ["odometer"]  # the {ENTER} key isn't a value
+    assert placeholders(R.RECIPES["odometer"]) == ["odometer"]  # used twice, listed once
     assert placeholders(R.RECIPES["customers_exit"]) == []
     assert placeholders(R.RECIPES["vehicles_cancel"]) == []
     assert "phone" in placeholders(R.RECIPES["customer_new"])  # a `when` value counts too
