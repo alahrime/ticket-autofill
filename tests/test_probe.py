@@ -235,6 +235,11 @@ def test_result_after_a_live_ok_run_says_what_to_undo():
     assert "Clear the invoice by hand (the tool never presses Clear)." in shown
     assert NOTHING_SENT not in shown
     assert leftovers({"error": "gone"})[0].startswith("Couldn't read InvoMax after the run")
+    # an unknown plate: InvoMax opens Customers with near matches (owner, 2026-11-03)
+    out = result_lines("customer_by_plate", "StepFailed", None, [], False, True, {"dialog": "Customers", "name.first": ""})
+    assert any(s.startswith("No customer has that plate") for s in out) and any("Close the Customers" in s for s in out)
+    out = result_lines("customer_search", "StepFailed", None, [], False, True, {"dialog": "Customers", "name.first": ""})
+    assert not any(s.startswith("No customer has that plate") for s in out)
 
 
 def test_result_when_nothing_was_sent():

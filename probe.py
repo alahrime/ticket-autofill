@@ -674,6 +674,9 @@ def result_lines(recipe, kind, exc, rows, dry_run, sent, after=None):
             out.append(f"  {clip(str(exc))}")
         out.append("Stopped here; nothing more was pressed and nothing is retried.")
     if sent:
+        if recipe == "customer_by_plate" and kind != "OK" and (after or {}).get("dialog") == "Customers":
+            out.append("No customer has that plate: InvoMax opened Customers with near matches instead "
+                       "(it loads the customer only on an exact match). Nothing was picked from the list.")
         out += leftovers(after or {"error": "not read"})
     else:
         out.append(NOTHING_SENT)

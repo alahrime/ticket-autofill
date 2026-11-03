@@ -27,7 +27,12 @@ Tests: `python tests/test_<name>.py` for draft, invomax, ocr, phone, prices, pro
 - **Readable:** the Name boxes (`TEdit#2` first, `TEdit#1` last), every box in Customer Information, the Vehicles dropdowns and button captions, the Parts & Labor captions, the Parts Cost / ACTUAL COST / Mileage boxes, and the grid cell being edited (`TInplaceEdit`).
 - **Not readable:** the 15 `TLMDEdit` header boxes, which answer neither `WM_GETTEXT` nor UI Automation. These are Plate `#6`, VIN `#1`, Year Make `#8`, Eng Specs `#7`, Odometer in `#5` / out `#4`, mechanic `#2` and the phones. The drawn lists (Customers, Parts & Labor, item grid, `Tchoicebox`) aren't readable either. The plan: check `TLMDEdit` values by **copy-back** (select all, copy, read, restore the clipboard) and check list picks by their effect.
 - **Caption-less buttons** are located by position in the invoice window. The button row is the panel `TPanel#3` at (10, 322)–(1926, 374). Known spots: Clear ≈ x 90–160, Labor ≈ x 440–500, vehicle history ≈ x 765–785, Done ≈ x 1280–1350, all at y 335–370. Inside dialogs: Add New ≈ (137, 475) in Customers, Save ≈ (273, 218) in Customer Information.
-- The fastest customer lookup is to type the plate (with the hyphen, `ABC-1234`) in the Plate box and press Enter on an empty invoice.
+- The fastest customer lookup is to type the plate (with the hyphen, `ABC-1234`) in the Plate box and press Enter on an empty invoice. On an exact match InvoMax loads the customer; with no exact match it opens Customers with near matches and loads nobody (seen live 2026-11-03).
+
+## Trial results (2026-11-03, owner watching, empty invoice)
+- `python invomax.py check`: invoice 1936 × 1056 maximized, no dialog, name boxes read empty; the menu bar (182 items) has no keyboard shortcuts. The focused box on an empty invoice is the date box (`TLMDMaskEdit#0`, now mapped read only).
+- `customer_search` live: Customers opened in 0.2 s, License ticked, the plate typed; step 3 can't be confirmed without copy-back (stopped, as designed).
+- `customer_by_plate` live with a plate not in InvoMax: Plate focused in 0.02 s, typed, Enter → Customers with near matches, nothing loaded; trial mode now says so. Still to try: a plate that is in InvoMax, then `odometer` and the vehicle stages on that customer.
 
 ## Next: test the runner on the real InvoMax
 Do these in order and stop at the first surprise. Every stage runs on **an empty invoice** with the owner watching. Anything the tool leaves on the invoice is cleared **by hand**; the tool never presses Clear.
