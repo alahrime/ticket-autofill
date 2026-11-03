@@ -226,7 +226,11 @@ RECIPES = {
         steps=(press("Exit", expect=gone("Customers"), say="Close the Customers search"),)),
     "vehicles_cancel": Recipe(  # back out of Vehicles without choosing (trial stage 3.2)
         require=(dialog("Vehicles"),),
-        steps=(press("Cancel", expect=gone("Vehicles"), say="Close the Vehicles window"),)),
+        steps=(
+            # Cancel asks "correct all past history?" in a Confirm box (trial 2026-11-03); the owner: always No
+            press("Cancel", expect=dialog("Confirm"), say="Close the Vehicles window"),
+            press("No", expect=no_dialog(), say="Answer No to correcting the past history"),
+        )),
     "vehicle_open": Recipe(  # spec 5.5; a single click only puts the cursor in Year Make (trial 2026-11-03)
         require=(no_dialog(), filled("name.first")),
         steps=(double_click("year_make", expect=dialog("Vehicles"), say="Open the Vehicles window"),)),

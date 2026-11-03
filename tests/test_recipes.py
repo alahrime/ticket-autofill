@@ -144,7 +144,15 @@ def test_vehicles_cancel_backs_out():
     f = FakeInvoMax(lag=0.3)
     f.windows = ["Vehicles"]
     go("vehicles_cancel", {}, f)
-    assert f.dialog() is None and f.actions == [("press", "Cancel")]
+    assert f.dialog() is None and f.actions == [("press", "Cancel"), ("press", "No")]
+
+
+def test_vehicles_cancel_without_confirm_never_presses_no():
+    f = FakeInvoMax()
+    f.windows = ["Vehicles"]
+    f.press = lambda caption: (f.actions.append(("press", caption)), f.windows.remove("Vehicles"))
+    e = fails("vehicles_cancel", {}, f)
+    assert e.step_no == 1 and f.actions == [("press", "Cancel")]
 
 
 class Refusal(RuntimeError):

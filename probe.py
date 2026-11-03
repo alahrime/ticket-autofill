@@ -482,7 +482,9 @@ def leftovers(after):
         return [f"Couldn't read InvoMax after the run ({clip(after['error'])}). "
                 "Check it and clear by hand anything the trial left."]
     out = []
-    if after.get("dialog"):
+    if after.get("dialog") == "Confirm":  # Yes is focused there: Enter or a careless close answers Yes
+        out.append("Press No in the Confirm box by hand (not Yes, not Enter).")
+    elif after.get("dialog"):
         out.append(f"Close the {after['dialog']} window by hand (or run customers_exit / vehicles_cancel).")
     if (after.get("name.first") or "").strip():
         out.append("Clear the invoice by hand (the tool never presses Clear).")

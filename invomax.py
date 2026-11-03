@@ -43,7 +43,8 @@ NEVER_WORDS = {"continue", "quote", "void", "erase", "done", "charge", "print", 
 NEVER_EXCEPTIONS = {"change number"}
 # press() / choose_menu() captions the driver accepts, per window (also checked against recipes.ALLOWED).
 PRESS_OK = {("Customers", "add new"), ("Customers", "exit"), ("Customer Information", "save"),
-            ("Phone Number", "ok"), ("Vehicles", "cancel")}
+            ("Phone Number", "ok"), ("Vehicles", "cancel"),
+            ("Confirm", "no")}  # No only right after Cancel in Vehicles, in a Yes/No box (_guard_confirm_no)
 MENU_OK = {"change number"}
 RECT_SLACK = 4                             # px a class+index control may sit away from its mapped rect
 COPYBACK_CLASSES = ("TLMDEdit",)           # answer neither WM_GETTEXT nor UI Automation
@@ -569,6 +570,8 @@ def _action(fn):
     def wrapper(self, *a, **k):
         if self.stopped:
             raise Refused(f"Refused: the driver stopped earlier ({self.stopped}); start again with a new Driver.")
+        # the press just before this action, for presses that only follow another one (Confirm "No")
+        self._prev_press, self._last_press = getattr(self, "_last_press", None), None
         try:
             return fn(self, *a, **k)
         except NotReadable:  # a read that couldn't be done (copy-back off, nothing copied) isn't a stop
@@ -594,6 +597,7 @@ class Driver:
         self.stopped = ""       # why the driver stopped; once set, every action is refused
         self._own_input = None  # now() when this driver last sent input
         self._copied = {}       # copy-back results since the last action (at most one copy-back per step)
+        self._last_press = self._prev_press = None  # (window title, caption) of a press that was the last action
 
     # --- window lookups
     def _invoice(self):
@@ -947,6 +951,8 @@ class Driver:
         if (title, norm(caption)) not in PRESS_OK or norm(caption) not in ALLOWED:
             raise Refused(f"Refused: {caption!r} isn't an approved button in {title or 'the invoice'}.")
         win = top or self._invoice()
+        if (title, norm(caption)) == ("Confirm", "no"):
+            self._guard_confirm_no(top)
         hits = [h for _, h, c in self.w.controls(win) if is_button(c) and norm(self.w.text(h)) == norm(caption)]
         if len(hits) > 1:
             raise RuntimeError(f"{len(hits)} buttons say {caption!r} in {title or 'the invoice'}")
@@ -959,11 +965,24 @@ class Driver:
                     raise Refused(f"Refused: the {caption!r} button changed.")
                 self._guard_point(f"button {caption!r}", pt, win, target=b)
             self._do(f"press {caption!r} at {pt}", guard, lambda: self.w.click(*pt))
+            self._last_press = (title, norm(caption))
             return
         key = (title, norm(caption))
         if key not in PRESS_SPOTS:
             raise NotMapped(f"button {caption!r} in {title or 'the invoice'}")
         self.click(PRESS_SPOTS[key])
+        self._last_press = key
+
+    def _guard_confirm_no(self, top):
+        """No only answers the Yes/No box that Cancel in Vehicles opens ("correct all past history?").
+        Other Confirm boxes share the title (Delphi's "Save changes?" has a Cancel too), so check all three."""
+        if self._prev_press != ("Vehicles", "cancel"):
+            raise Refused("Refused: No is only pressed right after Cancel in Vehicles.")
+        if self.w.cls(top) != "TMessageForm":
+            raise Refused(f"Refused: the Confirm window is a {self.w.cls(top)}, not a TMessageForm.")
+        caps = sorted(norm(self.w.text(h)) for _, h, c in self.w.controls(top) if is_button(c))
+        if caps != ["no", "yes"]:
+            raise Refused(f"Refused: the Confirm box has buttons {caps}, not just Yes and No.")
 
     # --- copy-back (off unless the owner agreed: it sends Ctrl+A / Ctrl+C to InvoMax)
     def _copyback(self, ctl):

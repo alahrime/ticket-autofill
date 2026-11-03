@@ -267,6 +267,54 @@ def test_never_captions():
         assert not invomax.is_never(c), c
 
 
+def test_confirm_box_only_no_is_pressed():
+    # Cancel in Vehicles asks to correct the past history (trial 2026-11-03); the owner: always No
+    w, _ = invoice()
+    box = w.open("Confirm", "TMessageForm", (800, 400, 1026, 536))
+    w.add(box, "TButton", (116, 92, 75, 26), "&No")
+    w.add(box, "TButton", (35, 92, 75, 26), "&Yes")
+    raises(Refused, drv(w, live=True).press, "Yes")
+    assert "right after Cancel" in raises(Refused, drv(w, live=True).press, "No")  # no Cancel first
+    assert w.input == []
+    d = drv(w, live=True)
+    d._last_press = ("Vehicles", "cancel")  # as press("Cancel") in Vehicles leaves it
+    d.press("No")
+    assert w.input == [("click", 800 + 116 + 37, 400 + 92 + 13, False)]
+
+
+def test_no_after_cancel_then_confirm_end_to_end():
+    w, _ = invoice()
+    veh, year, model, cancel = vehicles(w)
+    d = drv(w, live=True)
+    d.press("Cancel")
+    box = w.open("Confirm", "TMessageForm", (800, 400, 1026, 536))
+    w.add(box, "TButton", (116, 92, 75, 26), "&No")
+    w.add(box, "TButton", (35, 92, 75, 26), "&Yes")
+    d.press("No")
+    assert w.input[-1] == ("click", 800 + 116 + 37, 400 + 92 + 13, False)
+
+
+def test_confirm_no_refused_in_other_boxes():
+    for buttons, cls in ((("&Yes", "&No", "Cancel"), "TMessageForm"), (("&Yes", "&No"), "TForm")):
+        w, _ = invoice()
+        box = w.open("Confirm", cls, (800, 400, 1026, 536))
+        for i, c in enumerate(buttons):
+            w.add(box, "TButton", (35 + 80 * i, 92, 75, 26), c)
+        d = drv(w, live=True)
+        d._last_press = ("Vehicles", "cancel")
+        raises(Refused, d.press, "No")
+        assert w.input == []
+    w, _ = invoice()  # any other action between Cancel and No clears it
+    box = w.open("Confirm", "TMessageForm", (800, 400, 1026, 536))
+    w.add(box, "TButton", (116, 92, 75, 26), "&No")
+    w.add(box, "TButton", (35, 92, 75, 26), "&Yes")
+    d = drv(w)
+    d._last_press = ("Vehicles", "cancel")
+    raises(Exception, d.click, "plate")  # refused under a dialog, but it still counts as the last action
+    d.stopped = ""
+    assert "right after Cancel" in raises(Refused, d.press, "No")
+
+
 def test_window_must_be_maximized_at_1936_by_1056():
     assert invomax.window_ok(INV, True) is None
     assert "isn't maximized" in invomax.window_ok(INV, False)
@@ -542,7 +590,7 @@ def test_press_by_caption_never_list_and_allow_list():
     d = drv(w, live=True)
     d.press("Cancel")
     assert w.input == [("click", 724 + 79 + 34, 278 + 461 + 13, False)]
-    for bad in ("Custom Vehicle", "Done", "&Print", "Select"):  # Select isn't in any recipe
+    for bad in ("Custom Vehicle", "Done", "&Print", "Select", "No"):  # Select isn't in any recipe; No only in Confirm
         raises(Refused, drv(w, live=True).press, bad)
     assert len(w.input) == 1
     w, _ = invoice()
