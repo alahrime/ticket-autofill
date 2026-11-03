@@ -400,7 +400,7 @@ def test_guard_rechecked_between_chunks():
     d = drv(w, live=True)
     w.on_type = lambda keys: w.open("", "Tmsgs", (800, 400, 1100, 560))  # a Yes/No box pops up mid-typing
     assert "Refused" in raises(Refused, d.set_text, "odometer.in", "123456789", typed=True)
-    assert w.input == [("type", "{END}")] and d.stopped  # one key, then the pop-up stops it
+    assert w.input == [("type", "1")] and d.stopped  # one key, then the pop-up stops it
 
 
 def test_refusals_before_any_input():
@@ -530,7 +530,7 @@ def test_emergency_stop_esc_and_corner():
     w.on_type = lambda keys: setattr(w, "esc", True)  # Esc pressed during typing
     w.focus_h = hs["TLMDEdit#5"]
     raises(Refused, d.set_text, "odometer.in", "98431", typed=True)
-    assert w.input == [("type", "{END}")]
+    assert w.input == [("type", "9")]
 
 
 def test_recent_user_input_refuses():
@@ -546,18 +546,23 @@ def test_own_input_isnt_taken_for_the_users():
     w.on_type = lambda keys: setattr(w, "idle", 0)  # our own keystrokes reset the idle time
     w.focus_h = hs["TLMDEdit#5"]
     d.set_text("odometer.in", "98431", typed=True)
-    assert w.input == [("type", k) for k in invomax.SELECT_KEYS] + [("type", c) for c in "98431"]  # the old reading is selected, then typed over
-    assert not any(k in invomax.NEVER_KEYS for k in invomax.SELECT_KEYS)
+    assert w.input == [("type", c) for c in "98431"]
 
 
-def test_backspace_and_delete_are_never_sent():
-    # trial 2026-11-03: Backspace in a header box cleared the whole InvoMax invoice
-    for keys in ("{BACKSPACE}", "{BKSP}", "{bs}", "{DEL}", "{DELETE}"):
+def test_only_characters_enter_and_tab_are_sent():
+    # trials 2026-11-03: End, Shift+Home and Backspace in Odometer In cleared the whole InvoMax invoice
+    for keys in ("{BACKSPACE}", "{BKSP}", "{bs}", "{DEL}", "{DELETE}", "{END}", "{HOME}", "+{HOME}", "{ESC}",
+                 "{F2}", "^a", "^c", "^v", "%f", "{LEFT}", "+", "^", "AB", "{ENTER}{ENTER}"):
         w, hs = invoice()
         w.focus_h = hs["TLMDEdit#5"]
         d = drv(w, live=True)
-        assert "never sent" in raises(Refused, d._send, keys)
+        assert "never sent" in raises(Refused, d._send, keys), keys
         assert w.input == []
+    w, hs = invoice()
+    d = drv(w, live=True)
+    for keys in ("7", "X", "-", "{+}", "{(}", "{ENTER}", "{TAB}"):
+        d._send(keys)
+    assert [k for _, k in w.input] == ["7", "X", "-", "{+}", "{(}", "{ENTER}", "{TAB}"]
     assert "{BACKSPACE}" not in invomax.KEYS and "{DEL}" not in invomax.KEYS
 
 

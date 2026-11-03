@@ -49,14 +49,10 @@ MENU_OK = {"change number"}
 RECT_SLACK = 4                             # px a class+index control may sit away from its mapped rect
 COPYBACK_CLASSES = ("TLMDEdit",)           # answer neither WM_GETTEXT nor UI Automation
 CHUNK = 1                                  # characters typed between two safety checks
-# Never sent: in an InvoMax header box Backspace clears the whole invoice like the Clear button
-# (trial 2026-11-03, the saved customer was untouched). Delete is banned with it until proven safe.
-NEVER_KEYS = ("{BACKSPACE}", "{BKSP}", "{BS}", "{DELETE}", "{DEL}")
-# Before typing, select what's in the box so the typed text replaces it: InvoMax pre-fills some boxes
-# (Odometer In gets the last visit's reading) and typing appended to it. Owner (2026-11-03): replace it.
-# Focus stayed in the box after these two keys live; Backspace is what cleared the invoice.
-SELECT_KEYS = ("{END}", "+{HOME}")
-SELECT_IN = {"odometer.in"}  # only where it's needed and the keys were seen live (Plate is typed on an empty invoice)
+# Only these keys are ever sent: one plain character (escaped for send_keys), Enter, Tab, and the copy-back
+# Ctrl+A Ctrl+C. Trials 2026-11-03: End, Shift+Home and Backspace in Odometer In each run cleared the
+# whole invoice (twice; focus jumped to the parts grid a moment later, after the per-key guard had passed).
+SENDABLE = {"{ENTER}", "{TAB}", "^a^c"}
 RECENT_INPUT_MS = 500                      # someone used the mouse/keyboard this recently: refuse
 FOCUS_WAIT = 1.0                           # seconds a click has to put the focus in its box
 # Top-level windows of the InvoMax process that are never "the dialog on top".
@@ -823,8 +819,9 @@ class Driver:
             self._own_input = self.now()
 
     def _send(self, keys):
-        if any(k in keys.upper() for k in NEVER_KEYS):
-            raise Refused(f"Refused: {keys!r} is never sent (Backspace clears the InvoMax invoice).")
+        if not (keys in SENDABLE or len(keys) == 1 and keys not in _SPECIAL or esc(keys[1:-1]) == keys
+                and len(keys) == 3 and keys[1] in _SPECIAL):
+            raise Refused(f"Refused: {keys!r} is never sent (End, Home and Backspace cleared the InvoMax invoice).")
         self.w.type(keys)
 
     def _type(self, desc, win, ctl, value):
@@ -880,10 +877,6 @@ class Driver:
         # in a dry run the click didn't happen, so the focus can't be on ctl yet
         want = None if (self.dry_run and clicked) else ctl
         if typed or loc.needs_copyback or loc.cls not in ("TEdit", "Edit", "TMaskEdit"):
-            if ctl in SELECT_IN:
-                self._do(f"select the text in {ctl} (End, Shift+Home)",
-                         lambda: self._guard_typing(win, want, f"selecting in {ctl}"),
-                         *[functools.partial(self._send, k) for k in SELECT_KEYS])
             self._type(f"type {value!r} into {ctl}", win, want, value)
         else:
             h, _ = self._hwnd(ctl, win)
