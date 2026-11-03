@@ -227,9 +227,9 @@ RECIPES = {
     "vehicles_cancel": Recipe(  # back out of Vehicles without choosing (trial stage 3.2)
         require=(dialog("Vehicles"),),
         steps=(press("Cancel", expect=gone("Vehicles"), say="Close the Vehicles window"),)),
-    "vehicle_open": Recipe(  # spec 5.5
+    "vehicle_open": Recipe(  # spec 5.5; a single click only puts the cursor in Year Make (trial 2026-11-03)
         require=(no_dialog(), filled("name.first")),
-        steps=(click("year_make", expect=dialog("Vehicles"), say="Open the Vehicles window"),)),
+        steps=(double_click("year_make", expect=dialog("Vehicles"), say="Open the Vehicles window"),)),
     "vehicle_choose": Recipe(  # spec 5.5, dropdown path
         require=(dialog("Vehicles"),),
         steps=(

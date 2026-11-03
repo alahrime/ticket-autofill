@@ -281,7 +281,7 @@ From a screenshot (2026-10-27): clicking **Year Make** opens a **"Vehicles"** mo
 VIN path first when the page's VIN passed its check digit (decoder confirmed working on the shop PC, 2026-10-27); dropdown path otherwise.
 
 Dropdown path:
-1. `click(year_make)` → expect `wait_dialog("Vehicles")`.
+1. `double_click(year_make)` → expect `wait_dialog("Vehicles")`. A single click only puts the cursor in the box (trial and watch log, 2026-11-03).
 2. `pick(vehicles.year, "{year}")`.
 3. `pick(vehicles.make, "{make}")` → the page's make is matched against `combo_items` ignoring case (`chevy` → `Chevrolet` via a small alias table in `draft.py`).
 4. `pick(vehicles.model, "{model_item}")` → `model_item` is the one Model entry that contains the page's model word(s). Several (trims) → the panel asks a choose question with the items read from the dropdown, then reruns from step 4.

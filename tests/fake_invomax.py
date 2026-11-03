@@ -76,7 +76,7 @@ class FakeInvoMax:
             if double or self.highlighted:
                 self.later(lambda: self.windows.append("Customers"))
             self.highlighted = True
-        elif ctl == "year_make" and not self.dialog():
+        elif ctl == "year_make" and double and not self.dialog():  # one click only focuses it
             self.later(lambda: self.windows.append("Vehicles"))
         elif ctl == "phone" and double and self.fields.get("phone"):
             self.menu = ["Change Number", "Dial Number"]

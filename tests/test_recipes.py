@@ -57,6 +57,16 @@ def test_new_customer_then_vehicle():
     assert f.dialog() is None and f.focus == "plate" and f.fields["year_make"] == "2021 Chevrolet"
 
 
+def test_vehicles_opens_on_a_double_click_only():
+    # trial 2026-11-03: one click only puts the cursor in Year Make; the owner double-clicks it
+    f = FakeInvoMax()
+    f.fields["name.first"] = "JANE"
+    e = fails("x", {}, f, recipes={"x": Recipe(steps=(click("year_make", expect=dialog("Vehicles")),))})
+    assert e.step_no == 1 and f.dialog() is None and f.focus == "year_make"
+    go("vehicle_open", {}, f)
+    assert f.dialog() == "Vehicles" and f.actions[-1] == ("double_click", "year_make")
+
+
 def test_new_customer_without_phone_skips_phone_steps():
     f = FakeInvoMax(customers={})
     f.windows = ["Customers"]
