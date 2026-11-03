@@ -90,6 +90,29 @@ def test_odometer_stops_on_mechanic_box():
     assert f.actions[-1] == ("key", "{ENTER}")  # nothing typed into the mechanic box
 
 
+def test_odometer_replaces_the_prefilled_reading():
+    f = FakeInvoMax()
+    go("customer_by_plate", {"plate": "XKS-4827"}, f)
+    f.fields["odometer.in"] = "41200"  # InvoMax fills in the last visit's reading
+    go("odometer", {"odometer": "45420"}, f)
+    assert f.fields["odometer.in"] == "45420" and f.fields["odometer.out"] == "45420"
+    assert ("double_click", "odometer.in") in f.actions and ("key", "{BACKSPACE}") not in f.actions
+
+
+def test_odometer_catches_a_late_clear():
+    f = FakeInvoMax()
+    go("customer_by_plate", {"plate": "XKS-4827"}, f)
+    real = f.click
+
+    def click(ctl, double=False):  # the invoice clears a moment after the check first passes
+        real(ctl, double)
+        f.lag = 0.5
+        f.later(lambda: f.fields.update({"name.first": ""}))
+    f.click = click
+    e = fails("odometer", {"odometer": "45420"}, f)
+    assert e.step_no == 1 and not any(a[:2] == ("set", "odometer.in") for a in f.actions)
+
+
 def test_never_list_refused_before_anything_is_touched():
     for bad in ("Done", "&Clear", "Print", "Charge", "Delete", "Custom Vehicle", "Void This Transaction"):
         f = FakeInvoMax()

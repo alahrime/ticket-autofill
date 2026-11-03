@@ -134,14 +134,16 @@ class Step:
     when: str = ""       # skip the step when this value is empty
     only_if: Check | None = None  # wait up to `grace` s for this; skip the step if it doesn't come
     grace: float = 0.0
+    settle: float = 0.0  # after the check passes, wait this long and check again (InvoMax can react late)
 
 
 def click(ctl, expect=None, say="", tries=1, timeout=5.0, when=""):
     return Step("click", ctl, expect=expect, say=say or f"Click {ctl}", tries=tries, timeout=timeout, when=when)
 
 
-def double_click(ctl, expect=None, say="", timeout=5.0, when=""):
-    return Step("double_click", ctl, expect=expect, say=say or f"Double-click {ctl}", timeout=timeout, when=when)
+def double_click(ctl, expect=None, say="", timeout=5.0, when="", settle=0.0):
+    return Step("double_click", ctl, expect=expect, say=say or f"Double-click {ctl}", timeout=timeout, when=when,
+                settle=settle)
 
 
 def wait_dialog(title, timeout=10.0, say=""):
@@ -152,9 +154,9 @@ def wait_gone(title, timeout=10.0, say=""):
     return Step("wait", expect=gone(title), say=say or f"Wait for {title!r} to close", timeout=timeout)
 
 
-def set_(ctl, value, typed=False, enter=False, expect=None, say="", timeout=5.0, when=""):
+def set_(ctl, value, typed=False, enter=False, expect=None, say="", timeout=5.0, when="", settle=0.0):
     return Step("set", ctl, value, expect or text(ctl, value), say or f"Put {value} in {ctl}",
-                typed=typed, enter=enter, timeout=timeout, when=when)
+                typed=typed, enter=enter, timeout=timeout, when=when, settle=settle)
 
 
 def if_(check, step, grace=2.0):
@@ -162,8 +164,8 @@ def if_(check, step, grace=2.0):
     return dataclasses.replace(step, only_if=check, grace=grace)
 
 
-def key(keys, expect=None, say="", timeout=5.0):
-    return Step("key", keys, expect=expect, say=say or f"Press {keys}", timeout=timeout)
+def key(keys, expect=None, say="", timeout=5.0, settle=0.0):
+    return Step("key", keys, expect=expect, say=say or f"Press {keys}", timeout=timeout, settle=settle)
 
 
 def pick(ctl, value, expect=None, say="", timeout=5.0, when=""):
@@ -263,10 +265,16 @@ RECIPES = {
     "odometer": Recipe(  # spec 5.6; stops on the mechanic box, which staff fill by hand
         require=(no_dialog(), filled("name.first")),
         steps=(
-            click("odometer.in", expect=focus("odometer.in"), say="Click the odometer box"),
-            set_("odometer.in", "{odometer}", typed=True, enter=True, expect=focus("odometer.out"),
+            # as staff do it (watch log 2026-11-03): a double-click selects the old reading; the typed number
+            # replaces it (staff press Backspace first; the tool doesn't: keys other than characters and Enter
+            # cleared the invoice in trials). InvoMax reacts late, so each check is read again after `settle`.
+            double_click("odometer.in", expect=all_of(focus("odometer.in"), filled("name.first")), settle=1.5,
+                         say="Double-click the odometer box"),
+            set_("odometer.in", "{odometer}", typed=True, enter=True,
+                 expect=all_of(focus("odometer.out"), filled("name.first")), settle=1.5,
                  say="Type {odometer} and press Enter"),
-            key("{ENTER}", expect=focus("mechanic"), say="Move on to the mechanic box"),
+            key("{ENTER}", expect=all_of(focus("mechanic"), filled("name.first")), settle=1.5,
+                say="Move on to the mechanic box"),
         )),
 }
 
@@ -369,6 +377,9 @@ def run(name, values, d, recipes=None, now=time.monotonic, sleep=time.sleep, on_
             retry = (RETRY, lambda: _act(step, d, value)) if step.kind == "click" and step.tries > 1 else None
             if check:
                 ok, got = _wait(check, d, step.timeout, now, sleep, retry)
+                if ok and step.settle:
+                    sleep(step.settle)
+                    ok, got = check.test(d)
                 if not ok:
                     raise StepFailed(name, n, step.say, str(check), got, done)
         except StepFailed:

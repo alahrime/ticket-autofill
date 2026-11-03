@@ -72,6 +72,7 @@ class FakeInvoMax:
             self.radios[ctl] = True
             return
         self.focus = ctl
+        self.selected = double and ctl == "odometer.in"  # a double-click selects the reading; a click doesn't
         if ctl == "name.first" and not self.dialog():
             if double or self.highlighted:
                 self.later(lambda: self.windows.append("Customers"))
@@ -86,6 +87,9 @@ class FakeInvoMax:
         if ctl == "custinfo.phone":  # masked box: "(703)___-____" takes digits
             d = "".join(c for c in value if c.isdigit())
             value = f"({d[:3]}){d[3:6]}-{d[6:10]}"
+        if ctl == "odometer.in" and typed and not getattr(self, "selected", False):
+            value = self.fields.get(ctl, "") + value  # typing at the caret appends (trial 2026-11-03)
+        self.selected = False
         self.fields[ctl] = value
 
     def key(self, keys):
