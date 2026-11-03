@@ -1,10 +1,12 @@
 # Handoff — ticket-autofill
 
-**Updated:** 2026-10-28. **Branch:** `main` at `c673314` (push pending, see Access). This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
+**Updated:** 2026-11-03. **Branch:** `main` (last pushed `700b2ee`; the commits after it are local, push pending, see Access). This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
 
 Read first:
 - Design: `specs/2026-10-26-invomax-overlay-design.md`. This covers the side panel, the draft model, the step runner and every InvoMax recipe learned so far. It supersedes the overlay part of `specs/2026-10-14-invomax-autofill-design.md`.
 - Refactor plan: `plans/2026-10-26-refactor-before-panel.md` (R1–R5 done).
+- Shop tickets plans: `plans/2026-10-29-shop-tickets.md` (T1–T7) and `plans/2026-10-29-shop-accounts-deploy.md` (A1–A4, then "Follow-up": B1 deposits, P1 Shop tickets window).
+- Working style the owner asked for: plan, then per task an implementer subagent plus **two senior reviewer subagents** (spec/correctness and security/robustness), fix until both approve, then commit. Push only when the owner says so.
 
 ## State
 | Area | Status |
@@ -12,15 +14,15 @@ Read first:
 | Photo → text → jobs (`ocr.py`, `read.py`) | Done (Qwen2.5-VL 7B on local Ollama; `read.read_photo`). Never checked against a real notebook page. |
 | Pricing (`prices.py`) | Done; placeholder `parts.csv`. |
 | Draft model (`draft.py`) | Done: `Value`, `Line` (part / labor / remark, qty, cost, covers, stable id), `Draft`, `from_job`, `needs`. Not done: `questions()`, `answer()`, `expected_totals()` (spec section 3). |
-| Step runner (`recipes.py`) | Done and tested **against the fake only** (`tests/fake_invomax.py`). The recipes are `customer_by_plate`, `customer_search`, `customer_new`, `customers_exit`, `vehicle_open`, `vehicle_choose`, `phone_set` and `odometer`. |
-| Real driver (`invomax.py`) | Built 2026-11-02 (`invomax.Driver`): dry run by default, copy-back off by default, layered refusals, Esc/corner stop, `python invomax.py check` read-only. Not yet run on the real InvoMax; `customers.exit`, `vehicles.engine`, `phone.text` unmapped and `phone` unconfirmed. `fill()` (the window's Fill button) still says "isn't set up yet". |
+| Step runner (`recipes.py`) | Done; tested against the fake, and `customer_search` / `customer_by_plate` have now run live (see Trial results). Recipes: `customer_by_plate`, `customer_search`, `customer_new`, `customers_exit`, `vehicle_open`, `vehicles_cancel`, `vehicle_choose`, `phone_set`, `odometer`. Driver errors become failed checks / `StepFailed` with the steps done; refusals stop at once. |
+| Real driver (`invomax.py`) | Built and reviewed 2026-11-02 (`invomax.Driver`, `8617496`): dry run by default, copy-back off by default; refuses unless the invoice is maximized 1936 × 1056; exact-foreground / top-dialog / no-menu / focused-box guards re-run right before every input; SendInput clicks checked against the control under the point; one key per safety check; never-click captions by word plus allow lists per window; stop latch; Esc or mouse in the top-left corner stops it. `python invomax.py check` only reads. Ran live 2026-11-03. Unmapped: `customers.exit`, `vehicles.engine`, `phone.text`; `phone` and `date` are read-only (place not confirmed / never typed). `fill()` (the Fill InvoMax button) still says "isn't set up yet". |
 | Parts / labor / remark / note recipes | Steps known from the probe (spec 5.7); not written. They need pictures of the untitled choice boxes. |
 | Side panel (`panel.py`), draft store, Wi-Fi page | Not started. |
-| Probe (`probe.py`, `probe.bat`) | Done. Read-only watch with Start/Pause; it logs to `probe/` and saves pictures of unreadable pop-ups to `probe/shots/` (git-ignored, customer data). Trial mode (`trial.bat`) is built but hasn't been run on InvoMax yet (see Next 3). |
-| Shop tickets (`tickets.py`, `accounts.py`, `shop.py`, `pinweb.py`, `web/admin.html`, `web/tech.html`, `web/checkin.html`, `shop.bat`) | Done 2026-10-29 (plans `plans/2026-10-29-shop-tickets.md`, `plans/2026-10-29-shop-accounts-deploy.md`): customer check-in kiosk → mechanic accounts (name + PIN) → admin review (username + password) → approved → `tickets.to_draft`, live at https://shop.japaneseautoservice1.com through the `inspection` tunnel. Year / make / model hints from `vehicles.json` (NHTSA). Not done: moving `phone.py` onto `pinweb.PinHandler`/accounts (ask the owner: logs the phone out once), feeding approved drafts to the InvoMax fill, checking InvoMax accepts a part line with a blank code, starting `shop.bat`/`phone.bat` at boot. |
+| Probe (`probe.py`, `probe.bat`, `trial.bat`) | Done. Read-only watch with Start/Pause; logs to `probe/` and saves pictures of unreadable pop-ups to `probe/shots/` (git-ignored, customer data). Trial mode (`trial.bat`) runs one recipe at a time and has run live (see Trial results). Under `pythonw` the first Run once did nothing with no log; launched as `python probe.py trial` with stderr to a file it worked, cause not found. |
+| Shop tickets (`tickets.py`, `accounts.py`, `shop.py`, `pinweb.py`, `web/admin.html`, `web/tech.html`, `web/checkin.html`, `shop.bat`) | Done 2026-10-29 (plans `plans/2026-10-29-shop-tickets.md`, `plans/2026-10-29-shop-accounts-deploy.md`): customer check-in kiosk → mechanic accounts (name + PIN) → admin review (username + password) → approved → `tickets.to_draft`, live at https://shop.japaneseautoservice1.com through the `inspection` tunnel. Year / make / model hints from `vehicles.json` (NHTSA). Since then (2026-11-02): **deposits** (admin only, any status until filled, sent to the draft as notes; mechanics never see them) and **totals before tax** (owner: InvoMax adds the 6% tax and supplies, so our totals are Parts, Labor, Total before tax, Deposits paid); `Store.save` is atomic across processes (`BEGIN IMMEDIATE`). On the shop PC, `run.bat` → **Shop tickets** lists approved tickets with an InvoMax entry sheet and Mark filled, and **Load into Ticket Autofill** (or double-click) fills the main window's fields, lines and notes in one click. The owner's admin account is made through `/setup` (code in `setup_code.txt`, valid 24 h from the server start). Not done: moving `phone.py` onto accounts (ask the owner: logs the phone out once), the Fill InvoMax button using the driver, checking InvoMax accepts a part line with a blank code, starting `shop.bat`/`phone.bat` at boot. |
 | Inspection report (`inspection.py`, `report.py`, `phone.py`) | Added by another session in `6f73778`; separate from InvoMax filling. It adds the `python-docx` and `winocr` dependencies and a Cloudflare tunnel for the phone page. |
 
-Tests: `python tests/test_<name>.py` for draft, invomax, ocr, phone, prices, probe, read, recipes, report, shop, tickets, vehicles and accounts. All 13 print `ok` (checked 2026-10-29).
+Tests: `python tests/test_<name>.py` for accounts, draft, invomax, ocr, phone, prices, probe, read, recipes, report, shop, shopwin, tickets and vehicles. All 14 print `ok` (checked 2026-11-03).
 
 ## What the probe taught us (details in spec section 4 and 5.x)
 - InvoMax is a Delphi app. The invoice window has class `TINVOICESCREEN`, maximized at 1936 × 1056; its title blanks for a moment on redraws.
@@ -33,6 +35,15 @@ Tests: `python tests/test_<name>.py` for draft, invomax, ocr, phone, prices, pro
 - `python invomax.py check`: invoice 1936 × 1056 maximized, no dialog, name boxes read empty; the menu bar (182 items) has no keyboard shortcuts. The focused box on an empty invoice is the date box (`TLMDMaskEdit#0`, now mapped read only).
 - `customer_search` live: Customers opened in 0.2 s, License ticked, the plate typed; step 3 can't be confirmed without copy-back (stopped, as designed).
 - `customer_by_plate` live with a plate not in InvoMax: Plate focused in 0.02 s, typed, Enter → Customers with near matches, nothing loaded; trial mode now says so. Still to try: a plate that is in InvoMax, then `odometer` and the vehicle stages on that customer.
+- Owner's view of the goal: one click from a Shop ticket to a filled InvoMax invoice, no copy and paste. Today the ticket loads into Ticket Autofill in one click; the InvoMax half is these trials, then the Fill button.
+
+## Resume here (next session)
+1. With the owner at the shop PC: InvoMax on an empty invoice, **maximized**. `python invomax.py check` (read only) to confirm.
+2. `trial.bat` → `customer_by_plate` with a plate the owner says **is** in InvoMax: dry run, then live with the owner's OK. Expect First Name to fill. Leave the customer loaded.
+3. `odometer` on that customer (dry, then live). Then `vehicle_open` + `vehicles_cancel`.
+4. Ask the owner about **copy-back** (needed to confirm typed text in Plate, the Customers search box and the other `TLMDEdit` boxes; uses the clipboard briefly and restores it). The menu bar has no Ctrl+A/C shortcuts, which makes it less risky but not proven.
+5. Map `customers.exit`: run `probe.bat` while the owner presses Exit in Customers once; take the click position "in Customers" from the watch log.
+6. Then wire **Fill InvoMax** in `app.py` to run the header recipes (plate lookup or search → odometer → vehicle) through the driver, still one confirmation per fill at first. Parts/labor lines need pictures of the Labor choice boxes first (Next 5).
 
 ## Next: test the runner on the real InvoMax
 Do these in order and stop at the first surprise. Every stage runs on **an empty invoice** with the owner watching. Anything the tool leaves on the invoice is cleared **by hand**; the tool never presses Clear.
@@ -67,6 +78,7 @@ Do these in order and stop at the first surprise. Every stage runs on **an empty
 - Plate and VIN are single-clicked and **never double-clicked**. The mechanic is typed by hand.
 - **Never** click: Done, Charge, Print, Clear, Dial Number, Continue, Fast Quote, Change, Delete, Custom Vehicle, Void, Erase.
 - Watch mode is approved; it never saves, edits or deletes. Trial mode needs a go-ahead per stage.
+- (2026-11-02/03) InvoMax does tax and supplies; our totals are before tax. Deposits are staff-only. Mechanics sign in with name + 6–8 digit PIN; the admin with username + password; the customer iPad is a kiosk. Signature stays on paper from InvoMax's printout.
 - The side panel snaps to the four screen corners, bottom-right first.
 - The "Parts Cost" window sets a part's **price**. "ACTUAL COST" is the shop's cost.
 
