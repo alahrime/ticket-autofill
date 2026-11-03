@@ -123,6 +123,8 @@ CONTROLS = {
     "odometer.in": _inv("TLMDEdit", 5, (1468, 283, 73, 26)),
     "odometer.out": _inv("TLMDEdit", 4, (1553, 283, 69, 26)),
     "mechanic": _inv("TLMDEdit", 2, (1659, 283, 164, 26)),
+    # invoice date (owner pointed it out 2026-11-03; read only: never clicked or typed into)
+    "date": _inv("TLMDMaskEdit", 0, (1506, 130, 117, 27), confirmed=False),
     # first Phones box: placed by layout in the map (left column, Phones row); no probe click confirms it,
     # so it can be read but not clicked or typed into
     "phone": _inv("TLMDEdit", 10, (212, 286, 197, 26), confirmed=False),
