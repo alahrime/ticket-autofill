@@ -52,6 +52,11 @@ CHUNK = 1                                  # characters typed between two safety
 # Never sent: in an InvoMax header box Backspace clears the whole invoice like the Clear button
 # (trial 2026-11-03, the saved customer was untouched). Delete is banned with it until proven safe.
 NEVER_KEYS = ("{BACKSPACE}", "{BKSP}", "{BS}", "{DELETE}", "{DEL}")
+# Before typing, select what's in the box so the typed text replaces it: InvoMax pre-fills some boxes
+# (Odometer In gets the last visit's reading) and typing appended to it. Owner (2026-11-03): replace it.
+# Focus stayed in the box after these two keys live; Backspace is what cleared the invoice.
+SELECT_KEYS = ("{END}", "+{HOME}")
+SELECT_IN = {"odometer.in"}  # only where it's needed and the keys were seen live (Plate is typed on an empty invoice)
 RECENT_INPUT_MS = 500                      # someone used the mouse/keyboard this recently: refuse
 FOCUS_WAIT = 1.0                           # seconds a click has to put the focus in its box
 # Top-level windows of the InvoMax process that are never "the dialog on top".
@@ -875,6 +880,10 @@ class Driver:
         # in a dry run the click didn't happen, so the focus can't be on ctl yet
         want = None if (self.dry_run and clicked) else ctl
         if typed or loc.needs_copyback or loc.cls not in ("TEdit", "Edit", "TMaskEdit"):
+            if ctl in SELECT_IN:
+                self._do(f"select the text in {ctl} (End, Shift+Home)",
+                         lambda: self._guard_typing(win, want, f"selecting in {ctl}"),
+                         *[functools.partial(self._send, k) for k in SELECT_KEYS])
             self._type(f"type {value!r} into {ctl}", win, want, value)
         else:
             h, _ = self._hwnd(ctl, win)
