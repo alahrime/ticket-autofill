@@ -13,6 +13,7 @@ The runner talks to a driver (invomax.Driver on the shop PC, FakeInvoMax in test
 """
 from __future__ import annotations
 import time
+import dataclasses
 from dataclasses import dataclass, field
 
 # Captions the runner refuses to press or choose, compared without "&", case and spaces.
@@ -131,6 +132,8 @@ class Step:
     tries: int = 1       # click: click again if the check hasn't passed after RETRY seconds
     timeout: float = 5.0
     when: str = ""       # skip the step when this value is empty
+    only_if: Check | None = None  # wait up to `grace` s for this; skip the step if it doesn't come
+    grace: float = 0.0
 
 
 def click(ctl, expect=None, say="", tries=1, timeout=5.0, when=""):
@@ -152,6 +155,11 @@ def wait_gone(title, timeout=10.0, say=""):
 def set_(ctl, value, typed=False, enter=False, expect=None, say="", timeout=5.0, when=""):
     return Step("set", ctl, value, expect or text(ctl, value), say or f"Put {value} in {ctl}",
                 typed=typed, enter=enter, timeout=timeout, when=when)
+
+
+def if_(check, step, grace=2.0):
+    """The step runs only if check passes within grace seconds (a box InvoMax opens only sometimes)."""
+    return dataclasses.replace(step, only_if=check, grace=grace)
 
 
 def key(keys, expect=None, say="", timeout=5.0):
@@ -227,9 +235,10 @@ RECIPES = {
     "vehicles_cancel": Recipe(  # back out of Vehicles without choosing (trial stage 3.2)
         require=(dialog("Vehicles"),),
         steps=(
-            # Cancel asks "correct all past history?" in a Confirm box (trial 2026-11-03); the owner: always No
-            press("Cancel", expect=dialog("Confirm"), say="Close the Vehicles window"),
-            press("No", expect=no_dialog(), say="Answer No to correcting the past history"),
+            press("Cancel", expect=any_of(no_dialog(), dialog("Confirm")), say="Close the Vehicles window"),
+            # Cancel sometimes asks "correct all past history?" in a Confirm box (not when Vehicles was just
+            # cancelled before; trials 2026-11-03). The owner: always No.
+            if_(dialog("Confirm"), press("No", expect=no_dialog(), say="Answer No to correcting the past history")),
         )),
     "vehicle_open": Recipe(  # spec 5.5; a single click only puts the cursor in Year Make (trial 2026-11-03)
         require=(no_dialog(), filled("name.first")),
@@ -340,8 +349,13 @@ def run(name, values, d, recipes=None, now=time.monotonic, sleep=time.sleep, on_
         if step.when and not values.get(step.when):
             continue
         target = step.target if step.kind == "key" else step.target.format(**values)  # "{ENTER}" is a key, not a value
-        step = Step(step.kind, target, step.value, step.expect, step.say.format(**values),
-                    step.typed, step.enter, step.tries, step.timeout, step.when)
+        step = dataclasses.replace(step, target=target, say=step.say.format(**values))
+        if step.only_if:
+            ok, _ = _wait(step.only_if.fill(values), d, step.grace, now, sleep)
+            if not ok:
+                continue
+            if _about_windows(step.only_if):
+                window = d.dialog()
         if d.dialog() != window:  # something opened or closed that the last step didn't ask for
             raise StepFailed(name, n, step.say, f"window {window!r}", f"window {d.dialog()!r}", done)
         _guard(name, n, step, d, done, allowed)

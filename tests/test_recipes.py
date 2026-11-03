@@ -151,8 +151,44 @@ def test_vehicles_cancel_without_confirm_never_presses_no():
     f = FakeInvoMax()
     f.windows = ["Vehicles"]
     f.press = lambda caption: (f.actions.append(("press", caption)), f.windows.remove("Vehicles"))
+    done = go("vehicles_cancel", {}, f)
+    assert [n for n, _, _ in done] == [1] and f.actions == [("press", "Cancel")] and f.dialog() is None
+    assert f.now() < 3  # waited only the grace time for the box
+
+
+def test_confirm_a_moment_after_vehicles_closes():
+    f = FakeInvoMax()
+    f.windows = ["Vehicles"]
+    real = f.press
+
+    def press(caption):
+        if caption == "Cancel":  # Vehicles closes now, Confirm opens half a second later
+            f.actions.append(("press", caption))
+            f.windows.remove("Vehicles")
+            f.lag = 0.5
+            f.later(lambda: f.windows.append("Confirm"))
+        else:
+            real(caption)
+    f.press = press
+    done = go("vehicles_cancel", {}, f)
+    assert [n for n, _, _ in done] == [1, 2] and f.dialog() is None
+    assert f.actions == [("press", "Cancel"), ("press", "No")]
+
+
+def test_vehicles_cancel_stops_if_another_box_replaces_vehicles():
+    f = FakeInvoMax()
+    f.windows = ["Vehicles"]
+    f.press = lambda caption: (f.actions.append(("press", caption)), f.windows.__setitem__(-1, "Error"))
     e = fails("vehicles_cancel", {}, f)
     assert e.step_no == 1 and f.actions == [("press", "Cancel")]
+
+
+def test_optional_step_runs_when_its_box_comes_late():
+    f = FakeInvoMax(lag=1.0)  # Confirm opens a second after Cancel
+    f.windows = ["Vehicles"]
+    done = go("vehicles_cancel", {}, f)
+    assert [n for n, _, _ in done] == [1, 2] and f.dialog() is None
+    assert f.actions == [("press", "Cancel"), ("press", "No")]
 
 
 class Refusal(RuntimeError):
