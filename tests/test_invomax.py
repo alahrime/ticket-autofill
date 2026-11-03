@@ -594,6 +594,15 @@ def test_double_click_is_two_guarded_clicks():
     assert w.input == [("click", 1496, 288, False)]
 
 
+def test_failed_copy_back_isnt_repeated_within_a_step():
+    w, hs = invoice()
+    w.focus_h = hs["TLMDEdit#5"]  # odometer.in, which puts nothing on the clipboard
+    d = drv(w, live=True, allow_copyback=True)
+    for _ in range(3):
+        raises(NotReadable, d.text, "odometer.in")
+    assert w.input == [("type", "^a^c")]
+
+
 def test_dropdowns_are_never_typed_into():
     w, hs = invoice()
     d = drv(w, live=True)

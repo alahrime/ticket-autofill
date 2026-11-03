@@ -137,8 +137,9 @@ class Step:
     settle: float = 0.0  # after the check passes, wait this long and check again (InvoMax can react late)
 
 
-def click(ctl, expect=None, say="", tries=1, timeout=5.0, when=""):
-    return Step("click", ctl, expect=expect, say=say or f"Click {ctl}", tries=tries, timeout=timeout, when=when)
+def click(ctl, expect=None, say="", tries=1, timeout=5.0, when="", settle=0.0):
+    return Step("click", ctl, expect=expect, say=say or f"Click {ctl}", tries=tries, timeout=timeout, when=when,
+                settle=settle)
 
 
 def double_click(ctl, expect=None, say="", timeout=5.0, when="", settle=0.0):
@@ -266,6 +267,11 @@ RECIPES = {
         require=(no_dialog(), filled("name.first")),
         steps=(double_click("odometer.in", expect=all_of(focus("odometer.in"), filled("name.first")), settle=3.0,
                             say="Double-click the odometer box and wait"),)),
+    "copyback_odometer": Recipe(  # trial only: does copy-back (Ctrl+A, Ctrl+C) read a TLMDEdit safely?
+        require=(no_dialog(), filled("name.first")),
+        steps=(click("odometer.in", expect=all_of(focus("odometer.in"), text("odometer.in", "{odometer}"),
+                                                    filled("name.first")), settle=1.5,
+                     say="Click the odometer box and read it back"),)),
     "odometer": Recipe(  # spec 5.6; stops on the mechanic box
         require=(no_dialog(), filled("name.first")),
         steps=(

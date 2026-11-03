@@ -1007,6 +1007,8 @@ class Driver:
         if not self.allow_copyback:
             raise NotReadable(f"{ctl} can't be read without copy-back (off: needs the owner's OK)")
         if ctl in self._copied:  # at most one copy-back per step: the result stands until the next action
+            if isinstance(self._copied[ctl], NotReadable):  # a failed one too: no Ctrl+A again on every poll
+                raise self._copied[ctl]
             return self._copied[ctl]
         if self.focused() != ctl:
             raise NotReadable(f"{ctl} isn't the box being typed in; copy-back only reads the focused box")
@@ -1039,7 +1041,8 @@ class Driver:
                         break
                 self.sleep(0.025)
             if got is None:
-                raise NotReadable(f"{ctl}: Ctrl+C put no text on the clipboard")
+                self._copied[ctl] = NotReadable(f"{ctl}: Ctrl+C put no text on the clipboard")
+                raise self._copied[ctl]
             self._copied[ctl] = got
             return got
         finally:

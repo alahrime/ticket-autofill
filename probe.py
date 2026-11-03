@@ -367,7 +367,7 @@ def do_watch():
 # --- trial mode (spec 5.8): one recipe for real, every step's check and timing logged
 # HANDOFF "Next" 3 stage order: the vehicle stages need the customer the plate lookup loads.
 TRIAL_RECIPES = ("customer_search", "customers_exit", "customer_by_plate", "odometer_select", "odometer",
-                 "vehicle_open", "vehicles_cancel")
+                 "copyback_odometer", "vehicle_open", "vehicles_cancel")
 CHOICES = {"by": ("license", "last_name", "first_name", "phone", "code", "business_name")}
 DRY_RUN_DEFAULT = True      # and it goes back ON after every live run
 COPYBACK_DEFAULT = False    # copy-back types Ctrl+A, Ctrl+C into InvoMax: owner's OK first
