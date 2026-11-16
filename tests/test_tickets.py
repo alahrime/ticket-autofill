@@ -120,12 +120,54 @@ def test_moves_refused():
     refused(Ticket(status="waiting"), "working", mechanic="  ")
     refused(Ticket(status="waiting"), "review", mechanic="Mike")
     refused(Ticket(status="working"), "review")  # no lines
-    refused(Ticket(status="working", lines=[Line("x", labor=1)]), "approved")
+    refused(Ticket(status="working", lines=[Line("x", labor=1)]), "approved")  # nobody named as the mechanic
+    refused(Ticket(status="waiting", lines=[Line("x", labor=1)], mechanic="  "), "approved")
+    refused(Ticket(status="waiting", mechanic="Mike"), "approved")  # no lines: nothing to bill
+    refused(Ticket(status="review", mechanic="Mike"), "approved")
+    refused(Ticket(status="waiting", mechanic="Mike", lines=[Line("x", labor=1)]), "filled")
     refused(Ticket(status="review", lines=[Line("x", labor=1)]), "working", note=" ")
     refused(Ticket(status="approved"), "waiting")
     refused(Ticket(status="filled"), "approved")
     refused(Ticket(status="review"), "review")
-    assert len(MOVES) == 5
+    assert len(MOVES) == 7
+
+
+def test_desk_sends_straight_to_invomax():  # the desk typed the whole invoice: no Accept / Finish needed
+    for st in ("waiting", "working", "review"):
+        t = Ticket(status=st, mechanic="Mike", back_note="redo", lines=[Line("oil", price=30, labor=20)])
+        move(t, "approved", mechanic="Someone Else")
+        assert (t.status, t.mechanic, t.back_note) == ("approved", "Mike", "")  # who did it is the ticket's, never the move's
+    t = Ticket(status="waiting", first="JANE", last="DOE", phone="(555)010-0000")
+    edit(t, {"mechanic": "Mike", "odometer": "45,120", "vin": "2t1br32614c809083",
+             "lines": [{"desc": "front brake pads", "price": 100, "labor": 80}, {"desc": "flush", "labor": 60}]}, "desk")
+    move(t, "approved")
+    assert totals(t) == {"parts": 100.0, "labor": 140.0, "total": 240.0, "deposits": 0.0}  # before tax: InvoMax adds it
+    d = to_draft(t, {})
+    assert d.header["tech"].value == "Mike" and d.header["vin"].value == "2T1BR32614C809083" and len(d.lines) == 3
+
+
+def test_mechanic_changes_their_invoice():  # still theirs to fix once the desk sent it, until it's filled
+    t = Ticket(status="approved", mechanic="Mike", lines=[Line("pads", 1, 100.0, 80.0, "FBP", 1)])
+    edit(t, {"lines": [{"desc": "pads", "price": 100, "labor": 95, "code": "FBP", "id": 1}], "odometer": "45120",
+             "notes": "rear pads at 3 mm"}, "mechanic")
+    assert (t.lines[0].labor, t.odometer, t.notes, t.status) == (95.0, "45120", "rear pads at 3 mm", "approved")
+    assert "lines" in raises(Invalid, edit, t, {"lines": []}, "mechanic").errors  # never an empty invoice
+    for bad in ({"first": "X"}, {"mechanic": "Al"}, {"deposits": []}, {"plate": "X"}):
+        raises(Refused, edit, t, bad, "mechanic")
+    for st in ("waiting", "review", "filled"):
+        raises(Refused, edit, Ticket(status=st, mechanic="Mike"), {"notes": "x"}, "mechanic")
+    assert t.mech_edit  # the desk is told a sent invoice changed on the phone...
+    edit(t, {"notes": "seen"}, "desk")
+    assert t.mech_edit == ""  # ...until the desk saves it
+    zero = {"lines": [{"desc": "pads", "id": 1}]}  # every charge taken off: not from the phone
+    assert "lines" in raises(Invalid, edit, t, zero, "mechanic").errors and t.lines[0].price == 100
+    assert edit(t, zero, "desk").lines[0].price is None  # the desk may (warranty work)
+    assert edit(t, {"lines": [{"desc": "pads", "id": 1}, {"desc": "note"}]}, "mechanic").mech_edit  # $0 already: lines still theirs
+    assert "mechanic" in raises(Invalid, edit, t, {"mechanic": " "}, "desk").errors  # a sent invoice keeps its mechanic
+    w = Ticket(status="working", mechanic="Mike")
+    assert edit(w, {"notes": "x"}, "mechanic").mech_edit == ""  # only after it was sent
+    assert [x.id for x in normalize({"lines": [{"desc": "a", "id": 10 ** 9}, {"desc": "b", "id": 10 ** 9 + 1},
+                                               {"desc": "c", "id": 1e308}]})[0]["lines"]] == [10 ** 9, 10 ** 9 + 1, 10 ** 9 + 2]
 
 
 def test_edit():
@@ -137,7 +179,7 @@ def test_edit():
     assert t.phone == "(555)010-0000" and t.last == "DOE"
     raises(Refused, edit, t, {"notes": "x"}, "mechanic")
     t.status = "working"
-    raises(Refused, edit, t, {"first": "x"}, "desk")
+    assert edit(t, {"first": "janet", "odometer": "98,000"}, "desk").odometer == "98000"  # the desk's until filled
     for st, ok in (("approved", True), ("filled", False)):  # the desk can fix prices until the ticket is filled
         a = Ticket(status=st, lines=[Line("pads", 1, 100.0, 100.0, "FBP", 1)])
         if ok:
@@ -174,9 +216,10 @@ def test_vin():  # made-up VINs: 2T1BR32614C809083 and 1HGCM82633A004352 pass th
     assert "vin" in normalize({"vin": "ß" * 50})[1]  # 100 characters once upper-cased
     t = Ticket(status="working", mechanic="Sam")
     assert edit(t, {"vin": "2t1br32614c809083"}, "mechanic").vin == "2T1BR32614C809083"  # the mechanic's own job
-    raises(Refused, edit, t, {"vin": "1HGCM82633A004352"}, "desk")  # read-only for the desk while they work
-    for st in ("waiting", "review", "approved"):
+    assert edit(Ticket(status="approved", mechanic="Sam"), {"vin": "2t1br32614c809083"}, "mechanic").vin  # their invoice
+    for st in ("waiting", "working", "review", "approved"):  # the desk's to fix until the ticket is filled
         assert edit(Ticket(status=st), {"vin": "1hgcm82633a004352"}, "desk").vin == "1HGCM82633A004352"
+    for st in ("waiting", "review", "filled"):
         raises(Refused, edit, Ticket(status=st), {"vin": "x"}, "mechanic")
     for who in ("desk", "mechanic"):
         raises(Refused, edit, Ticket(status="filled"), {"vin": "1HGCM82633A004352"}, who)
@@ -241,8 +284,6 @@ def test_deposits_desk_only_until_filled():
         edit(t, dep, "desk")
         assert t.deposits == [Deposit(200, "cash", YESTERDAY, "", 1)], st
     t = Ticket(status="working", lines=[Line("x", labor=1)])
-    raises(Refused, edit, t, {**dep, "notes": "x"}, "desk")  # working: deposits alone, nothing else
-    raises(Refused, edit, t, {"notes": "x"}, "desk")
     assert "deposits" in str(raises(Refused, edit, t, dep, "mechanic"))
     raises(Refused, edit, t, {**dep, "notes": "x"}, "mechanic")
     assert t.deposits == [] and t.notes == ""

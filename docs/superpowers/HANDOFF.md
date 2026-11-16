@@ -8,6 +8,9 @@ Read first:
 - Shop tickets plans: `plans/2026-10-29-shop-tickets.md` (T1–T7) and `plans/2026-10-29-shop-accounts-deploy.md` (A1–A4, then "Follow-up": B1 deposits, P1 Shop tickets window).
 - Working style the owner asked for: plan, then per task an implementer subagent plus **two senior reviewer subagents** (spec/correctness and security/robustness), fix until both approve, then commit. Push only when the owner says so.
 
+## 2026-11-16: the admin enters the whole invoice (branch `admin-full-entry`, not merged, not pushed)
+Owner: the mechanic does the repair, the admin does the paperwork. Plan: `plans/2026-11-16-admin-full-entry.md`. On `/admin`, **New ticket** is the full invoice screen (customer, plate, VIN, year / make / model, odometer, mechanic, parts and labor with prices, `parts.csv` hints) with **Save ticket** and **Send to InvoMax**. New desk-only moves `waiting → approved` and `working → approved` (a mechanic and one line needed); the desk edits any ticket until filled; a mechanic sees and edits their own approved ticket ("My invoices" on `/tech`) until filled; a waiting ticket with a mechanic set shows only to that mechanic. The branch also merges the VIN branch (`claude/funny-cori-a86b07`, `74f03c7`). **Not done here:** typing the invoice into InvoMax. "Send to InvoMax" ends on the shop PC's Ready list; the keystrokes are still "Resume here" steps 1–4 below. Before merging: restart `shop.bat` after the merge (pages are read fresh, `shop.py` / `tickets.py` are not).
+
 ## State
 | Area | Status |
 |---|---|

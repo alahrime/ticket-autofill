@@ -108,26 +108,6 @@ input.pin{-webkit-text-security:disc}
   <div id="board"></div>
  </section>
 
- <section id="viewNew" hidden>
-  <div class="box">
-   <h2>New ticket</h2>
-   <div id="newErr" class="msg err" role="status" aria-live="polite" hidden></div>
-   <form id="newForm" autocomplete="off" novalidate>
-    <div class="grid">
-     <div><label for="n-first">First name</label><input id="n-first" name="first" autocapitalize="characters" autocorrect="off" spellcheck="false"><div class="ferr" data-for="first"></div></div>
-     <div><label for="n-last">Last name</label><input id="n-last" name="last" autocapitalize="characters" autocorrect="off" spellcheck="false"><div class="ferr" data-for="last"></div></div>
-     <div><label for="n-phone">Phone</label><input id="n-phone" name="phone" type="tel" inputmode="tel"><div class="ferr" data-for="phone"></div></div>
-     <div><label for="n-year">Year</label><input id="n-year" name="year" inputmode="numeric" maxlength="4" list="year-list"><div class="ferr" data-for="year"></div></div>
-     <div><label for="n-make">Make</label><input id="n-make" name="make" autocapitalize="characters" autocorrect="off" spellcheck="false" list="make-list"><div class="ferr" data-for="make"></div></div>
-     <div><label for="n-model">Model</label><input id="n-model" name="model" autocapitalize="characters" autocorrect="off" spellcheck="false" list="model-list"><div class="ferr" data-for="model"></div></div>
-     <div><label for="n-plate">Plate (optional)</label><input id="n-plate" name="plate" autocapitalize="characters" autocorrect="off" spellcheck="false"><div class="ferr" data-for="plate"></div></div>
-     <div class="wide"><label for="n-request">What the customer wants done</label><textarea id="n-request" name="request"></textarea><div class="ferr" data-for="request"></div></div>
-    </div>
-    <div class="actions"><button type="submit" id="btnCreate">Save ticket</button><button type="button" class="light" id="btnCancelNew">Cancel</button></div>
-   </form>
-  </div>
- </section>
-
  <section id="viewTicket" hidden></section>
 
  <section id="viewUsers" hidden>
@@ -183,6 +163,7 @@ input.pin{-webkit-text-security:disc}
 <datalist id="year-list"></datalist>
 <datalist id="make-list"></datalist>
 <datalist id="model-list"></datalist>
+<datalist id="part-list"></datalist>
 <script>
 "use strict";
 const POLL_MS = 4000, AGE_MS = 60000, TIMEOUT_MS = 15000;
@@ -190,17 +171,18 @@ const OFFLINE = "Couldn't reach the shop PC — check the connection and try aga
 const BOARD = ["waiting", "working", "review", "approved"];
 const COL_NAMES = {waiting: "Waiting", working: "Working", review: "Review", approved: "Approved"};
 const NAMEISH = {autocapitalize: "characters", autocorrect: "off", spellcheck: "false"};
-const FIELDS = [  // [key, label, extra attributes]; mechanic is handled apart (a list in review)
+const FIELDS = [  // [key, label, extra attributes], in the order the desk types an invoice; mechanic is a list, handled apart
   ["first", "First name", NAMEISH],
   ["last", "Last name", NAMEISH],
   ["phone", "Phone", {type: "tel", inputMode: "tel"}],
+  ["plate", "Plate", NAMEISH],
+  ["vin", "VIN", NAMEISH],
   ["year", "Year", {inputMode: "numeric", maxLength: 4, list: "year-list"}],
   ["make", "Make", {...NAMEISH, list: "make-list"}],
   ["model", "Model", {...NAMEISH, list: "model-list"}],
-  ["plate", "Plate", NAMEISH],
-  ["vin", "VIN", NAMEISH],
   ["odometer", "Odometer", {inputMode: "numeric"}],
 ];
+const SENDABLE = ["new", "waiting", "working", "review"];  // Send to InvoMax is offered from these
 const TEXTS = [["request", "What the customer wants done"], ["notes", "Notes"]];
 const LABELS = Object.fromEntries([...FIELDS, ...TEXTS, ["mechanic", "Mechanic"]].map(([k, l]) => [k, l]));
 
@@ -301,17 +283,16 @@ class Http extends Error {
 }
 
 function formTyped(f) { return [...f.elements].some(e => (e.tagName === "INPUT" || e.tagName === "TEXTAREA") && e.value.trim()); }
-function newFormTyped() { return formTyped($("newForm")); }
 function hasTyping() {
-  return S.dirty || (S.view === "ticket" && depTyped()) || (S.view === "new" && newFormTyped()) ||
+  return S.dirty || (S.view === "ticket" && depTyped()) ||
          (S.view === "users" && (formTyped($("addForm")) || (!$("resetBox").hidden && formTyped($("resetForm")))));
 }
 
 function on401() {  // session gone: the reload shows the sign-in page, unless that would lose typing
   if (!hasTyping()) { location.reload(); return; }
-  if (!S.authLost) flash("You were signed out. Copy what you typed somewhere, then reload this page to sign in again.");
+  if (!S.authLost) flash("You were signed out. Keep this page open: sign in again at /admin in another tab, then come back and Save.");
   S.authLost = true;
-  setNet(false, "Sign-in needed — reload when ready");
+  setNet(false, "Sign-in needed — sign in in another tab");
 }
 
 function timeoutSignal() {
@@ -330,7 +311,10 @@ async function api(method, path, body, headers) {
   let r, data;
   try {
     r = await fetch(path, opt);
-    if (r.status === 304) return {status: 304, data: null, etag: r.headers.get("ETag")};
+    if (r.status === 304) {
+      if (S.authLost) { S.authLost = false; flash(""); }
+      return {status: 304, data: null, etag: r.headers.get("ETag")};
+    }
     const raw = await r.text();
     try { data = JSON.parse(raw); } catch (e) { data = undefined; }
   } catch (e) {  // offline, timed out, dropped
@@ -342,6 +326,7 @@ async function api(method, path, body, headers) {
     throw new Http(r.status, {error: r.ok ? "Unexpected reply from the server" : "Server error (" + r.status + ")"});
   }
   if (!r.ok) throw new Http(r.status, data);
+  if (S.authLost) { S.authLost = false; flash(""); setNet(true, ""); }  // signed in again (another tab): carry on
   return {status: r.status, data, etag: r.headers.get("ETag")};
 }
 
@@ -382,7 +367,7 @@ function refreshModels(root) {  // models of the make typed in this form; of the
 }
 
 function carField(ev) {
-  const root = ev.target.closest && ev.target.closest("#newForm, #viewTicket");
+  const root = ev.target.closest && ev.target.closest("#viewTicket");
   if (root && ["year", "make", "model"].includes(ev.target.name)) refreshModels(root);
 }
 
@@ -391,27 +376,18 @@ function carField(ev) {
 function show(view) {
   S.view = view;
   $("viewBoard").hidden = view !== "board";
-  $("viewNew").hidden = view !== "new";
   $("viewTicket").hidden = view !== "ticket";
   $("viewUsers").hidden = view !== "users";
   $("btnNew").hidden = view !== "board";
   $("btnUsers").hidden = view !== "board";
   $("btnBoard").hidden = view === "board";
-  if (view !== "ticket") $("title").textContent = {new: "New ticket", users: "Mechanics & admins"}[view] || "Desk";
+  if (view !== "ticket") $("title").textContent = view === "users" ? "Mechanics & admins" : "Desk";
   window.scrollTo(0, 0);
 }
 
 function leaveTicket() {
   if (S.view === "ticket" && (S.dirty || depTyped()) && !confirm("Leave without saving your changes?")) return;
   S.cur = null; S.dirty = false; S.newer = null;
-  flash("");
-  show("board");
-}
-
-function leaveNew() {
-  if (newFormTyped() && !confirm("Throw away this new ticket?")) return;
-  $("newForm").reset();
-  clearNewErrors();
   flash("");
   show("board");
 }
@@ -432,6 +408,7 @@ function renderBoard() {
                                onclick: () => openTicket(t.id)},
         el("span", {class: "name", text: fullName(t) || "(no name)"}),
         el("span", {class: "car", text: vehicle(t)}),
+        t.mech_edit ? el("span", {class: "meta", text: "Changed by the mechanic — check it"}) : null,
         meta));
     }
     return col;
@@ -442,7 +419,7 @@ function renderBoard() {
 
 function updateAges() {  // in place: the board isn't rebuilt for the clock
   for (const m of document.querySelectorAll("#board .meta")) {
-    m.textContent = [m.dataset.mechanic, age(m.dataset.created)].filter(Boolean).join(" · ");
+    if ("created" in m.dataset) m.textContent = [m.dataset.mechanic, age(m.dataset.created)].filter(Boolean).join(" · ");
   }
 }
 
@@ -461,7 +438,7 @@ async function poll() {
     }
     if (!S.authLost) setNet(true, "");
     if (!Object.keys(CARS).length) loadVehicles();  // the first try failed (or the list is missing): try again
-    if (S.view === "ticket" && S.cur) await syncOpen(changed);
+    if (S.view === "ticket" && S.cur && S.cur.id) await syncOpen(changed);  // a new ticket isn't on the server yet
   } catch (e) {
     if (e.status !== 401) setNet(false, e.message.replace(/\.$/, "") + " — retrying…");
   } finally {
@@ -476,7 +453,7 @@ function editingNow() {
 
 async function syncOpen(changed) {
   const cur = S.cur;
-  if (cur.status === "filled") return;  // done: nothing more will change
+  if (cur.status === "filled" || !cur.id) return;  // done, or not saved yet: nothing to sync
   if (changed) {
     let t = S.tickets.find(x => x.id === cur.id);
     if (!t) {  // left the board (filled on another device)
@@ -495,11 +472,28 @@ async function syncOpen(changed) {
   }
 }
 
-/* ---------- new ticket ---------- */
+/* ---------- new ticket: the same screen as an open one, not on the server until Save or Send ---------- */
 
-function clearNewErrors() {
-  $("newErr").hidden = true;
-  for (const d of document.querySelectorAll("#newForm .ferr")) d.textContent = "";
+function newToken() {  // sent with the create: the same ticket again if the reply was lost and Save is pressed twice
+  const a = new Uint8Array(16);
+  (window.crypto || window.msCrypto).getRandomValues(a);
+  return [...a].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
+function newTicket() {
+  flash("");
+  S.openSeq++;  // a card tapped just before doesn't open over this
+  show("ticket");
+  const blank = {id: 0, status: "new", version: 0, lines: [], deposits: [], totals: {}, token: newToken()};
+  loadTicket(blank);
+  $("t-first").focus();
+  loadMechanics().then(() => {  // the list may be old, or never came: bring it up to date under what's being typed
+    const sel = $("viewTicket").querySelector("select#t-mechanic");
+    if (S.cur !== blank || !sel) return;
+    const was = sel.value;
+    sel.replaceChildren(el("option", {value: "", text: "Not picked yet"}), ...S.mechanics.map(n => el("option", {value: n, text: n})));
+    sel.value = S.mechanics.includes(was) ? was : "";
+  });
 }
 
 function showErrors(root, err, generalBox) {
@@ -515,29 +509,6 @@ function showErrors(root, err, generalBox) {
   generalBox.hidden = false;
 }
 
-async function createTicket(ev) {
-  ev.preventDefault();
-  if (S.busy) return;
-  clearNewErrors();
-  const f = $("newForm");
-  const body = {};
-  for (const k of ["first", "last", "phone", "year", "make", "model", "plate", "request"]) body[k] = f.elements[k].value;
-  S.busy = true; $("btnCreate").disabled = true;
-  try {
-    const r = await api("POST", "/api/tickets", body);
-    f.reset();
-    show("board");
-    flash("Saved: " + fullName(r.data) + " — " + vehicle(r.data), "ok");
-    S.etag = "";
-    poll();
-  } catch (e) {
-    if (e.status === 400) showErrors(f, e, $("newErr"));
-    else if (e.status !== 401) { $("newErr").textContent = e.message || "Couldn't save"; $("newErr").hidden = false; }
-  } finally {
-    S.busy = false; $("btnCreate").disabled = false;
-  }
-}
-
 /* ---------- ticket screen ---------- */
 
 async function openTicket(id) {
@@ -545,7 +516,7 @@ async function openTicket(id) {
   flash("");
   try {
     const r = await api("GET", "/api/tickets/" + id);
-    if (r.data.status === "review") await loadMechanics();
+    await loadMechanics();
     if (n !== S.openSeq) return;  // another card was tapped meanwhile
     S.dirty = false;
     show("ticket");
@@ -555,19 +526,19 @@ async function openTicket(id) {
   }
 }
 
-function editable(t) { return ["waiting", "review", "approved"].includes(t.status); }  // prices stay open until filled
+function editable(t) { return t.status !== "filled"; }  // the desk owns the invoice until it's in InvoMax
 
 function markDirty() { S.dirty = true; }
 
 function mechanicField(t) {
   const label = el("label", {for: "t-mechanic", text: "Mechanic"});
-  if (t.status !== "review") {
+  if (!editable(t)) {
     return el("div", {}, label, el("input", {id: "t-mechanic", value: t.mechanic || "", readOnly: true}));
   }
   const names = [...S.mechanics];
   if (t.mechanic && !names.includes(t.mechanic)) names.unshift(t.mechanic);  // keep who did it, even if off the list
   const sel = el("select", {id: "t-mechanic", name: "mechanic"},
-    t.mechanic ? null : el("option", {value: "", text: "Pick a mechanic", disabled: true}),
+    t.mechanic ? null : el("option", {value: "", text: "Not picked yet"}),
     names.map(n => el("option", {value: n, text: n})));
   sel.value = t.mechanic || "";
   return el("div", {}, label, sel, el("div", {class: "ferr", "data-for": "mechanic"}));
@@ -585,15 +556,19 @@ function loadTicket(t) {
   parts.push(el("div", {id: "unsaved", class: "msg note", hidden: true}));
 
   parts.push(el("div", {class: "box"},
-    el("h2", {}, el("span", {text: (fullName(t) || "Ticket") + " — " + vehicle(t)}),
-      el("span", {class: "status " + t.status, text: t.status})),
-    el("div", {class: "meta", text: "#" + t.id + (t.created ? " · opened " + age(t.created) + " ago" : "")})));
+    t.id ? el("h2", {}, el("span", {text: (fullName(t) || "Ticket") + " — " + vehicle(t)}),
+      el("span", {class: "status " + t.status, text: t.status})) : el("h2", {text: "New ticket"}),
+    el("div", {class: "meta", text: t.id ? "#" + t.id + (t.created ? " · opened " + age(t.created) + " ago" : "")
+      : "Type the customer, the car, the mechanic and every part and labor charge. InvoMax adds the tax."})));
 
   if (t.back_note) parts.push(el("div", {class: "msg note"},
     el("b", {text: "Sent back: "}), el("span", {class: "ro", text: t.back_note})));
   if (t.status === "approved") parts.push(el("div", {class: "msg ok ready", text: "Ready for InvoMax"}));
+  if (t.mech_edit && t.status !== "filled") parts.push(el("div", {class: "msg note",
+    text: (t.mechanic || "The mechanic") + " changed this invoice on the phone after it was sent (" + age(t.mech_edit) +
+          " ago). Check the lines; Save when they're right. If it's already in InvoMax, fix it there too."}));
   if (t.status === "working") parts.push(el("div", {class: "msg note",
-    text: "With " + (t.mechanic || "the mechanic") + " — read only while they work. This page updates as they add lines."}));
+    text: "With " + (t.mechanic || "the mechanic") + " — they can add lines on their phone too."}));
   if (t.status === "filled") parts.push(el("div", {class: "msg ok", text: "Filled in InvoMax."}));
 
   // customer + vehicle
@@ -640,16 +615,17 @@ function loadTicket(t) {
       el("span", {}, "Deposits paid ", el("b", {id: "tDeps", text: money(tot.deposits)}))),
     el("div", {class: "meta", text: "InvoMax adds tax; take deposits off InvoMax's total."})));
 
-  if (t.status !== "filled" || (t.deposits || []).length) parts.push(depositsBox(t));
+  if (t.id && (t.status !== "filled" || (t.deposits || []).length)) parts.push(depositsBox(t));  // a deposit needs a saved ticket
 
   // actions
   const act = el("div", {class: "actions"});
-  if (ed) act.append(el("button", {type: "button", id: "btnSave", text: "Save", onclick: () => save()}),
+  if (ed) act.append(el("button", {type: "button", id: "btnSave", text: t.id ? "Save" : "Save ticket", onclick: () => save()}),
                      el("span", {id: "saved", role: "status", "aria-live": "polite"}));
-  if (t.status === "review") {
+  if (!t.id) act.append(el("button", {type: "button", class: "light", text: "Cancel", onclick: leaveTicket}));
+  if (SENDABLE.includes(t.status)) {
     act.append(el("span", {class: "spacer"}),
-      el("button", {type: "button", class: "warn", text: "Send back", onclick: sendBack}),
-      el("button", {type: "button", class: "go", text: "Approve", onclick: approve}));
+      t.status === "review" ? el("button", {type: "button", class: "warn", text: "Send back", onclick: sendBack}) : null,
+      el("button", {type: "button", class: "go", text: "Send to InvoMax", onclick: approve}));
   }
   if (t.status === "approved") act.append(el("button", {type: "button", class: "go", text: "Mark filled", onclick: markFilled}));
   if (act.children.length) parts.push(act);
@@ -657,7 +633,7 @@ function loadTicket(t) {
   v.replaceChildren(...parts);
   if (dep) setDepForm(dep);
   v.oninput = ed ? (ev => { if (!ev.target.closest("#tDepBox")) markDirty(); }) : null;  // deposits save on their own
-  $("title").textContent = "Ticket #" + t.id;
+  $("title").textContent = t.id ? "Ticket #" + t.id : "New ticket";
   if (ed) recalc();
 }
 
@@ -681,8 +657,26 @@ function lineRow(ln, ed) {
   };
   const upd = () => { paint(); if (ed) recalc(); };
   const desc = el("input", {class: "d", value: ln.desc || "", readOnly: !ed, autocomplete: "off", "aria-label": "Description",
+    list: ed ? "part-list" : null, ...NAMEISH,
     oninput: () => {  // a different description is no longer that catalog part
-      if (tr.dataset.code && squash(desc.value) !== tr.dataset.codeDesc) { tr.dataset.code = ""; showCode(); }
+      const p = tr.querySelector(".p"), l = tr.querySelector(".l");
+      const h = PARTS.get(squash(desc.value));
+      if (tr.dataset.code && squash(desc.value) !== tr.dataset.codeDesc) {
+        tr.dataset.code = ""; showCode();
+        for (const [box, k] of [[p, "autoP"], [l, "autoL"]]) {  // prices that part brought go with it; typed ones stay
+          if (tr.dataset[k] && box.value === tr.dataset[k]) box.value = "";
+          delete tr.dataset[k];
+        }
+        if (!h) upd();
+      }
+      if (!h) return partHints(desc.value);
+      tr.dataset.code = h.code; tr.dataset.codeDesc = squash(h.description);  // a parts.csv part: its code, and its
+      const put = (box, k, v) => {                                             // prices where the desk typed none
+        if (!v || (box.value.trim() && box.value !== tr.dataset[k])) return;  // 0 stays blank: a labor-only line
+        box.value = tr.dataset[k] = v.toFixed(2);
+      };
+      put(p, "autoP", h.part_price); put(l, "autoL", h.labor_price);
+      showCode(); upd();
     }});
   const cell = (cls, val, label) => el("td", {}, el("input", {class: cls, value: val, readOnly: !ed, inputMode: "decimal",
     autocomplete: "off", oninput: upd, "aria-label": label}));
@@ -697,6 +691,24 @@ function lineRow(ln, ed) {
   showCode();
   paint();
   return tr;
+}
+
+// parts.csv hints under a line's description: typed text -> matching parts (as on the mechanic's phone)
+const PARTS = new Map();  // DESCRIPTION -> {code, description, part_price, labor_price}, from the hints seen so far
+let hintTimer = 0, hintSeq = 0;
+function partHints(text) {
+  clearTimeout(hintTimer);
+  const q = text.trim(), seq = ++hintSeq;
+  if (q.length < 2) return;
+  hintTimer = setTimeout(async () => {
+    let hits;
+    try { hits = (await api("GET", "/api/catalog?q=" + encodeURIComponent(q))).data; } catch (e) { return; }  // a nicety
+    if (seq !== hintSeq || !Array.isArray(hits)) return;
+    hits = hits.filter(h => h && typeof h.description === "string" && Number.isFinite(h.part_price) && Number.isFinite(h.labor_price));
+    for (const h of hits) PARTS.set(squash(h.description), {...h, code: String(h.code || "")});
+    $("part-list").replaceChildren(...hits.map(h => el("option", {value: h.description,
+      label: h.description + " · Part " + money(h.part_price) + " · Labor " + money(h.labor_price)})));  // some browsers show only the label
+  }, 250);
 }
 
 function recalc() {  // live Parts / Labor / Total from the typed lines, each line rounded like the server
@@ -766,7 +778,7 @@ async function saveDeposits(change) {
     withEdits ? null : fresh => fresh.status === "filled" ? null : {version: fresh.version, deposits: change(fresh.deposits || [])});
   if (!r) return null;
   loadTicket(r);
-  if (r.status === "review") loadMechanics();
+  loadMechanics();
   poll();
   return {t: r, withEdits};
 }
@@ -829,7 +841,7 @@ async function reloadOpen() {
   if (S.dirty && !confirm("Throw away your unsaved changes and show the other device's version?")) return;
   try {
     const r = await api("GET", "/api/tickets/" + S.cur.id);
-    if (r.data.status === "review") await loadMechanics();
+    await loadMechanics();
     loadTicket(r.data);
   } catch (e) {
     if (e.status !== 401) tError(e.message || "Couldn't reload");
@@ -843,7 +855,7 @@ function changesMade(typed, base) {
   for (const k of Object.keys(LABELS)) if (k in typed && !same(k, typed[k], base[k])) fields[k] = typed[k];
   const key = ln => [squash(ln.desc), hundredths(ln.qty === "" ? 1 : ln.qty), hundredths(ln.price ?? ""), hundredths(ln.labor ?? "")].join("|");
   const linesChanged = typed.lines.map(key).join("~") !== (base.lines || []).map(key).join("~");
-  return {fields, lines: linesChanged ? typed.lines : null};
+  return {fields, lines: linesChanged ? typed.lines : null, had: (base.lines || []).map(ln => ln.id)};
 }
 
 function showUnsaved(ch, t) {
@@ -867,7 +879,13 @@ function reapply(ch) {  // only what the desk changed, on top of the other devic
     if (i.tagName === "SELECT" && ![...i.options].some(o => o.value === val)) i.append(el("option", {value: val, text: val}));
     i.value = val;
   }
-  if (ch.lines) $("tLines").replaceChildren(...ch.lines.map(ln => lineRow(ln, true)));
+  if (ch.lines) {  // the desk's lines, plus any the other device added meanwhile (ids the desk never saw)
+    const mine = new Set(ch.lines.map(ln => Number(ln.id) || 0));
+    const added = (S.cur.lines || []).filter(ln => !ch.had.includes(ln.id) && !mine.has(ln.id));
+    $("tLines").replaceChildren(...ch.lines.map(ln => lineRow(ln, true)), ...added.map(ln => lineRow(ln, true)));
+    tError("Your lines are back" + (added.length ? ", with " + added.length + " the other device added" : "") +
+           ". Lines the other device changed or removed now show your version — check them before saving.");
+  }
   $("unsaved").hidden = true;
   markDirty();
   recalc();
@@ -904,7 +922,7 @@ async function post(path, body, retry) {
       const t = e.data && e.data.ticket;
       if (t) {
         loadTicket(t);
-        if (t.status === "review") loadMechanics();  // for next time; not awaited
+        loadMechanics();  // for next time; not awaited
         if (typed) showUnsaved(changesMade(typed, base), t);
       }
       tError((e.message || "Changed on another device") + " — showing the current ticket.");
@@ -924,10 +942,12 @@ let savedTimer = 0;
 async function save(quiet) {
   if (!S.cur || !editable(S.cur)) return S.cur;
   clearTicketErrors();
-  const t = await post("/api/tickets/" + S.cur.id, readForm());
+  const body = readForm();
+  if (!S.cur.id) { delete body.version; body.token = S.cur.token; }  // new: created as typed, lines and all
+  const t = await post(S.cur.id ? "/api/tickets/" + S.cur.id : "/api/tickets", body);
   if (t) {  // post() returns null once the desk has left this ticket
     loadTicket(t);  // first, with no await before it: the buttons must never carry the old version
-    if (t.status === "review") loadMechanics();  // for next time; not awaited
+    loadMechanics();  // for next time; not awaited
     if (!quiet && $("saved")) {
       $("saved").textContent = "Saved.";
       clearTimeout(savedTimer);
@@ -940,7 +960,7 @@ async function save(quiet) {
 
 async function move(to, note) {
   let t = S.cur;
-  if (S.dirty) {  // keep the desk's fixes: save first, then move with the new version
+  if (S.dirty || !t.id) {  // keep the desk's fixes (or make the new ticket): save first, then move with the new version
     t = await save(true);
     if (!t) return null;
   }
@@ -967,9 +987,20 @@ async function sendBack() {
   if (t) { S.dirty = false; leaveTicket(); flash("Sent back to " + (t.mechanic || "the mechanic") + ".", "ok"); }
 }
 
-async function approve() {
+async function approve() {  // Send to InvoMax: onto the shop PC's Ready for InvoMax list
+  const v = $("viewTicket"), mech = v.querySelector("#t-mechanic");
+  clearTicketErrors();
+  if (!(mech && mech.value.trim())) {
+    v.querySelector('.ferr[data-for="mechanic"]').textContent = "Pick the mechanic who did the work.";
+    mech.focus();
+    return;
+  }
+  if (![...v.querySelectorAll("#tLines .d")].some(d => d.value.trim())) {
+    v.querySelector('.ferr[data-for="lines"]').textContent = "Add the parts and labor first.";
+    return;
+  }
   const t = await move("approved");
-  if (t) { loadTicket(t); flash("Approved — ready for InvoMax.", "ok"); }
+  if (t) { loadTicket(t); flash("Sent — it's on the shop PC's Ready for InvoMax list. InvoMax adds the tax.", "ok"); }
 }
 
 async function markFilled() {
@@ -1237,17 +1268,15 @@ async function revokeKiosks() {
 
 /* ---------- start ---------- */
 
-$("btnNew").addEventListener("click", () => { flash(""); clearNewErrors(); show("new"); $("n-first").focus(); });
+$("btnNew").addEventListener("click", newTicket);
 $("btnUsers").addEventListener("click", showUsers);
-$("btnBoard").addEventListener("click", () => S.view === "ticket" ? leaveTicket() : S.view === "users" ? leaveUsers() : leaveNew());
+$("btnBoard").addEventListener("click", () => S.view === "ticket" ? leaveTicket() : leaveUsers());
 $("a-role").addEventListener("change", addRoleChanged);
 $("addForm").addEventListener("submit", addUser);
 $("resetForm").addEventListener("submit", resetSecret);
 $("btnCancelReset").addEventListener("click", closeReset);
 $("btnKiosk").addEventListener("click", useForCheckin);
 $("btnRevoke").addEventListener("click", revokeKiosks);
-$("btnCancelNew").addEventListener("click", leaveNew);
-$("newForm").addEventListener("submit", createTicket);
 for (const e of ["focusin", "input", "change"]) document.addEventListener(e, carField);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 window.addEventListener("pageshow", e => { if (e.persisted) location.reload(); });  // from the back/forward cache: ask the server again

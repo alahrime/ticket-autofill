@@ -1,5 +1,6 @@
 """Shop tickets server: three links, each with its own sign-in (accounts.py sessions in a `sid` cookie).
-/admin (username + password): the desk page, mechanics and check-in iPads. /tech (name + PIN): mechanics' own jobs.
+/admin (username + password): the desk page (the admin types the whole invoice and sends it to InvoMax), mechanics
+and check-in iPads. /tech (name + PIN): mechanics' own jobs and invoices.
 /checkin: a kiosk iPad the admin enrolled; it can only create tickets. JSON API over tickets.Store; pages in web/.
 Tickets and accounts stay in tickets.db on this PC. `python shop.py admin <name>` makes or resets an admin.
 """
@@ -24,7 +25,7 @@ WEB = os.path.join(HERE, "web")
 SETUP = os.path.join(HERE, "setup_code.txt")  # first-run code while there is no admin (git-ignored)
 SETUP_LIFE, SETUP_WINDOW, SETUP_TRIES = 86400, 600, 5  # a code lasts 24 h; 5 wrong codes per client per 10 min
 TITLE = "Shop tickets"
-MAX_NOTE, MAX_HINTS = 2000, 8
+MAX_NOTE, MAX_HINTS, MAX_MADE = 2000, 8, 500
 STATUSES = {s for m in tickets.MOVES for s in m}
 TICKET = re.compile(r"/api/tickets/([0-9]{1,9})(/move)?")
 USER = re.compile(r"/api/users/([0-9]{1,9})")
@@ -148,6 +149,11 @@ class Handler(Web):
     title, log_path = TITLE, LOG
     store = accounts = None  # tickets.Store and accounts.Accounts, set by serve()
     setup_fails, setup_lock = {}, threading.Lock()  # wrong setup codes: client -> times
+    made, made_lock = {}, threading.Lock()  # (admin id, the page's token) -> ticket id: a re-sent create isn't a second ticket
+    actor = ""  # "role#user id" of the signed-in caller, for the log
+
+    def log(self, code):
+        super().log(f"{code} {self.actor}" if self.actor else code)
 
     def run(self, fn):
         """Web.run plus the account and ticket errors any route may raise."""
@@ -201,6 +207,7 @@ class Handler(Web):
         path, q = url.path, parse_qs(url.query)
         s = self.accounts.session(self.token())
         role = s and s["role"]
+        self.actor = f"{role}#{s['user_id']}" if s else ""
         if path == "/":
             return self.reply(200, CHOOSER, HTML)
         if path == "/desk":
@@ -270,11 +277,27 @@ class Handler(Web):
         if not s:
             return self.reply(401, {"error": "sign in"})
         role = s["role"]
+        self.actor = f"{role}#{s['user_id']}"  # who changed what, should an invoice ever need explaining
         if path == "/api/tickets" and role == "kiosk":  # the customer's fields only; nothing back but the id
             d = self.data()
             return self.reply(200, {"id": self.store.create({k: d[k] for k in KIOSK if k in d}).id})
-        if path == "/api/tickets" and role == "admin":
-            return self.reply(200, as_json(self.store.create(self.data()), role))
+        if path == "/api/tickets" and role == "admin":  # the desk may type the whole invoice at once
+            d = self.data()
+            if d.get("mechanic") in (None, ""):
+                d.pop("mechanic", None)  # not assigned yet
+            else:
+                d["mechanic"] = self.mechanic_named(d["mechanic"])
+            tok = d.pop("token", None)  # the page sends one per new ticket; the same one again (its reply got lost) is that ticket
+            key = (s["user_id"], tok) if isinstance(tok, str) and 8 <= len(tok) <= 64 else None
+            with self.made_lock:
+                t = key and key in self.made and self.store.get(self.made[key])
+                if not t:
+                    t = self.store.create(d)
+                    if key:
+                        self.made[key] = t.id
+                        while len(self.made) > MAX_MADE:
+                            del self.made[next(iter(self.made))]
+            return self.reply(200, as_json(t, role))
         m = TICKET.fullmatch(path)
         if m and role != "kiosk":
             return self.ticket(s, int(m[1]), bool(m[2]))
@@ -306,10 +329,23 @@ class Handler(Web):
     def mine(s, t):  # exact: accepting and the desk always write the account's own spelling
         return s["role"] == "mechanic" and t.mechanic == s["name"]
 
+    def mechanic_named(self, m, keep=""):
+        """The active mechanic account m names, in the account's spelling (or keep, a ticket's current one); else Invalid."""
+        if isinstance(m, str) and keep and same(m, keep):
+            return keep
+        names = [n for n in self.mechanics() if isinstance(m, str) and same(n, m)]
+        if not names:
+            raise tickets.Invalid({"mechanic": "pick a mechanic from the list"})
+        return names[0]
+
     def sees(self, s, t, one=False):
-        """Admin: every ticket. Mechanic: waiting ones and their own working ones (one ticket: also their own in review)."""
-        return (s["role"] == "admin" or t.status == "waiting"
-                or self.mine(s, t) and t.status in (("working", "review") if one else ("working",)))
+        """Admin: every ticket. Mechanic: waiting ones nobody else was given, and their own working and approved
+        ones (one ticket: also their own in review)."""
+        if s["role"] == "admin":
+            return True
+        if t.status == "waiting":
+            return not t.mechanic or self.mine(s, t)
+        return self.mine(s, t) and t.status in (("working", "approved", "review") if one else ("working", "approved"))
 
     def signed_in(self, role, token, where):
         """303 to where with a new session cookie, signing out whatever this device was before."""
@@ -395,14 +431,7 @@ class Handler(Web):
         if s["role"] == "mechanic" and not (self.mine(s, t) or moving and t.status == "waiting"):
             return self.refuse()  # someone else's job (or waiting: only accepting it)
         if s["role"] == "admin" and not moving and "mechanic" in d:  # an active account, or left as it is
-            m = d["mechanic"]
-            names = [n for n in self.mechanics() if isinstance(m, str) and same(n, m)]
-            if isinstance(m, str) and same(m, t.mechanic):
-                d["mechanic"] = t.mechanic
-            elif names:
-                d["mechanic"] = names[0]
-            else:
-                raise tickets.Invalid({"mechanic": "pick a mechanic from the list"})
+            d["mechanic"] = self.mechanic_named(d["mechanic"], t.mechanic)
         try:
             if t.version != version:  # edit the copy the device saw, or not at all
                 raise tickets.Stale(t)
@@ -411,10 +440,11 @@ class Handler(Web):
             else:
                 tickets.edit(t, d, WHO[s["role"]])
             self.reply(200, as_json(self.store.save(t, version), s["role"]))
-        except tickets.Stale as e:
-            self.reply(409, {"error": str(e), "ticket": as_json(e.ticket, s["role"])})
-        except tickets.Refused as e:  # a ValueError too: caught before run()'s 400
-            self.reply(409, {"error": str(e), "ticket": as_json(self.store.get(t.id), s["role"])})  # the stored one, unedited
+        except (tickets.Stale, tickets.Refused) as e:  # Refused is a ValueError too: caught before run()'s 400
+            now = e.ticket if isinstance(e, tickets.Stale) else self.store.get(t.id)  # the stored one, unedited
+            if now is None or not self.sees(s, now, True):  # given to someone else meanwhile: not theirs to read
+                return self.reply(404, {"error": "no such ticket"})
+            self.reply(409, {"error": str(e), "ticket": as_json(now, s["role"])})
 
     def move(self, s, t, d):
         to, mechanic, note = d.get("to"), d.get("mechanic"), d.get("note")

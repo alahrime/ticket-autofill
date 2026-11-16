@@ -207,13 +207,15 @@ def test_full_flow():
         assert (mv({"version": 7, "to": "review"}, al)[1]["back_note"]) == ""
         assert mv({"version": 8, "to": "approved"})[1]["status"] == "approved"
         priced = [dict(ln, price=ln["price"] and ln["price"] + 5, labor=ln["labor"] and ln["labor"] + 10) for ln in t["lines"]]
-        assert call(b, url, cookie=al)[0] == 404  # approved: off the phone
+        assert call(b, url, cookie=al)[1]["status"] == "approved"  # still Al's to look at and fix
+        assert call(b, url, cookie=bo)[0] == 404
         code, t = call(b, url, {"version": 9, "lines": priced}, a)  # prices stay editable after approval
         assert code == 200 and t["status"] == "approved" and t["version"] == 10
         assert [(ln["price"], ln["labor"]) for ln in t["lines"]] == [(ln["price"], ln["labor"]) for ln in priced]
         code, t = mv({"version": 10, "to": "filled"})
         assert code == 200 and t["status"] == "filled" and t["version"] == 11
         assert call(b, url, {"version": 11, "notes": "late"}, a)[0] == 409
+        assert call(b, url, cookie=al)[0] == 404  # filled: off the phone
 
         code, t = call(b, "/api/tickets", CAR, a)  # the desk's own intake gets the ticket back
         assert code == 200 and t["status"] == "waiting" and t["phone"] == "(555)010-0000" and t["plate"] == "TST-0001"
@@ -252,6 +254,102 @@ def test_full_flow():
             assert secret not in log.upper()
 
 
+def test_admin_enters_the_whole_invoice():
+    with Server() as s:
+        b = s.base
+        a, al, bo = admin(b), tech(b, "Al Fixit"), tech(b, "Bo Wrench")
+        full = {**CAR, "vin": "2t1br32614c809083", "odometer": "45,120", "mechanic": "al  fixit", "notes": "rear pads soon",
+                "lines": [{"desc": "front brake pads", "qty": 1, "price": "100", "labor": "80", "code": "FBP"},
+                          {"desc": "brake fluid flush", "labor": 60}],
+                "status": "approved", "version": 9, "id": 77}
+        code, t = call(b, "/api/tickets", full, a)
+        assert code == 200 and (t["status"], t["version"], t["mechanic"]) == ("waiting", 1, "Al Fixit") and t["id"] != 77
+        assert (t["vin"], t["odometer"], t["vin_warning"]) == ("2T1BR32614C809083", "45120", "")
+        assert t["totals"] == {"parts": 100.0, "labor": 140.0, "total": 240.0, "deposits": 0}  # before tax
+        tid, url = t["id"], f"/api/tickets/{t['id']}"
+        for m in ("Cy Unknown", ["Al Fixit"], 7):  # a mechanic is an active account, or not set at all
+            code, r = call(b, "/api/tickets", {**CAR, "mechanic": m}, a)
+            assert code == 400 and "mechanic" in r["errors"], m
+        code, r = call(b, "/api/tickets", {**full, "lines": [{"desc": ""}]}, a)
+        assert code == 400 and "lines" in r["errors"]
+        code, bare = call(b, "/api/tickets", {**CAR, "mechanic": ""}, a)  # just the drop-off: nobody picked yet
+        assert code == 200 and bare["mechanic"] == "" and bare["lines"] == []
+        bid, burl = bare["id"], f"/api/tickets/{bare['id']}"
+
+        ids = lambda c, q="waiting,working,approved": [x["id"] for x in call(b, "/api/tickets?status=" + q, cookie=c)[1]["tickets"]]
+        assert ids(al) == [bid, tid] and ids(bo) == [bid]  # Al's ticket: only Al (and the desk) see it waiting
+        assert call(b, url, cookie=bo)[0] == 404
+        assert call(b, url + "/move", {"version": 1, "to": "working"}, bo)[0] == 404  # not Bo's to accept
+        assert call(b, url, {"version": 1, "notes": "x"}, al)[0] == 409  # Al's, but nothing to change until he works on it
+        assert call(b, url + "/move", {"version": 1, "to": "approved"}, al)[0] == 409  # only the desk sends
+
+        code, r = call(b, burl + "/move", {"version": 1, "to": "approved"}, a)  # no mechanic, no lines: not an invoice
+        assert code == 409 and "mechanic" in r["error"] and r["ticket"]["status"] == "waiting"
+        code, bare = call(b, burl, {"version": 1, "mechanic": "Bo Wrench"}, a)
+        code, r = call(b, burl + "/move", {"version": 2, "to": "approved"}, a)
+        assert code == 409 and "line" in r["error"]
+
+        code, t = call(b, url + "/move", {"version": 1, "to": "approved", "mechanic": "Bo Wrench"}, a)  # straight to InvoMax
+        assert code == 200 and (t["status"], t["mechanic"], t["version"]) == ("approved", "Al Fixit", 2)
+        assert ids(al, "approved") == [tid] and ids(bo, "approved") == []
+        assert call(b, url, cookie=bo)[0] == 404 and call(b, url, {"version": 2, "notes": "x"}, bo)[0] == 404
+
+        code, t = call(b, url, cookie=al)  # the mechanic still sees and fixes their invoice
+        assert code == 200 and "deposits" not in t and t["totals"] == {"parts": 100.0, "labor": 140.0, "total": 240.0}
+        lines = [dict(t["lines"][0], labor="95"), t["lines"][1]]
+        code, t = call(b, url, {"version": 2, "lines": lines, "odometer": "45200"}, al)
+        assert code == 200 and (t["status"], t["version"], t["odometer"]) == ("approved", 3, "45200")
+        assert t["totals"]["labor"] == 155.0
+        code, r = call(b, url, {"version": 3, "lines": []}, al)
+        assert code == 400 and "lines" in r["errors"]
+        for body in ({"first": "X"}, {"mechanic": "Bo Wrench"}, {"deposits": [{"amount": 5}]}):
+            code, r = call(b, url, {"version": 3, **body}, al)
+            assert code == 409 and r["ticket"]["version"] == 3, body
+        for to in ("filled", "working", "review"):
+            assert call(b, url + "/move", {"version": 3, "to": to}, al)[0] == 409, to
+        t = call(b, url, cookie=a)[1]
+        assert t["lines"][0]["labor"] == 95.0 and t["mech_edit"]  # the desk sees the mechanic's change, flagged
+        code, r = call(b, url, {"version": 3, "lines": [{"desc": "nothing", "id": 1}]}, al)
+        assert code == 400 and "lines" in r["errors"]  # not every charge off a sent invoice
+        assert f"POST {url} 200" in s.log() and f"mechanic#{s.ids['Al Fixit']}" in s.log()  # who changed it is on record
+
+        code, t = call(b, url + "/move", {"version": 3, "to": "filled"}, a)
+        assert code == 200 and t["status"] == "filled"
+        assert call(b, url, cookie=al)[0] == 404 and ids(al, "approved") == []
+        assert call(b, url, {"version": 4, "notes": "late"}, al)[0] == 404
+
+        # a job a mechanic is working on: the desk may fix anything and send it without Finish job / review
+        code, w = call(b, burl + "/move", {"version": 2, "to": "working", "mechanic": "Bo Wrench"}, a)
+        assert code == 200 and w["status"] == "working"
+        code, w = call(b, burl, {"version": 3, "lines": [{"desc": "oil change", "price": 40}]}, bo)
+        code, w = call(b, burl, {"version": 4, "first": "Joan", "odometer": "9", "lines": w["lines"]}, a)
+        assert code == 200 and (w["first"], w["odometer"], w["status"]) == ("JOAN", "9", "working")
+        assert call(b, burl, {"version": 4, "notes": "old copy"}, bo)[0] == 409  # the phone's copy is stale now
+        code, w = call(b, burl + "/move", {"version": 5, "to": "approved"}, a)
+        assert code == 200 and (w["status"], w["mechanic"]) == ("approved", "Bo Wrench")
+        # the desk gives a sent invoice to someone else while the first mechanic's phone still holds it
+        code, w = call(b, burl, {"version": 6, "mechanic": "Al Fixit"}, a)
+        assert code == 200 and w["mechanic"] == "Al Fixit" and w["mech_edit"] == ""
+        assert call(b, burl, {"version": 6, "notes": "mine?"}, bo)[0] == 404  # not a 409 that shows Al's ticket
+        assert call(b, burl, cookie=al)[1]["status"] == "approved"
+
+        # Save pressed again after a lost reply: the same ticket, not a second invoice
+        n = len(call(b, "/api/tickets", cookie=a)[1]["tickets"])
+        first = call(b, "/api/tickets", {**full, "token": "tok-" + "a" * 20}, a)[1]
+        again = call(b, "/api/tickets", {**full, "token": "tok-" + "a" * 20, "first": "Other"}, a)[1]
+        assert again["id"] == first["id"] and again["first"] == "JANE"
+        assert call(b, "/api/tickets", {**full, "token": "tok-" + "b" * 20}, a)[1]["id"] != first["id"]
+        for tok in ("short", 7, ["x" * 20], "x" * 65):  # not a usable token: just a new ticket each time
+            assert call(b, "/api/tickets", {**full, "token": tok}, a)[0] == 200
+        assert len(call(b, "/api/tickets", cookie=a)[1]["tickets"]) == n + 6
+
+        k = kiosk(b)  # the check-in iPad still fills the customer's fields only
+        kid = call(b, "/api/tickets", {**full, "token": "tok-" + "a" * 20}, k)[1]["id"]
+        assert kid != first["id"]
+        t = call(b, f"/api/tickets/{kid}", cookie=admin(b))[1]
+        assert (t["mechanic"], t["lines"], t["vin"], t["odometer"], t["notes"]) == ("", [], "", "", "")
+
+
 def test_deposits_admin_only():
     with Server() as s:
         b = s.base
@@ -278,8 +376,8 @@ def test_deposits_admin_only():
         v = t["version"]
         code, t = call(b, url, {"version": v, "deposits": [{"id": 1, **dep}, {"amount": 9.5, "method": "card"}]}, a)  # working
         assert code == 200 and [d["id"] for d in t["deposits"]] == [1, 2] and t["totals"]["deposits"] == 209.5
-        code, r = call(b, url, {"version": t["version"], "deposits": [], "notes": "x"}, a)
-        assert code == 409 and len(r["ticket"]["deposits"]) == 2  # working: deposits alone
+        code, t = call(b, url, {"version": t["version"], "deposits": t["deposits"], "notes": "x"}, a)
+        assert code == 200 and len(t["deposits"]) == 2 and t["notes"] == "x"  # working: the desk's to change too
         code, r = call(b, url, {"version": t["version"], "deposits": [{"amount": 5, "method": "venmo"}]}, a)
         assert code == 400 and "deposits" in r["errors"]
         assert call(b, url, cookie=a)[1]["totals"]["deposits"] == 209.5

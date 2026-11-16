@@ -15,7 +15,9 @@ MAX_LINES, MAX_MONEY, MAX_QTY, MAX_DEPOSITS = 100, 1e6, 1e4, 50
 METHODS = ("cash", "card", "check", "other")  # how a deposit was paid
 DEPOSIT_DAYS = 366  # a deposit's date is at most about a year from today, either way
 MOVES = {("waiting", "working"), ("working", "review"), ("review", "working"),
-         ("review", "approved"), ("approved", "filled")}
+         ("review", "approved"), ("approved", "filled"),
+         ("waiting", "approved"), ("working", "approved")}  # the desk enters the whole invoice and sends it itself
+MECHANIC_EDITS = ("working", "approved")  # a mechanic changes their own job, and their invoice until it's filled
 
 
 @dataclass
@@ -56,6 +58,7 @@ class Ticket:
     lines: list = field(default_factory=list)  # Line
     deposits: list = field(default_factory=list)  # Deposit; the desk's only, never shown to mechanics
     back_note: str = ""   # desk's note when sent back; cleared when the mechanic finishes again
+    mech_edit: str = ""   # ISO time the mechanic last changed it after it was sent to InvoMax; cleared when the desk saves
     created: str = ""     # ISO time, seconds
     updated: str = ""
     version: int = 1
@@ -150,9 +153,10 @@ def clean_line(d):
 
 def item_id(d):
     try:
-        return max(int(d.get("id") or 0), 0)
+        n = int(d.get("id") or 0)
     except (TypeError, ValueError, OverflowError):  # 1e400 in JSON is inf
         return 0
+    return n if 0 < n <= 10 ** 9 else 0  # a silly id is renumbered
 
 
 def clean_deposit(d, kept=()):
@@ -270,16 +274,15 @@ def normalize(fields, create=False, kept=()):
 
 
 def edit(ticket, fields, who):
-    """Merge typed fields onto ticket in place. who: "desk" (waiting/review/approved: any field; working:
-    deposits alone) or "mechanic" (working only: lines, odometer, vin, notes). Unknown keys are ignored, as in
+    """Merge typed fields onto ticket in place. who: "desk" (any field until the ticket is filled) or
+    "mechanic" (working or approved: lines, odometer, vin, notes). Unknown keys are ignored, as in
     normalize. Raises Refused (not allowed now / not theirs to change) or Invalid (bad values)."""
     known = set(fields) & set(UPPER + TEXT + REQUIRED + ("lines", "deposits"))
     if who == "desk":
-        if ticket.status not in ("waiting", "review", "approved") and not (
-                ticket.status == "working" and known == {"deposits"}):  # prices stay open until filled
+        if ticket.status == "filled":  # it's in InvoMax now
             raise Refused(f"the desk can't change a {ticket.status} ticket")
     elif who == "mechanic":
-        if ticket.status != "working":
+        if ticket.status not in MECHANIC_EDITS:
             raise Refused(f"the phone can't change a {ticket.status} ticket")
         bad = sorted(known - MECHANIC_KEYS)
         if bad:
@@ -289,10 +292,20 @@ def edit(ticket, fields, who):
     clean, errors = normalize(fields, kept={x.id for x in ticket.deposits})  # stored deposits keep their dates
     if "lines" in clean and not clean["lines"] and ticket.status in ("review", "approved"):
         errors.setdefault("lines", "keep at least one line")  # finishing needed one; don't bill an empty ticket
+    sent = ticket.status == "approved"
+    if sent and "mechanic" in clean and not clean["mechanic"]:
+        errors.setdefault("mechanic", "an invoice needs its mechanic")
+    if sent and who == "mechanic" and clean.get("lines") and totals(ticket)["total"] > 0 \
+            and totals(replace(ticket, lines=clean["lines"]))["total"] == 0:
+        errors.setdefault("lines", "the phone can't take every charge off a sent invoice; ask the desk")
     if errors:
         raise Invalid(errors)
     for k, v in clean.items():
         setattr(ticket, k, v)
+    if who == "desk":
+        ticket.mech_edit = ""  # the desk has it open and saved: seen
+    elif sent:
+        ticket.mech_edit = now()  # the desk and the shop PC show that the mechanic changed a sent invoice
     return ticket
 
 
@@ -301,7 +314,13 @@ def move(ticket, to, mechanic=None, note=""):
     frm = ticket.status
     if (frm, to) not in MOVES:
         raise Refused(f"can't go from {frm} to {to}")
-    if frm == "waiting":
+    if to == "approved":  # from waiting, working or review: an invoice needs who did it and what was done
+        if not squash(ticket.mechanic):
+            raise Refused("pick the mechanic before sending to InvoMax")
+        if not ticket.lines:
+            raise Refused("add at least one line before sending to InvoMax")
+        ticket.back_note = ""
+    elif frm == "waiting":
         mechanic = squash(mechanic)
         if not mechanic:
             raise Refused("pick a mechanic to accept")
@@ -403,7 +422,8 @@ class Store:
         return json.dumps(d)
 
     def create(self, fields):
-        """New waiting ticket from desk fields; raises Invalid."""
+        """New waiting ticket from desk fields (the whole invoice if the desk typed it: lines, odometer, VIN,
+        mechanic, notes); raises Invalid."""
         clean, errors = normalize(fields, create=True)
         if errors:
             raise Invalid(errors)

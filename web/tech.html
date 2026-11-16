@@ -76,6 +76,8 @@ label input,label textarea{margin-top:4px}
   <div id="mine"></div>
   <h2>Waiting</h2>
   <div id="waiting"></div>
+  <h2>My invoices</h2>
+  <div id="invoices"></div>
 </section>
 
 <section id="job" hidden>
@@ -86,6 +88,7 @@ label input,label textarea{margin-top:4px}
     <div id="jcar" class="car"></div>
     <div id="jreq" class="pre"></div>
     <div id="jback" class="backnote" hidden><b>Sent back by the desk:</b><span id="jbacktext"></span></div>
+    <div id="jsent" class="backnote" hidden><b>Invoice at the desk, ready for InvoMax.</b><span>You can still fix the lines, odometer, VIN and notes until it's filled. The desk sees every change.</span></div>
   </div>
 
   <h2>Lines</h2>
@@ -149,7 +152,8 @@ const plain = v => v == null ? "" : (Number(v) || 0).toFixed(2);
 const initial = s => (s || "").trim() ? (s || "").trim()[0] + "." : "";
 const shortName = t => [t.first, initial(t.last)].filter(Boolean).join(" ");
 const vehicle = t => [t.year, t.make, t.model].filter(Boolean).join(" ");
-const mineNow = t => t.status === "working" && t.mechanic === me;  // accepting stores the account name as is
+// Mine to change: my job while I work on it, and my invoice once the desk has sent it (until it's filled).
+const mineNow = t => (t.status === "working" || t.status === "approved") && t.mechanic === me;  // the account name as is
 
 function age(iso) {
   const t = Date.parse(iso);  // server local time without a zone: read as local time
@@ -369,10 +373,12 @@ window.addEventListener("pageshow", ev => {  // back from the sign-in page via t
 
 // ---- home lists
 function renderHome() {
-  const mine = list.filter(mineNow);
+  const mine = list.filter(t => t.status === "working" && mineNow(t));
   const waiting = list.filter(t => t.status === "waiting").reverse();  // longest waiting first
+  const sent = list.filter(t => t.status === "approved" && mineNow(t));
   fill($("mine"), mine.map(t => card(t, false)), "No jobs yet. Accept one below.");
   fill($("waiting"), waiting.map(t => card(t, true)), "Nothing waiting.");
+  fill($("invoices"), sent.map(t => card(t, false)), "None at the desk right now.");
 }
 function fill(box, cards, empty) {
   box.replaceChildren(...(cards.length ? cards : [el("p", "empty", empty)]));
@@ -391,6 +397,7 @@ function card(t, waiting) {
   info.append(top, el("span", "car", vehicle(t)));
   if (t.request) info.append(el("span", "req", t.request));
   if (!waiting && t.back_note) info.append(el("span", "tag", "Sent back"));
+  if (t.status === "approved") info.append(el("span", "tag", "Ready for InvoMax · " + money((t.totals || {}).total)));
   c.append(info);
   if (waiting) {
     const b = btn("Accept", "", () => accept(t, b));
@@ -403,11 +410,11 @@ async function poll() {
   if (!me || polling || document.hidden) return;
   polling = true;
   try {
-    const r = await api("/api/tickets?status=waiting,working", undefined, etag ? {"If-None-Match": etag} : {});
+    const r = await api("/api/tickets?status=waiting,working,approved", undefined, etag ? {"If-None-Match": etag} : {});
     $("net").textContent = "";
     if (r.status !== 304) {  // 304: nothing changed, keep the last list
       const got = r.data.tickets || [];
-      if (got.some(t => t.status === "working" && !mineNow(t))) {  // the server only sends my own: someone else is signed in now
+      if (got.some(t => t.status !== "waiting" && !mineNow(t))) {  // the server only sends my own: someone else is signed in now
         reloading = true;
         return location.reload();
       }
@@ -505,10 +512,14 @@ function readDraft(id) {
   try { return JSON.parse(load(draftKey(id)) || "{}") || {}; } catch (e) { return {}; }
 }
 function writeDraft(id, d) {
-  store(draftKey(id), Object.keys(d).length ? JSON.stringify(d) : "");
+  store(draftKey(id), Object.keys(d).some(k => k !== "_base") ? JSON.stringify(d) : "");
 }
 function keepDraft() {
-  if (cur) writeDraft(cur.id, dirtyBoxes());
+  if (!cur) return;
+  const d = dirtyBoxes(), base = {};
+  for (const k in d) base[k] = cur[k] || "";  // what the shop had when this was typed
+  if (Object.keys(d).length) d._base = base;
+  writeDraft(cur.id, d);
 }
 function draftSaved(id, fields) {  // the server has these values now: drop them from the draft unless retyped since
   const d = readDraft(id);
@@ -527,6 +538,8 @@ function setCur(t) {
   $("jreq").textContent = t.request || "(no request written)";
   $("jbacktext").textContent = t.back_note || "";
   $("jback").hidden = !t.back_note;
+  $("jsent").hidden = t.status !== "approved";
+  $("finish").hidden = t.status !== "working";  // an invoice the desk already sent has nothing to finish
   renderLines();
   renderTotals();
   for (const [id, k] of FIELDS) {
@@ -534,8 +547,13 @@ function setCur(t) {
     if (!(k in dirty) && tidy(k, box.value) !== (t[k] || "")) box.value = t[k] || "";
   }
   if (!same) {  // (re)opened: bring back anything typed here that never reached the server
-    const d = readDraft(t.id);
-    for (const [id, k] of FIELDS) if (typeof d[k] === "string" && tidy(k, d[k]) !== (t[k] || "")) $(id).value = d[k];
+    const d = readDraft(t.id), base = d._base && typeof d._base === "object" ? d._base : null, lost = [];
+    for (const [id, k] of FIELDS) {
+      if (typeof d[k] !== "string" || tidy(k, d[k]) === (t[k] || "")) continue;
+      if (base && typeof base[k] === "string" && base[k] !== (t[k] || "")) lost.push(k);  // changed at the desk since: theirs stays
+      else $(id).value = d[k];
+    }
+    if (lost.length) say(`The desk changed the ${lost.join(" and ")} after you typed here. Showing the desk's; type yours again if it's still needed.`);
     if (Object.keys(dirtyBoxes()).length) {
       clearTimeout(fieldTimer);
       fieldTimer = setTimeout(saveFields, 800);
@@ -615,10 +633,17 @@ async function runSave(id, build, fields, keepalive) {
       saved();
       return true;
     } catch (e) {
-      if (tries === 0 && isStale(e) && e.data.ticket && mineNow(e.data.ticket) &&
-          (!build || sameLines(e.data.ticket.lines, t.lines))) {
-        remember(e.data.ticket);
+      const fresh = isStale(e) && e.data.ticket && mineNow(e.data.ticket) ? e.data.ticket : null;
+      const clash = fresh ? Object.keys(fields).filter(k => (fresh[k] || "") !== (t[k] || "")) : [];  // changed at the desk meanwhile
+      if (tries === 0 && fresh && !clash.length && (!build || sameLines(fresh.lines, t.lines))) {
+        remember(fresh);
         continue;
+      }
+      if (clash.length && cur && cur.id === id) {  // never over what the desk just typed: show theirs, say so
+        for (const [bid, k] of FIELDS) if (clash.includes(k) && $(bid).value === fields[k]) $(bid).value = fresh[k] || "";
+        for (const k of clash) if (queued[k] === fields[k]) delete queued[k];
+        conflict(id, e, `The desk changed the ${clash.join(" and ")} just now. Showing the desk's; type yours again if it's still needed.`, !!build);
+        return false;
       }
       conflict(id, e, build ? "Changed on another device, so that change wasn't saved. Showing the latest; try again." : "", !!build);
       if (build && isStale(e)) {  // typed boxes go again on the new version
@@ -811,7 +836,7 @@ function removeLine(ln) {
 }
 
 $("finish").addEventListener("click", async () => {
-  if (!cur) return;
+  if (!cur || cur.status !== "working") return;
   if (lineTyped()) {
     $("lerr").textContent = "Save or cancel this line first.";
     return $("lineform").scrollIntoView({block: "start", behavior: "smooth"});
@@ -837,7 +862,9 @@ $("finish").addEventListener("click", async () => {
         say("Sent to the desk for review.", true);
         poll();
       } catch (e) {
-        conflict(id, e, "Changed on another device. Showing the latest; check it and tap Finish again.");
+        const sent = e.status === 409 && e.data.ticket && e.data.ticket.status === "approved";
+        conflict(id, e, sent ? "The desk already sent this one to InvoMax. You can still fix it here."
+                             : "Changed on another device. Showing the latest; check it and tap Finish again.");
       }
     });
   } finally {
