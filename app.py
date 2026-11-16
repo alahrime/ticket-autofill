@@ -6,7 +6,7 @@ from prices import load_catalog, load_overrides, save_override, position, DEFAUL
 from draft import from_job, needs, line_by_id
 from inspection import read_receipt
 import report
-from shopwin import ShopWindow, app_fields, app_row, list_row
+from shopwin import ShopWindow, app_fields, app_row, list_row, header_flag
 import invomax
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -110,7 +110,7 @@ class App(tk.Tk):
             return False
         for k, v in app_fields(draft, self.vars).items():
             self.vars[k].set(v)
-            self.entries[k].config(bg="white")
+            self.entries[k].config(bg=FLAG_BG if header_flag(draft, k) else "white")  # e.g. a VIN that looks wrong
         self.tree.delete(*self.tree.get_children())
         self.shown = [(self.tree.insert("", "end", values=app_row(ln)), ln) for ln in draft.lines]
         self.note.delete("1.0", "end")

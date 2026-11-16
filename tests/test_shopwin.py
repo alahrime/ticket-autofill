@@ -51,16 +51,29 @@ def test_entry_sheet():
     t = ticket()
     d = to_draft(t, CAT, today=date(2026, 11, 2))
     assert [v for _, v in header_rows(d)] == ["JANE", "DOE", "(555)010-0000", "2019 CADILLAC", "CTS V", "XKS-4827",
-                                              "98431", "Sam", "11/02/26"]
+                                              "", "98431", "Sam", "11/02/26"]
     d.notes = ["Customer: brakes squeak", "rotors thin"]  # fixed here: to_draft may add deposit notes
     s = entry_sheet(t, d, {"parts": 45.0, "labor": 80.0, "total": 125.0})
     assert s == ("Ticket #7 (approved)\nFirst name: JANE\nLast name: DOE\nPhone: (555)010-0000\nYear/Make: 2019 CADILLAC\n"
-                 "Model: CTS V\nPlate: XKS-4827\nOdometer: 98431\nMechanic: Sam\nDate: 11/02/26\n\nLines:\n"
+                 "Model: CTS V\nPlate: XKS-4827\nVIN: \nOdometer: 98431\nMechanic: Sam\nDate: 11/02/26\n\nLines:\n"
                  "BRK  FRONT BRAKE PADS  qty 1  $45.00 each  part\n"
                  "    INSTALL-PART  Remove & Install: FRONT BRAKE PADS  qty 1  $20.00 each  labor\n"
                  "    LABOR  DIAG  qty 1  $60.00 each  labor\n"
                  "(no code)  WIPER BLADE ZZ  qty 2  $1,234.50 each  part\n\nNotes:\nCustomer: brakes squeak\nrotors thin\n\n"
                  f"{TOTALS_HEAD}\nParts: $45.00\nLabor: $80.00\nTotal: $125.00\n"), s
+
+
+def test_vin_on_sheet():  # made-up VINs
+    tot = {"total": 0.0}
+    t = ticket(vin="2T1BR32614C809083")
+    s = entry_sheet(t, to_draft(t, CAT), tot)
+    assert "Plate: XKS-4827\nVIN: 2T1BR32614C809083\nOdometer: 98431\n" in s and "warning" not in s, s
+    t = ticket(vin="2T1BR32614C809084")
+    s = entry_sheet(t, to_draft(t, CAT), tot)
+    assert "VIN: 2T1BR32614C809084\nVIN warning: VIN check digit fails\nOdometer: 98431\n" in s, s
+    assert shopwin.app_fields(to_draft(t, CAT), ("vin",)) == {"vin": "2T1BR32614C809084"}
+    assert shopwin.header_flag(to_draft(t, CAT), "vin") == "VIN check digit fails"
+    assert shopwin.header_flag(to_draft(ticket(), CAT), "vin") == "" and shopwin.header_flag(to_draft(t, CAT), "plate") == ""
 
 
 def test_app_fields_and_rows():  # what "Load into Ticket Autofill" puts in the main window
@@ -96,6 +109,11 @@ def test_app_load_ticket_tk():  # App.load_ticket and its "changes here" checks;
         assert a.unsaved()
         assert a.load_ticket(t, to_draft(t, CAT)) and asked == ["Reload ticket #7 and lose your changes here?"]
         assert a.vars["vin"].get() == "" and not a.unsaved()
+        assert a.entries["vin"].cget("bg") == "white"
+        bad = ticket(id=8, vin="2T1BR32614C809084")  # a flagged VIN gets the yellow background, like a page value
+        assert a.load_ticket(bad, to_draft(bad, CAT)) and a.vars["vin"].get() == "2T1BR32614C809084"
+        assert a.entries["vin"].cget("bg") == app.FLAG_BG and a.entries["plate"].cget("bg") == "white"
+        assert a.load_ticket(t, to_draft(t, CAT))
         a.filled = True
         a.load_ticket(t, to_draft(t, CAT))
         assert asked[-1] == "Ticket #7 was already filled here. Reload it?"

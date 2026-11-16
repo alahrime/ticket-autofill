@@ -4,7 +4,7 @@ from datetime import date, timedelta
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from tickets import (Line, Deposit, Ticket, Store, Stale, Invalid, Refused, normalize, edit, move, totals, to_draft,
-                     from_dict, MOVES)
+                     from_dict, vin_warning, MOVES)
 from prices import load_catalog
 
 DESK = {"first": " jane ", "last": "doe", "phone": "555 010 0000", "year": "2019", "make": "cadillac",
@@ -155,6 +155,31 @@ def test_edit():
     edit(t, {"lines": [{"desc": "oil", "price": 35}]}, "desk")
     assert t.lines[0].price == 35 and t.odometer == "98431"
     raises(ValueError, edit, t, {}, "customer")
+
+
+def test_vin():  # made-up VINs: 2T1BR32614C809083 and 1HGCM82633A004352 pass the check digit
+    assert Ticket().vin == "" and from_dict({"id": 3, "status": "waiting", "first": "OLD"}).vin == ""
+    assert normalize({"vin": " 2t1br 3261\t4c809083 "}) == ({"vin": "2T1BR32614C809083"}, {})
+    assert normalize({"vin": "1hgcm82633a00435"}) == ({"vin": "1HGCM82633A00435"}, {})  # wrong: stored as typed, no error
+    assert normalize({"vin": "0O1I"})[0]["vin"] == "0O1I"  # no lookalike swaps for typing
+    assert "vin" in normalize({"vin": "X" * 81})[1]
+    assert vin_warning("") == "" and vin_warning("2T1BR32614C809083") == "" and vin_warning("1HGCM82633A004352") == ""
+    assert vin_warning("1HGCM82633A00435") == "VIN has 16 characters, not 17"
+    assert vin_warning("1") == "VIN has 1 character, not 17"
+    assert vin_warning("1HGCM82634A004352") == "VIN check digit fails"
+    assert vin_warning("1HGCM82633A0O4352") == "VIN can't have I, O or Q (1 or 0?)"
+    for odd in ("1HGCM82633A00435²", "1HGCM82633A00435①", "１HGCM82633A004352", "1HGCM-82633A00435"):
+        assert vin_warning(odd) == "VIN has characters other than letters and digits", odd  # no crash, never valid
+    assert normalize({"vin": "\ufeff2T1BR32614C809083\x1f"})[0]["vin"] == "2T1BR32614C809083"
+    assert "vin" in normalize({"vin": "ß" * 50})[1]  # 100 characters once upper-cased
+    t = Ticket(status="working", mechanic="Sam")
+    assert edit(t, {"vin": "2t1br32614c809083"}, "mechanic").vin == "2T1BR32614C809083"  # the mechanic's own job
+    raises(Refused, edit, t, {"vin": "1HGCM82633A004352"}, "desk")  # read-only for the desk while they work
+    for st in ("waiting", "review", "approved"):
+        assert edit(Ticket(status=st), {"vin": "1hgcm82633a004352"}, "desk").vin == "1HGCM82633A004352"
+        raises(Refused, edit, Ticket(status=st), {"vin": "x"}, "mechanic")
+    for who in ("desk", "mechanic"):
+        raises(Refused, edit, Ticket(status="filled"), {"vin": "1HGCM82633A004352"}, who)
 
 
 def test_totals():
@@ -371,6 +396,15 @@ def test_to_draft_header_and_notes():
                  today=date(2026, 3, 5))
     assert "plate" not in d.header and "odometer" not in d.header  # missing stays missing
     assert d.notes == [] and d.lines == [] and d.header["date"].value == "03/05/26"
+
+
+def test_to_draft_vin():
+    d = to_draft(approved_ticket(vin="2T1BR32614C809083"), CAT)
+    assert (d.header["vin"].value, d.header["vin"].source, d.header["vin"].flag) == ("2T1BR32614C809083", "desk", "")
+    d = to_draft(approved_ticket(vin="2T1BR32614C80908"), CAT)
+    assert (d.header["vin"].value, d.header["vin"].flag) == ("2T1BR32614C80908", "VIN has 16 characters, not 17")
+    assert "vin" not in to_draft(approved_ticket(), CAT).header  # missing stays missing
+    assert not any(v.flag for k, v in to_draft(approved_ticket(vin="X"), CAT).header.items() if k != "vin")
 
 
 def test_to_draft_lines():
