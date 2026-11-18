@@ -17,3 +17,8 @@ shop_pin.txt
 shop_secret.txt
 shop.log
 setup_code.txt
+
+shop-web/node_modules/
+shop-web/dist/
+shop-web/.nx/
+tickets-backup-*.db
