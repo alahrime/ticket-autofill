@@ -98,6 +98,19 @@ def kiosk(base, password=PASSWORD):
     return k
 
 
+def test_one_server_per_port():  # a second copy (start-shop.bat clicked twice) must fail, not answer alongside the first
+    a = pinweb.OnlyServer(("127.0.0.1", 0), shop.Handler)
+    try:
+        port = a.server_address[1]
+        try:
+            pinweb.OnlyServer(("127.0.0.1", port), shop.Handler).server_close()
+            raise AssertionError("a second server opened the same port")
+        except OSError:
+            pass
+    finally:
+        a.server_close()
+
+
 def test_pages_and_sign_in():
     with Server() as s:
         b = s.base

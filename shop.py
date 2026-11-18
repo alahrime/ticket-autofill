@@ -8,11 +8,10 @@ from __future__ import annotations
 import getpass, hashlib, hmac, html, ipaddress, json, os, re, secrets, sys, threading, time
 from dataclasses import asdict
 from http.cookies import CookieError, SimpleCookie
-from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 import tickets
 from accounts import LIFETIME, Accounts, Locked, LoginFailed, check_new_secret, client_key, make_admin
-from pinweb import HTML, Web, page
+from pinweb import HTML, OnlyServer, Web, page
 from prices import load_catalog
 
 HOST, PORT = "127.0.0.1", 8081  # this PC only: phones and the iPad come in through the Cloudflare tunnel
@@ -467,7 +466,7 @@ class Handler(Web):
 
 
 def serve(port=PORT, host=HOST):
-    server = ThreadingHTTPServer((host, port), Handler)  # opened first: a second copy fails here
+    server = OnlyServer((host, port), Handler)  # opened first: a second copy fails here (OSError, port in use)
     Handler.store = tickets.Store(DB)
     Handler.accounts = Accounts(Handler.store)
     make_setup_code(Handler.accounts)
@@ -494,7 +493,7 @@ def main(args):
         sys.exit("; ".join(e.errors.values()))
     finally:
         store.close()
-    print(f"Admin {user['name']} is ready; sign in at /admin. A running shop.bat keeps its lockout until restarted.")
+    print(f"Admin {user['name']} is ready; sign in at /admin. A running server keeps its lockout until start-shop.bat restarts it.")
 
 
 if __name__ == "__main__":

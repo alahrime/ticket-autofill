@@ -7,9 +7,10 @@ PC and nothing runs in the background.
 from __future__ import annotations
 import hashlib, hmac, io, json, os, re, secrets, subprocess, sys, threading, time
 from http.cookies import SimpleCookie
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, quote
 import report
+from pinweb import OnlyServer
 from inspection import read_receipt, Row
 
 PORT = 8080
@@ -153,7 +154,7 @@ def keep_tunnel():
 
 def serve(port=PORT, tunnel=False):
     Handler.pin = load_pin()
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)  # opened first: a second copy fails here, before tunnelling
+    server = OnlyServer(("0.0.0.0", port), Handler)  # opened first: a second copy fails here, before tunnelling
     if tunnel:
         threading.Thread(target=keep_tunnel, daemon=True).start()
     server.serve_forever()

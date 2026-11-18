@@ -2,9 +2,9 @@
 one-line-per-request log without customer data; shop.py builds on it). PinHandler adds one PIN with a lockout and a
 signed cookie (phone.py keeps its own copy for now)."""
 from __future__ import annotations
-import hashlib, hmac, json, secrets, threading, time
+import hashlib, hmac, json, secrets, socket, threading, time
 from http.cookies import SimpleCookie
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 HTML = "text/html; charset=utf-8"
@@ -52,6 +52,17 @@ a.big{{display:inline-block;margin:10px 0;text-decoration:none}} p.err{{color:#b
 def login_page(title, msg=""):
     return page(title, f"""<form method="post" action="/login"><input type="password" name="pin" inputmode="numeric"
 autocomplete="current-password" placeholder="PIN" autofocus required><br><button>Open</button></form><p class="err">{msg}</p>""")
+
+
+class OnlyServer(ThreadingHTTPServer):
+    """A server that owns its port alone. Python's default lets a second copy bind the same port on Windows
+    (SO_REUSEADDR), so every restart left the old server answering too. Here a second copy fails with OSError."""
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows: no other socket may share this address
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 class Web(BaseHTTPRequestHandler):
