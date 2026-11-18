@@ -8,8 +8,10 @@ const W = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
 const DIGITS = '0123456789';
 
 export function vinValid(v: string): boolean {
-  const cs = [...v]; // code points, as Python counts them
-  if (cs.length !== 17 || cs.some((c) => !T.has(c) && !DIGITS.includes(c))) return false;
+  // 17 UTF-16 units is the only way to 17 characters that are all ASCII letters and digits
+  if (v.length !== 17) return false;
+  const cs = [...v];
+  if (cs.some((c) => !T.has(c) && !DIGITS.includes(c))) return false;
   const sum = cs.reduce((n, c, i) => n + (DIGITS.includes(c) ? Number(c) : (T.get(c) as number)) * (W[i] as number), 0);
   const s = sum % 11;
   return cs[8] === (s === 10 ? 'X' : String(s));

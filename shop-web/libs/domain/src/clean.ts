@@ -18,12 +18,31 @@ import {
 // ---- Python string helpers (whitespace is str.isspace(), not JS \s) ----
 
 const PY_SPACE = '\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
-const PY_SPACE_RUN = new RegExp(`[${PY_SPACE}]+`, 'u');
-const PY_SPACE_ENDS = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, 'gu');
-const len = (s: string): number => [...s].length; // code points, as Python counts
+const isSpace = (c: number): boolean =>
+  (c >= 9 && c <= 13) || (c >= 0x1c && c <= 0x20) || c === 0x85 || c === 0xa0 || c === 0x1680 ||
+  (c >= 0x2000 && c <= 0x200a) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000;
+const len = (s: string): number => [...s].length; // code points, as Python counts; call on bounded strings only
 
-export const pyStrip = (s: string): string => s.replace(PY_SPACE_ENDS, '');
-export const pySplit = (s: string): string[] => pyStrip(s).split(PY_SPACE_RUN).filter(Boolean);
+// Linear scans, never `$`-anchored regexes: a long whitespace run must not cost O(n^2).
+export function pyStrip(s: string): string {
+  let a = 0;
+  let b = s.length;
+  while (a < b && isSpace(s.charCodeAt(a))) a++;
+  while (b > a && isSpace(s.charCodeAt(b - 1))) b--;
+  return s.slice(a, b);
+}
+export function pySplit(s: string): string[] {
+  const words: string[] = [];
+  let start = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (isSpace(s.charCodeAt(i))) {
+      if (start >= 0) words.push(s.slice(start, i));
+      start = -1;
+    } else if (start < 0) start = i;
+  }
+  if (start >= 0) words.push(s.slice(start));
+  return words;
+}
 
 /** Single spaces between words, no spaces at the ends; null/undefined/0/false -> "". */
 export function squash(s: unknown): string {
@@ -43,6 +62,8 @@ export function text(v: unknown, name: string, limit = 80): string {
   if (v !== null && v !== undefined && typeof v !== 'string' && typeof v !== 'number') {
     throw new Error(`${name} must be text`);
   }
+  // refuse a huge raw string before scanning it (padding up to 4x the limit is still tolerated)
+  if (typeof v === 'string' && v.length > Math.max(limit * 4, 10_000)) throw new Error(`${name} is too long (max ${limit})`);
   const s = v === null || v === undefined ? '' : pyStrip(String(v));
   if (len(s) > limit) throw new Error(`${name} is too long (max ${limit})`);
   return s;
@@ -131,7 +152,7 @@ function itemId(d: Record<string, unknown>): number {
   if (typeof v === 'number') n = Number.isFinite(v) ? Math.trunc(v) : 0;
   else if (typeof v === 'boolean') n = v ? 1 : 0;
   else if (typeof v === 'string') {
-    const s = pyStrip(v);
+    const s = v.length > 100 ? '' : pyStrip(v); // longer is never a valid id
     n = /^[+-]?\d+(?:_\d+)*$/.test(s) ? Number(s.replace(/_/g, '')) : 0;
   }
   return n > 0 && n <= 1e9 ? n : 0;

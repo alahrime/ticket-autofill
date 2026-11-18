@@ -22,6 +22,9 @@ describe('vin', () => {
     expect(vinValid('1HGCM82633A0O4352')).toBe(false);
     expect(vinValid('1HGCM82633A00435²')).toBe(false); // ASCII only
     expect(vinValid('')).toBe(false);
+    const t0 = performance.now();
+    expect(vinValid('1'.repeat(5_000_000))).toBe(false); // wrong length: no scan
+    expect(performance.now() - t0).toBeLessThan(100);
   });
 
   it('vinWarning says why', () => {

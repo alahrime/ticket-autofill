@@ -272,3 +272,29 @@ describe('totals', () => {
     expect(totals(t).deposits).toBe(100.6); // in cents, no float drift
   });
 });
+
+describe('protected and unknown keys', () => {
+  it('a mechanic edit ignores status, version, id, created and unknown keys', () => {
+    const t = tk({ id: 3, status: 'working', mechanic: 'Mike', created: 'c0', version: 2, updated: 'u0' });
+    const fields = {
+      status: 'filled',
+      version: 99,
+      id: 5,
+      created: 'x',
+      updated: 'y',
+      extra_k: 1,
+      lines: [{ desc: 'oil', price: 30 }],
+    };
+    edit(t, fields, 'mechanic');
+    expect([t.status, t.version, t.id, t.created, t.updated]).toEqual(['working', 2, 3, 'c0', 'u0']);
+    expect(t).not.toHaveProperty('extra_k');
+    expect(t.lines).toHaveLength(1);
+  });
+
+  it('keeps unknown keys already on the ticket, and ignores __proto__', () => {
+    const t = tk({ status: 'working', legacy: 'keep' });
+    edit(t, JSON.parse('{"__proto__":{"status":"x"},"notes":"n"}'), 'mechanic');
+    expect([t['legacy'], t.status, t.notes]).toEqual(['keep', 'working', 'n']);
+    expect(Object.getPrototypeOf(t)).toBe(Object.prototype);
+  });
+});

@@ -217,3 +217,38 @@ describe('normalize', () => {
     expect(normalize({ deposits: [] })).toEqual({ clean: { deposits: [] }, errors: {} });
   });
 });
+
+describe('hostile input', () => {
+  const pad = 'a' + ' '.repeat(200_000) + 'b';
+  const fast = <T>(f: () => T): T => {
+    const t0 = performance.now();
+    const r = f();
+    expect(performance.now() - t0).toBeLessThan(100);
+    return r;
+  };
+
+  it('a huge padded string is refused fast, with the usual message', () => {
+    const { errors } = fast(() =>
+      normalize({ first: pad, request: pad, lines: [{ desc: pad, price: pad }], deposits: [{ amount: pad }] }),
+    );
+    expect(errors['first']).toBe('first is too long (max 80)');
+    expect(errors['request']).toBe('request is too long (max 2000)');
+    expect(errors['lines']).toBe('line 1: description is too long (max 200)');
+    expect(errors['deposits']).toBe('deposit 1: amount is too long (max 40)');
+    expect(fast(() => thrown(() => money(pad, 'price'))).message).toBe('price is too long (max 40)');
+    expect(fast(() => normalize({ lines: [{ desc: 'x', id: pad }] })).errors).toEqual({});
+  });
+
+  it('a long run inside the limit still strips and splits linearly', () => {
+    const s = ' '.repeat(4_000) + 'x' + ' '.repeat(4_000);
+    expect(fast(() => squash(s))).toBe('x');
+    expect(fast(() => normalize({ notes: s })).clean.notes).toBe('x');
+  });
+
+  it('__proto__ and constructor keys do nothing', () => {
+    const r = normalize(JSON.parse('{"__proto__":{"status":"x"},"constructor":1}'));
+    expect(r).toEqual({ clean: {}, errors: {} });
+    expect(({} as Record<string, unknown>)['status']).toBeUndefined();
+    expect(Object.getPrototypeOf(r.clean)).toBe(Object.prototype);
+  });
+});
