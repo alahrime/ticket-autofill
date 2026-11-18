@@ -164,6 +164,10 @@ Design:
   - The iPad section of the current `admin.html` is removed in phase 2, and `web/checkin.html` is deleted.
   - The chooser at `/` shows only Mechanic and Admin.
 - Replace pages: `/tech` first (it gains New customer), then `/admin`. Each keeps the existing behaviour (4 s polling with ETag via TanStack Query `refetchInterval`, the 409 "someone changed it" handling, phone-first layout for `/tech`).
+- **Modern React only (owner, 2026-11-18):**
+  - Function components and hooks, with no class components and no `this.state` / `setState`.
+  - Reusable behaviour lives in **custom hooks**, for example `useTicketList` (polling + ETag), `useTicket`, `useSaveTicket` (version + 409 handling), `useConfirm` (the delete pop-up), `useDraft` (the phone's local draft) and `useCheckIn`.
+  - Server state goes through the Orval-generated TanStack Query hooks. Local UI state uses `useState` / `useReducer`.
 - Each page ships with Testing Library tests, a Playwright flow and an axe check with no violations.
 - **CSP gets stricter:** once no inline scripts remain, drop `'unsafe-inline'` from `script-src`.
 - Login pages may stay server-rendered forms (they work without JS and with password managers). Builder's call.
