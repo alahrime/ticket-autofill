@@ -57,7 +57,13 @@
   "analytics": false,
   "targetDefaults": {
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "options": {
+        "env": {
+          "NODE_OPTIONS": "--no-experimental-webstorage",
+          "TS_NODE_COMPILER_OPTIONS": "{\"moduleResolution\":\"node10\",\"module\":\"commonjs\",\"customConditions\":null}"
+        }
+      }
     }
   }
 }

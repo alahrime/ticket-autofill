@@ -9,6 +9,7 @@ import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020'
 import type { Request, RequestHandler } from 'express';
 import { parse } from 'yaml';
 import { BadInput } from '../errors';
+import { queryValues } from '../view';
 
 export const SPEC_FILE = 'openapi.yaml';
 const SPEC_ID = 'openapi';
@@ -22,29 +23,64 @@ export type Contract = { operations: Map<string, Operation> };
 
 const isObject = (v: unknown): v is Schema => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** openapi.yaml in the nearest folder above this file (apps/api, from src/http or from dist). */
+export const PACKAGE = '@shop/api';
+
+/** The package's name in dir/package.json, or undefined (no file, or not JSON). */
+function packageName(dir: string): unknown {
+  try {
+    return (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: unknown }).name;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * openapi.yaml at the @shop/api package root: the nearest folder above `from` whose package.json is that
+ * package (apps/api, from src/http or from dist). Never a folder above it: a missing spec throws.
+ */
 export function specPath(from = __dirname): string {
   for (let d = resolve(from); ; d = dirname(d)) {
-    if (existsSync(join(d, SPEC_FILE))) return join(d, SPEC_FILE);
-    if (dirname(d) === d) throw new Error(`${SPEC_FILE} not found`);
+    if (packageName(d) === PACKAGE) {
+      const file = join(d, SPEC_FILE);
+      if (!existsSync(file)) throw new Error(`${SPEC_FILE} not found in ${PACKAGE}`);
+      return file;
+    }
+    if (dirname(d) === d) throw new Error(`${PACKAGE} not found above ${from}`);
   }
 }
 
 const SCHEMAS = '#/components/schemas/';
 
-/** A copy with every `x-checked-in` schema made `{}` and #/components/schemas/ $refs pointed at Ajv's copy. */
-function prepare(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(prepare);
-  if (!isObject(v)) return v;
-  if ('x-checked-in' in v) return {};
-  return Object.fromEntries(
-    Object.entries(v).map(([k, x]) => [
-      k,
-      k === '$ref' && typeof x === 'string' && x.startsWith(SCHEMAS)
-        ? `${SPEC_ID}#/$defs/${x.slice(SCHEMAS.length)}`
-        : prepare(x),
-    ]),
-  );
+/**
+ * A copy for Ajv: every `x-checked-in` schema made `{}`, those properties dropped from their object's
+ * `required` (left out, the route or domain says so in its own words and order), and #/components/schemas/
+ * $refs pointed at Ajv's copy. `components` are the spec's schemas, to see through a $ref.
+ */
+function prepare(v: unknown, components: Schema): unknown {
+  const checkedIn = (s: unknown): boolean => {
+    if (!isObject(s)) return false;
+    if ('x-checked-in' in s) return true;
+    const ref = s['$ref'];
+    return typeof ref === 'string' && ref.startsWith(SCHEMAS) && checkedIn(components[ref.slice(SCHEMAS.length)]);
+  };
+  const walk = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(walk);
+    if (!isObject(x)) return x;
+    if ('x-checked-in' in x) return {};
+    const out = Object.fromEntries(
+      Object.entries(x).map(([k, y]) => [
+        k,
+        k === '$ref' && typeof y === 'string' && y.startsWith(SCHEMAS)
+          ? `${SPEC_ID}#/$defs/${y.slice(SCHEMAS.length)}`
+          : walk(y),
+      ]),
+    );
+    const props = x['properties'];
+    if (Array.isArray(x['required']) && isObject(props))
+      out['required'] = (x['required'] as unknown[]).filter((n) => !checkedIn(props[String(n)]));
+    return out;
+  };
+  return walk(v);
 }
 
 /** "/api/tickets/{id}" -> "/api/tickets/:id", as the routes are written. */
@@ -55,8 +91,8 @@ export function loadContract(file = specPath()): Contract {
   const spec = parse(readFileSync(file, 'utf8')) as Schema;
   const ajv = new Ajv2020({ strict: true, allowUnionTypes: true, verbose: true });
   ajv.addVocabulary(['x-error', 'x-checked-in']);
-  const schemas = (spec['components'] as Schema | undefined)?.['schemas'] ?? {};
-  ajv.addSchema({ $id: SPEC_ID, $defs: prepare(schemas) });
+  const schemas = ((spec['components'] as Schema | undefined)?.['schemas'] ?? {}) as Schema;
+  ajv.addSchema({ $id: SPEC_ID, $defs: prepare(schemas, schemas) });
 
   /** The schema a $ref names (as prepared), else the schema itself. */
   const deref = (s: unknown): Schema | undefined => {
@@ -65,7 +101,7 @@ export function loadContract(file = specPath()): Contract {
     return typeof ref === 'string' ? deref(ajv.getSchema(ref)?.schema) : s;
   };
   const compile = (schema: unknown): Check => {
-    const root = prepare(schema) as Schema;
+    const root = prepare(schema, schemas) as Schema;
     const named = (deref(root)?.['properties'] ?? {}) as Schema;
     return {
       validate: ajv.compile(root),
@@ -131,14 +167,14 @@ export const validRequest: RequestHandler = (req, _res, next) => {
   const check = (c: Check, value: unknown, name?: string): void => {
     if (c.validate(value)) return;
     const e = c.validate.errors?.[0];
-    throw new BadInput(e ? c.message(e, name) : 'bad request');
+    const message = e ? c.message(e, name) : 'bad request';
+    c.validate.errors = null; // verbose errors hold the input: don't keep it past this request
+    throw new BadInput(message);
   };
   if (op.body) check(op.body, req.body);
   if (op.query.length) {
-    const q = req.originalUrl.indexOf('?');
-    // as the routes read it (Python's parse_qs): every value of each name
-    const params = new URLSearchParams(q < 0 ? '' : req.originalUrl.slice(q + 1).split('#')[0]);
-    for (const { name, check: c } of op.query) for (const v of params.getAll(name)) check(c, v, name);
+    // read as the routes read it (queryValues, Python's parse_qs): every non-blank value of each name
+    for (const { name, check: c } of op.query) for (const v of queryValues(req.originalUrl, name)) check(c, v, name);
   }
   next();
 };

@@ -151,6 +151,10 @@ paths:
             example:
               version: 1
               notes: customer will wait
+              lines:
+                - { desc: front brake pads, qty: 1, price: '100', labor: '100', code: FBP }
+              deposits:
+                - { amount: 50, method: cash }
       responses:
         '200':
           description: The saved ticket.
@@ -306,7 +310,8 @@ paths:
         - name: id
           in: path
           required: true
-          schema: { type: string, pattern: '^[0-9]{1,9}$' }
+          description: 1 to 9 digits; anything else is 404.
+          schema: { type: integer, minimum: 0, maximum: 999999999 }
           example: 2
       requestBody:
         required: true
@@ -343,7 +348,7 @@ components:
       in: path
       required: true
       description: 1 to 9 digits; anything else is 404.
-      schema: { type: string, pattern: '^[0-9]{1,9}$' }
+      schema: { type: integer, minimum: 0, maximum: 999999999 }
       example: 1
 
   responses:
@@ -619,7 +624,7 @@ components:
       type: object
       required: [name, role, secret]
       properties:
-        name: { type: string, maxLength: 80 }
+        name: { type: string, description: 'Cut to its first 80 characters, not refused.' }
         role: { $ref: '#/components/schemas/Role' }
         secret: { type: string, description: 'Admin: a password, 10 or more characters. Mechanic: a PIN of digits.' }
 

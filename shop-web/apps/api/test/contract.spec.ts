@@ -1,12 +1,12 @@
 // The OpenAPI contract (openapi.yaml) against the real app: every /api/ route is in it, every operation in it
 // answers a signed-in admin, and each reply matches the schema the spec gives for its status.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020';
 import type { Express } from 'express';
 import { parse } from 'yaml';
 import { createApp } from '../src/app';
-import { loadContract, validRequest } from '../src/http/contract';
+import { loadContract, specPath, validRequest } from '../src/http/contract';
 import { CAR, makeServer, type TestServer } from './helpers';
 import { tempDir } from './py';
 
@@ -108,6 +108,26 @@ describe('the OpenAPI contract', () => {
       const schema = reply?.content?.['application/json']?.schema;
       if (schema) expect([where, check(schema, r.body)]).toEqual([where, null]);
     }
+    // the edit example's line and deposit were in replies checked above (Line, Deposit, Totals.deposits)
+    const t = (await s.call('/api/tickets/1', undefined, a)).body as J;
+    expect([t.lines.length, t.deposits.length, t.totals.deposits]).toEqual([1, 1, 50]);
+  });
+
+  it('finds openapi.yaml at the @shop/api package root, never above it', () => {
+    expect(specPath()).toBe(join(__dirname, '..', 'openapi.yaml'));
+    const { dir, done } = tempDir();
+    try {
+      // a stranger's openapi.yaml above the package must not be loaded
+      writeFileSync(join(dir, 'openapi.yaml'), 'openapi: 3.1.0\n');
+      const pkg = join(dir, 'api');
+      mkdirSync(join(pkg, 'dist'), { recursive: true });
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@shop/api' }));
+      expect(() => specPath(join(pkg, 'dist'))).toThrow('openapi.yaml not found in @shop/api');
+      writeFileSync(join(pkg, 'openapi.yaml'), 'openapi: 3.1.0\n');
+      expect(specPath(join(pkg, 'dist'))).toBe(join(pkg, 'openapi.yaml'));
+    } finally {
+      done();
+    }
   });
 
   it('a mechanic gets the mechanic view, as the spec says', async () => {
@@ -155,6 +175,30 @@ describe('the OpenAPI contract', () => {
     } finally {
       done();
     }
+  });
+
+  it('a field left out that the route or domain checks keeps their message and order', async () => {
+    const a = await s.admin();
+    const t = (await s.call('/api/tickets', CAR, a)).body as J;
+    const reply = async (path: string, body: unknown): Promise<[number, J]> => {
+      const r = await s.call(path, body, a);
+      return [r.status, r.body];
+    };
+    // Move: `to` is the route's (shop.py move()), after the ticket lookup
+    expect(await reply(`/api/tickets/${t.id}/move`, { version: 1 })).toEqual([400, { error: 'to must be a status' }]);
+    expect(await reply('/api/tickets/999/move', { version: 1 })).toEqual([404, { error: 'no such ticket' }]);
+    // NewTicket: the required fields are the domain's, with its field errors
+    const noPhone: Record<string, string> = { ...CAR };
+    delete noPhone['phone'];
+    const [code, r] = await reply('/api/tickets', noPhone);
+    expect([code, r.errors]).toEqual([400, { phone: 'phone is required' }]);
+    // NewUser: name / role / secret are the account rules'
+    const [ucode, u] = await reply('/api/users', {});
+    expect(ucode).toBe(400);
+    expect(Object.keys(u.errors).sort()).toEqual(['name', 'role']);
+    // Edit with only the version, UserChange with nothing: nothing to change, not refused
+    expect((await reply(`/api/tickets/${t.id}`, { version: 1 }))[0]).toBe(200);
+    expect((await reply(`/api/users/${s.ids['Al Fixit']}`, {}))[0]).toBe(200);
   });
 
   it('a request the spec refuses is 400 {error}, after the sign-in and role gates', async () => {

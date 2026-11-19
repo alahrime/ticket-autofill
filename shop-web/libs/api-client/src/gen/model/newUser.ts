@@ -8,7 +8,7 @@
 import type { Role } from './role.js';
 
 export interface NewUser {
-  /** @maxLength 80 */
+  /** Cut to its first 80 characters, not refused. */
   name: string;
   role: Role;
   /** Admin: a password, 10 or more characters. Mechanic: a PIN of digits. */

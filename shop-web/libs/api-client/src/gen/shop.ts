@@ -484,7 +484,7 @@ export type getTicketResponseError = (getTicketResponse401 | getTicketResponse40
 
 export type getTicketResponse = (getTicketResponseSuccess | getTicketResponseError)
 
-export const getGetTicketUrl = (id: string,) => {
+export const getGetTicketUrl = (id: number,) => {
 
 
 
@@ -496,7 +496,7 @@ export const getGetTicketUrl = (id: string,) => {
  * A mechanic also sees their own ticket in review. Someone else's is 404.
  * @summary One ticket
  */
-export const getTicket = async (id: string, options?: Parameters<typeof shopFetch>[1]): Promise<getTicketResponse> => {
+export const getTicket = async (id: number, options?: Parameters<typeof shopFetch>[1]): Promise<getTicketResponse> => {
 
   return shopFetch<getTicketResponse>(getGetTicketUrl(id),
   {
@@ -511,14 +511,14 @@ export const getTicket = async (id: string, options?: Parameters<typeof shopFetc
 
 
 
-export const getGetTicketQueryKey = (id: string,) => {
+export const getGetTicketQueryKey = (id: number,) => {
     return [
     `/api/tickets/${id}`
     ] as const;
     }
 
 
-export const getGetTicketQueryOptions = <TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+export const getGetTicketQueryOptions = <TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -541,7 +541,7 @@ export type GetTicketQueryError = ErrorType<SignInResponse | NotAllowedResponse 
 
 
 export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>> & Pick<
+ id: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTicket>>,
           TError,
@@ -551,7 +551,7 @@ export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TErr
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>> & Pick<
+ id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTicket>>,
           TError,
@@ -561,7 +561,7 @@ export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TErr
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -569,7 +569,7 @@ export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TErr
  */
 
 export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
@@ -625,7 +625,7 @@ export type editTicketResponseError = (editTicketResponse400 | editTicketRespons
 
 export type editTicketResponse = (editTicketResponseSuccess | editTicketResponseError)
 
-export const getEditTicketUrl = (id: string,) => {
+export const getEditTicketUrl = (id: number,) => {
 
 
 
@@ -639,7 +639,7 @@ export const getEditTicketUrl = (id: string,) => {
  * odometer, vin and notes.
  * @summary Change a ticket's fields
  */
-export const editTicket = async (id: string,
+export const editTicket = async (id: number,
     edit: Edit, options?: Parameters<typeof shopFetch>[1]): Promise<editTicketResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
@@ -701,7 +701,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type EditTicketMutationResult = NonNullable<Awaited<ReturnType<typeof editTicket>>>
     export type EditTicketMutationBody = BodyType<Edit>
     export type EditTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>
-    export type EditTicketMutationVariables = {id: string;data: BodyType<Edit>}
+    export type EditTicketMutationVariables = {id: number;data: BodyType<Edit>}
 
     /**
  * @summary Change a ticket's fields
@@ -756,7 +756,7 @@ export type moveTicketResponseError = (moveTicketResponse400 | moveTicketRespons
 
 export type moveTicketResponse = (moveTicketResponseSuccess | moveTicketResponseError)
 
-export const getMoveTicketUrl = (id: string,) => {
+export const getMoveTicketUrl = (id: number,) => {
 
 
 
@@ -770,7 +770,7 @@ export const getMoveTicketUrl = (id: string,) => {
  * accepting for a mechanic names one.
  * @summary Move a ticket to another status
  */
-export const moveTicket = async (id: string,
+export const moveTicket = async (id: number,
     move: Move, options?: Parameters<typeof shopFetch>[1]): Promise<moveTicketResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
@@ -832,7 +832,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type MoveTicketMutationResult = NonNullable<Awaited<ReturnType<typeof moveTicket>>>
     export type MoveTicketMutationBody = BodyType<Move>
     export type MoveTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>
-    export type MoveTicketMutationVariables = {id: string;data: BodyType<Move>}
+    export type MoveTicketMutationVariables = {id: number;data: BodyType<Move>}
 
     /**
  * @summary Move a ticket to another status
@@ -1501,7 +1501,7 @@ export type changeUserResponseError = (changeUserResponse400 | changeUserRespons
 
 export type changeUserResponse = (changeUserResponseSuccess | changeUserResponseError)
 
-export const getChangeUserUrl = (id: string,) => {
+export const getChangeUserUrl = (id: number,) => {
 
 
 
@@ -1515,7 +1515,7 @@ export const getChangeUserUrl = (id: string,) => {
  * device back in (a new Set-Cookie).
  * @summary Reset a PIN / password, or turn an account on or off (admin)
  */
-export const changeUser = async (id: string,
+export const changeUser = async (id: number,
     userChange: UserChange, options?: Parameters<typeof shopFetch>[1]): Promise<changeUserResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
@@ -1577,7 +1577,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type ChangeUserMutationResult = NonNullable<Awaited<ReturnType<typeof changeUser>>>
     export type ChangeUserMutationBody = BodyType<UserChange>
     export type ChangeUserMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>
-    export type ChangeUserMutationVariables = {id: string;data: BodyType<UserChange>}
+    export type ChangeUserMutationVariables = {id: number;data: BodyType<UserChange>}
 
     /**
  * @summary Reset a PIN / password, or turn an account on or off (admin)
