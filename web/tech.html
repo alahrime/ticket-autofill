@@ -13,6 +13,7 @@ h3{font-size:18px;margin:0 0 4px}
 button{font:inherit;min-height:48px;padding:10px 16px;border:0;border-radius:8px;background:#1f5fbf;color:#fff;cursor:pointer}
 button.light{background:#ddd;color:#222}
 button.danger{background:#fde2e2;color:#900}
+button.danger.solid{background:#b3261e;color:#fff}
 button.link{background:none;color:#1f5fbf;padding:8px 4px;font-size:15px;text-decoration:underline}
 button.wide{display:block;width:100%;margin:8px 0}
 button:disabled{opacity:.5}
@@ -60,6 +61,11 @@ label input,label textarea{margin-top:4px}
 #signout{margin:0;flex:none}
 #signout button{min-height:40px;padding:6px 12px;font-size:15px}
 #lineform{border:2px solid #1f5fbf;scroll-margin-top:72px}
+#custform{border:2px solid #1f5fbf}
+dialog{border:0;border-radius:12px;padding:16px;width:min(460px,calc(100vw - 24px));box-shadow:0 4px 24px #0004;color:#222}
+dialog::backdrop{background:#0007}
+dialog h3,dialog p{overflow-wrap:anywhere}
+dialog p{margin:8px 0}
 [hidden]{display:none!important}
 </style></head><body>
 <header><div><span id="signedin" hidden>Signed in as <b id="me"></b></span> <span id="saved" aria-live="polite"></span> <span id="net" aria-live="polite"></span></div>
@@ -72,6 +78,28 @@ label input,label textarea{margin-top:4px}
 </section>
 
 <section id="home" hidden>
+  <button id="newcust" class="wide" type="button">New customer</button>
+  <form id="custform" class="card" autocomplete="off" novalidate hidden>
+    <h3>New customer</h3>
+    <label>First name <input name="first" maxlength="60" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <p class="ferr" data-for="first"></p>
+    <label>Last name <input name="last" maxlength="60" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <p class="ferr" data-for="last"></p>
+    <label>Phone <input name="phone" type="tel" inputmode="tel" maxlength="30" autocomplete="off"></label>
+    <p class="ferr" data-for="phone"></p>
+    <label>Year <input name="year" inputmode="numeric" maxlength="4" list="year-list" autocomplete="off"></label>
+    <p class="ferr" data-for="year"></p>
+    <label>Make <input name="make" maxlength="40" list="make-list" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <p class="ferr" data-for="make"></p>
+    <label>Model <input name="model" maxlength="40" list="model-list" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <p class="ferr" data-for="model"></p>
+    <label>Plate <input name="plate" maxlength="12" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <p class="ferr" data-for="plate"></p>
+    <label>What the customer wants done <textarea name="request" maxlength="2000"></textarea></label>
+    <p class="ferr" data-for="request"></p>
+    <p id="cerr" class="ferr" role="alert"></p>
+    <div class="row" style="margin-top:12px"><button type="submit" id="csave">Check in</button><button type="button" class="light" id="ccancel">Cancel</button></div>
+  </form>
   <h2>My jobs</h2>
   <div id="mine"></div>
   <h2>Waiting</h2>
@@ -119,7 +147,19 @@ label input,label textarea{margin-top:4px}
   <p id="noteserr" class="ferr" role="alert"></p>
 
   <button id="finish" class="wide" type="button" style="margin-top:20px">Finish job</button>
+  <button id="deljob" class="wide danger" type="button" style="margin-top:28px">Delete job</button>
 </section>
+
+<dialog id="deldlg" aria-labelledby="deltitle">
+  <form method="dialog">
+    <h3 id="deltitle"></h3>
+    <p id="delkeep"></p>
+    <div class="row"><button value="delete" class="danger solid">Delete</button><button value="cancel" class="light" id="delno" autofocus>Cancel</button></div>
+  </form>
+</dialog>
+<datalist id="year-list"></datalist>
+<datalist id="make-list"></datalist>
+<datalist id="model-list"></datalist>
 
 <script>
 "use strict";
@@ -130,6 +170,9 @@ let me = "", uid = "", reloading = false, list = [], etag = "", cur = null, edit
 let queue = Promise.resolve(), pending = 0, polling = false, hintSeq = 0, hintTimer = 0, savedTimer = 0, fieldTimer = 0;
 const known = {};   // id -> newest copy of that ticket this phone saved or loaded; queued saves take their version from it
 const queued = {};  // field -> value already waiting in the save queue
+const GONE_TEXT = "This ticket was removed by the desk.";  // 410
+const NOT_HERE = "Not available on this server.";  // check-in / delete on the old Python server (403)
+const KEPT = ["approved", "filled"];  // deleted, these stay in the records (never purged)
 
 function load(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
 function store(k, v) { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) { /* private mode */ } }
@@ -435,6 +478,26 @@ function checkOpen() {  // the open job changed somewhere else (desk, another ph
   if (!cur || pending) return;
   const t = list.find(x => x.id === cur.id);
   if (!t || t.version > cur.version) $("banner").hidden = false;
+  if (!t) probeOpen(cur.id);  // off the list: finished elsewhere, taken, or deleted (410)
+}
+async function probeOpen(id) {
+  try { await api(`/api/tickets/${id}`); } catch (e) { if (e.status === 410 && (cur && cur.id === id)) dropJob(id, GONE_TEXT); }
+}
+// The job is gone from this phone (deleted here, or by the desk): its draft only, then home with text.
+function dropJob(id, text, ok) {
+  writeDraft(id, {});
+  delete known[id];
+  list = list.filter(x => x.id !== id);
+  etag = "";
+  const here = (cur && cur.id === id) || location.hash === "#t" + id;
+  if (cur && cur.id === id) {
+    cur = null;  // no leaveJob: its save of the typed boxes would only be refused
+    clearFieldErrors();
+  }
+  if (text) say(text, ok);
+  if (here) goHome();
+  else if (!$("home").hidden) renderHome();
+  poll();
 }
 
 async function accept(t, b) {
@@ -454,6 +517,8 @@ async function accept(t, b) {
       say("This job just changed. Check it and tap Accept again.");
       etag = "";
       poll();
+    } else if (e.status === 410) {
+      dropJob(t.id, GONE_TEXT);
     } else if (e.status === 404 || e.status === 403) {  // someone else's now, or no longer waiting
       say("Someone else took this job, or it isn't waiting anymore.");
       etag = "";
@@ -490,6 +555,7 @@ async function loadJob(id) {
     show("job");
   } catch (e) {
     if (e.status === 401 || location.hash !== "#t" + id) return;
+    if (e.status === 410) return dropJob(id, GONE_TEXT);
     if (e.status === 404) writeDraft(id, {});  // gone, or not this mechanic's: nothing to save there
     say(e.status === 404 ? "That job isn't yours anymore, or it's gone." : errText(e));
     goHome();
@@ -682,6 +748,8 @@ function conflict(id, e, staleText, lines) {
     }
     setCur(t);
     say(isStale(e) ? (staleText || "Changed on another device. Showing the latest.") : errText(e));
+  } else if (e.status === 410) {
+    dropJob(id, GONE_TEXT);
   } else if (e.status === 404 || e.status === 403) {
     // 404: gone or someone else's; 403: not this mechanic's to change (e.g. waiting again). No saves go there now.
     writeDraft(id, {});
@@ -872,7 +940,141 @@ $("finish").addEventListener("click", async () => {
   }
 });
 
+// ---- delete my job (a modal asks first; the desk can restore it)
+function confirmDelete(t, opener) {  // -> true when Delete was pressed; Esc or Cancel -> false. Focus goes back to opener.
+  const dlg = $("deldlg");
+  $("deltitle").textContent = `Delete ticket #${t.id} — ` +
+    [[t.first, t.last].filter(Boolean).join(" ") || "(no name)", t.plate, money((t.totals || {}).total)].filter(Boolean).join(", ") + "?";
+  // the phone can't see deposits, which keep a deleted ticket for good (R10): no "14 days" promise here
+  $("delkeep").textContent = KEPT.includes(t.status) ? "This ticket stays in the records." : "The desk can restore it.";
+  dlg.returnValue = "";
+  dlg.showModal();
+  $("delno").focus();
+  return new Promise(ok => dlg.addEventListener("close", () => {
+    if (opener.isConnected) opener.focus();
+    ok(dlg.returnValue === "delete");
+  }, {once: true}));
+}
+$("deljob").addEventListener("click", async ev => {
+  const t = cur, opener = ev.currentTarget;
+  if (!t || !discardLine()) return;
+  if (!(await confirmDelete(t, opener)) || !cur || cur.id !== t.id) return;
+  closeForm();
+  say("");
+  const id = t.id;
+  opener.disabled = true;
+  try {
+    await enqueue(async () => {  // after any save on its way: known[id] has the version it left
+      if (!known[id]) return;
+      try {
+        await api(`/api/tickets/${id}/delete`, {version: known[id].version});
+        dropJob(id, KEPT.includes(t.status) ? "Deleted. It stays in the desk's records." : "Deleted. The desk can restore it.", true);
+      } catch (e) {
+        if (e.status === 403) say(NOT_HERE);
+        else conflict(id, e, "Changed on another device. Showing the latest; check it and tap Delete again.");
+      }
+    });
+  } finally {
+    opener.disabled = false;
+  }
+});
+
+// ---- new customer: the mechanic checks a customer in (the check-in iPad is retired); it waits for whoever accepts it
+const CUST = ["first", "last", "phone", "year", "make", "model", "plate", "request"];
+const custBox = k => $("custform").elements[k];
+let custToken = "", custBusy = false;
+function newToken() {  // as the desk's: the same token again (its reply was lost) is the same ticket, not a second one
+  const a = new Uint8Array(16);
+  (window.crypto || window.msCrypto).getRandomValues(a);
+  return [...a].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+function clearCustErrors() {
+  for (const p of $("custform").querySelectorAll(".ferr")) p.textContent = "";
+}
+function openCust() {
+  say("");
+  $("custform").hidden = false;
+  $("newcust").hidden = true;
+  custBox("first").focus();
+  loadVehicles();
+}
+function closeCust() {
+  $("custform").reset();
+  custToken = "";
+  clearCustErrors();
+  $("custform").hidden = true;
+  $("newcust").hidden = false;
+}
+$("newcust").addEventListener("click", openCust);
+$("ccancel").addEventListener("click", closeCust);
+$("custform").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  if (custBusy) return;
+  clearCustErrors();
+  const body = {};
+  for (const k of CUST) body[k] = custBox(k).value;
+  if (!CUST.some(k => body[k].trim())) { $("cerr").textContent = "Type the customer and the car first."; return; }
+  custToken = custToken || newToken();  // kept until it goes through: a retry is the same check-in
+  body.token = custToken;
+  custBusy = true;
+  $("csave").disabled = true;
+  try {
+    const t = (await api("/api/tickets", body)).data;
+    closeCust();
+    if (t.status === "waiting" && !list.some(x => x.id === t.id)) list = [t, ...list];  // newest first, as the server sends
+    renderHome();
+    say(`Checked in: ${shortName(t) || "the customer"}. The job is under Waiting.`, true);
+    etag = "";
+    poll();
+  } catch (e) {
+    if (e.status === 400) {
+      const errs = (e.data && e.data.errors) || {}, rest = [];
+      for (const [k, v] of Object.entries(errs)) {
+        const p = $("custform").querySelector(`.ferr[data-for="${k}"]`);
+        if (p) p.textContent = cap(v); else rest.push(cap(v));
+      }
+      $("cerr").textContent = rest.length ? rest.join("\n") : Object.keys(errs).length ? "" : errText(e);
+    } else if (e.status === 403) $("cerr").textContent = NOT_HERE;
+    else if (e.status === 410) { closeCust(); say(GONE_TEXT); }  // sent before, and the desk removed it since
+    else if (e.status !== 401) $("cerr").textContent = errText(e);
+  } finally {
+    custBusy = false;
+    $("csave").disabled = false;
+  }
+});
+
+// year / make / model lists from vehicles.json (as on the desk's page); typing anything still works
+const FIRST_YEAR = 1990, NEXT_YEAR = new Date().getFullYear() + 1;
+const MAKE_ALIAS = {CHEVY: "CHEVROLET", VW: "VOLKSWAGEN", MERCEDES: "MERCEDES-BENZ", BENZ: "MERCEDES-BENZ",
+                    "MERCEDES BENZ": "MERCEDES-BENZ", LANDROVER: "LAND ROVER"};
+let CARS = {}, modelsShown = null, carsLoading = false;  // {"MAKE": {"MODEL": [first, last]}}; the make|year listed
+const squash = s => String(s ?? "").trim().split(/\s+/).join(" ").toUpperCase();
+function fillList(id, items) {
+  $(id).replaceChildren(...items.map(v => { const o = document.createElement("option"); o.value = v; return o; }));
+}
+async function loadVehicles() {  // when the form opens, until it has come once
+  if (carsLoading || Object.keys(CARS).length) return;
+  carsLoading = true;
+  try {
+    const d = (await api("/api/vehicles")).data;
+    if (!Array.isArray(d)) { CARS = d; fillList("make-list", Object.keys(d)); modelsShown = null; }
+  } catch (e) { /* free text only */ } finally { carsLoading = false; }
+}
+function refreshModels() {  // models of the make typed; of the typed year when it has any
+  const make = MAKE_ALIAS[squash(custBox("make").value)] || squash(custBox("make").value), y = Number(custBox("year").value);
+  const year = /^[0-9]{4}$/.test(custBox("year").value.trim()) && y >= FIRST_YEAR && y <= NEXT_YEAR ? y : 0;
+  if (modelsShown === make + "|" + year) return;
+  modelsShown = make + "|" + year;
+  const models = Object.entries(CARS[make] || {});
+  const built = models.filter(([, r]) => Array.isArray(r) && r[0] <= year && year <= r[1]);
+  fillList("model-list", (year && built.length ? built : models).map(([m]) => m));  // none that year: all of them
+}
+for (const k of ["year", "make", "model"]) {
+  for (const e of ["focus", "input", "change"]) custBox(k).addEventListener(e, refreshModels);
+}
+
 // ---- start
+fillList("year-list", Array.from({length: NEXT_YEAR - FIRST_YEAR + 1}, (_, i) => String(NEXT_YEAR - i)));
 setInterval(poll, 4000);
 whoAmI();
 </script>

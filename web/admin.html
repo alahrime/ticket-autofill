@@ -10,6 +10,7 @@ button{font:inherit;min-height:48px;padding:10px 18px;border:0;border-radius:8px
 button.light{background:#ddd;color:#222}
 button.warn{background:#a35a00}
 button.go{background:#1d7a34}
+button.danger{background:#b3261e}
 button:disabled{opacity:.5}
 input,textarea,select{font:inherit;font-size:17px;width:100%;min-height:48px;padding:10px;border:1px solid #bbb;border-radius:8px;background:#fff;color:#222}
 input[readonly],textarea[readonly]{background:#eee;border-color:#ddd}
@@ -90,6 +91,14 @@ input.pin{-webkit-text-security:disc}
 .onoff{display:inline-block;padding:2px 10px;border-radius:10px;font-size:14px;background:#e0f2e4;color:#145a26}
 .onoff.no{background:#eee;color:#777}
 .hint{font-size:14px;color:#666;margin-top:4px}
+/* delete & deleted */
+dialog{border:0;border-radius:12px;padding:18px;width:min(460px,calc(100vw - 32px));box-shadow:0 4px 24px #0004;color:#222}
+dialog::backdrop{background:#0007}
+dialog h2{font-size:19px;margin:0 0 10px;overflow-wrap:anywhere}
+dialog p{margin:0 0 10px;overflow-wrap:anywhere}
+.drow{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid #eee}
+.drow .dinfo{flex:1;min-width:200px;overflow-wrap:anywhere}
+.drow .dinfo span{display:block}
 @media (max-width:640px){.users .c-created,.users .c-role{display:none}.users .role-inline{display:block}}
 </style></head><body>
 <header>
@@ -98,6 +107,7 @@ input.pin{-webkit-text-security:disc}
  <span id="me"></span>
  <button type="button" id="btnNew">New ticket</button>
  <button type="button" id="btnUsers" class="light">Mechanics &amp; admins</button>
+ <button type="button" id="btnDeleted" class="light">Deleted</button>
  <button type="button" id="btnBoard" class="light" hidden>Back to board</button>
  <form id="logoutForm" method="post" action="/logout"><button type="submit" class="light">Sign out</button></form>
 </header>
@@ -148,18 +158,26 @@ input.pin{-webkit-text-security:disc}
    </form>
   </div>
 
+ </section>
+
+ <section id="viewDeleted" hidden>
   <div class="box">
-   <h2>Check-in iPad</h2>
-   <p class="meta">Customers check themselves in on an iPad set up here. It can only create new tickets — it sees nothing else.</p>
-   <div id="kErr" class="msg err" role="status" aria-live="polite" hidden></div>
-   <div id="kOk" class="msg ok" role="status" aria-live="polite" hidden></div>
-   <div class="actions">
-    <button type="button" id="btnKiosk">Use this iPad for check-in</button>
-    <button type="button" class="warn" id="btnRevoke">Sign out all check-in iPads</button>
-   </div>
+   <h2>Deleted tickets</h2>
+   <p class="meta">Unfinished tickets with no deposit are removed for good 14 days after they're deleted. Ones with a deposit, and approved or filled ones, are kept.</p>
+   <div id="delErr" class="msg err" role="status" aria-live="polite" hidden></div>
+   <div id="delList"></div>
   </div>
  </section>
 </main>
+<dialog id="delDlg" aria-labelledby="delTitle">
+ <form method="dialog">
+  <h2 id="delTitle"></h2>
+  <p id="delDeps" hidden></p>
+  <p id="delKeep"></p>
+  <p id="delDirty" hidden>Your unsaved changes on it will be lost.</p>
+  <div class="actions"><button value="delete" class="danger" id="delYes">Delete</button><button value="cancel" class="light" id="delNo" autofocus>Cancel</button></div>
+ </form>
+</dialog>
 <datalist id="year-list"></datalist>
 <datalist id="make-list"></datalist>
 <datalist id="model-list"></datalist>
@@ -168,6 +186,8 @@ input.pin{-webkit-text-security:disc}
 "use strict";
 const POLL_MS = 4000, AGE_MS = 60000, TIMEOUT_MS = 15000;
 const OFFLINE = "Couldn't reach the shop PC — check the connection and try again.";
+const NOT_HERE = "Not available on this server.";  // delete / restore on the old Python server
+const KEPT = ["approved", "filled"];  // deleted, these stay in the records (never purged)
 const BOARD = ["waiting", "working", "review", "approved"];
 const COL_NAMES = {waiting: "Waiting", working: "Working", review: "Review", approved: "Approved"};
 const NAMEISH = {autocapitalize: "characters", autocorrect: "off", spellcheck: "false"};
@@ -378,10 +398,12 @@ function show(view) {
   $("viewBoard").hidden = view !== "board";
   $("viewTicket").hidden = view !== "ticket";
   $("viewUsers").hidden = view !== "users";
+  $("viewDeleted").hidden = view !== "deleted";
   $("btnNew").hidden = view !== "board";
   $("btnUsers").hidden = view !== "board";
+  $("btnDeleted").hidden = view !== "board";
   $("btnBoard").hidden = view === "board";
-  if (view !== "ticket") $("title").textContent = view === "users" ? "Mechanics & admins" : "Desk";
+  if (view !== "ticket") $("title").textContent = view === "users" ? "Mechanics & admins" : view === "deleted" ? "Deleted" : "Desk";
   window.scrollTo(0, 0);
 }
 
@@ -526,7 +548,7 @@ async function openTicket(id) {
   }
 }
 
-function editable(t) { return t.status !== "filled"; }  // the desk owns the invoice until it's in InvoMax
+function editable(t) { return t.status !== "filled" && t.status !== "deleted"; }  // the desk owns the invoice until it's in InvoMax
 
 function markDirty() { S.dirty = true; }
 
@@ -570,6 +592,7 @@ function loadTicket(t) {
   if (t.status === "working") parts.push(el("div", {class: "msg note",
     text: "With " + (t.mechanic || "the mechanic") + " — they can add lines on their phone too."}));
   if (t.status === "filled") parts.push(el("div", {class: "msg ok", text: "Filled in InvoMax."}));
+  if (t.status === "deleted") parts.push(el("div", {class: "msg note", text: "Deleted. Restore it from the Deleted list to change it."}));
 
   // customer + vehicle
   const grid = el("div", {class: "grid"});
@@ -615,7 +638,7 @@ function loadTicket(t) {
       el("span", {}, "Deposits paid ", el("b", {id: "tDeps", text: money(tot.deposits)}))),
     el("div", {class: "meta", text: "InvoMax adds tax; take deposits off InvoMax's total."})));
 
-  if (t.id && (t.status !== "filled" || (t.deposits || []).length)) parts.push(depositsBox(t));  // a deposit needs a saved ticket
+  if (t.id && (editable(t) || (t.deposits || []).length)) parts.push(depositsBox(t));  // a deposit needs a saved ticket
 
   // actions
   const act = el("div", {class: "actions"});
@@ -628,6 +651,7 @@ function loadTicket(t) {
       el("button", {type: "button", class: "go", text: "Send to InvoMax", onclick: approve}));
   }
   if (t.status === "approved") act.append(el("button", {type: "button", class: "go", text: "Mark filled", onclick: markFilled}));
+  if (t.id && t.status !== "deleted") act.append(el("button", {type: "button", class: "danger", id: "btnDelete", text: "Delete", onclick: deleteOpen}));
   if (act.children.length) parts.push(act);
 
   v.replaceChildren(...parts);
@@ -733,7 +757,7 @@ function today() {
 }
 
 function depositsBox(t) {
-  const open = t.status !== "filled", deps = t.deposits || [];
+  const open = editable(t), deps = t.deposits || [];
   const rows = deps.map(d => el("tr", {},
     el("td", {text: d.date}), el("td", {text: cap(d.method)}), el("td", {class: "note", text: d.note || ""}),
     el("td", {class: "num", text: money(d.amount)}),
@@ -930,7 +954,7 @@ async function post(path, body, retry) {
       clearTicketErrors();
       showErrors($("viewTicket"), e, $("tErr"));
     } else if (e.status !== 401) {
-      tError(e.message || "Couldn't save");
+      tError(noRoute(e) && /\/delete$/.test(path) ? NOT_HERE : e.message || "Couldn't save");
     }
     return null;
   } finally {
@@ -1008,6 +1032,103 @@ async function markFilled() {
                         : "Mark this ticket as filled in InvoMax?") + " It leaves the board.")) return;
   const t = await move("filled");
   if (t) { S.dirty = false; leaveTicket(); flash("Marked filled: " + fullName(t) + ".", "ok"); }
+}
+
+/* ---------- delete, and the Deleted list ---------- */
+
+function noRoute(e) { return e.status === 404 && e.data && e.data.error === "not found"; }  // a server without that call
+
+// The confirmation modal for ticket t -> true when the desk pressed Delete. Focus goes back to opener on close.
+function confirmDelete(t, opener) {
+  const dlg = $("delDlg"), tot = t.totals || {}, deps = hundredths(Number(tot.deposits || 0).toFixed(2));
+  $("delTitle").textContent = "Delete ticket #" + t.id + " — " +
+    [fullName(t) || "(no name)", t.plate, money(tot.total)].filter(Boolean).join(", ") + "?";
+  $("delDeps").textContent = deps > 0 ? "It has " + centsText(deps) + " in deposits." : "";
+  $("delDeps").hidden = !(deps > 0);
+  $("delKeep").textContent = KEPT.includes(t.status) ? "This ticket stays in the records."
+    : deps > 0 ? "It stays in the Deleted list until you restore it."  // R10: a ticket with a deposit is never purged
+    : "Deleted tickets can be restored for 14 days.";
+  $("delDirty").hidden = !(S.dirty || depTyped());
+  dlg.returnValue = "";
+  dlg.showModal();
+  $("delNo").focus();
+  return new Promise(ok => dlg.addEventListener("close", () => {
+    if (opener && opener.isConnected) opener.focus();
+    ok(dlg.returnValue === "delete");
+  }, {once: true}));
+}
+
+async function deleteOpen(ev) {
+  const t = S.cur, opener = ev.currentTarget;
+  if (!t || !t.id || S.busy) return;
+  if (!(await confirmDelete(t, opener)) || S.cur !== t) return;
+  clearTicketErrors();
+  const r = await post("/api/tickets/" + t.id + "/delete", {version: t.version});
+  if (!r) return;
+  S.cur = null; S.dirty = false; S.newer = null;
+  show("board");
+  const kept = KEPT.includes(t.status) || (t.deposits || []).length > 0;  // never purged (R10: a deposit keeps it)
+  flash("Deleted ticket #" + t.id + (kept ? ". It stays in the Deleted list; restore it from there."
+                                          : ". Restore it from Deleted within 14 days."), "ok");
+  poll();
+}
+
+function dayText(ymd) {  // "2026-12-03" -> a local date (new Date("2026-12-03") would be UTC midnight)
+  const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(String(ymd || ""));
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString(undefined, {year: "numeric", month: "short", day: "numeric"})
+           : String(ymd || "");
+}
+
+function showDeleted() {
+  flash("");
+  boxMsg("delErr", "");
+  show("deleted");
+  $("delList").replaceChildren(el("div", {class: "empty", text: "Loading…"}));
+  loadDeleted();
+}
+
+async function loadDeleted() {
+  try {
+    const r = await api("GET", "/api/tickets?status=deleted");
+    if (!Array.isArray(r.data.tickets)) throw new Http(200, {error: "Unexpected reply from the server"});
+    if (S.view === "deleted") renderDeleted(r.data.tickets);
+  } catch (e) {
+    if (e.status !== 401) boxMsg("delErr", e.message || "Couldn't load the list");
+  }
+}
+
+function renderDeleted(list) {
+  const rows = [...list].sort((a, b) => String(b.deleted_at || "").localeCompare(String(a.deleted_at || ""))).map(t => {
+    const from = COL_NAMES[t.deleted_from] || cap(String(t.deleted_from || "?"));
+    return el("div", {class: "drow"},
+      el("div", {class: "dinfo"},
+        el("b", {text: "#" + t.id + " " + (fullName(t) || "(no name)")}),
+        el("span", {class: "car", text: [vehicle(t), t.plate].filter(Boolean).join(" · ")}),
+        el("span", {class: "meta", text: "Deleted " + fmtDate(t.deleted_at) + " from " + from + " · " +
+          (t.purge_on ? "removed for good on " + dayText(t.purge_on)  // the server's date, never worked out here
+                      : (t.deposits || []).length ? "Kept (deposit)" : "Kept")})),
+      el("button", {type: "button", class: "go", text: "Restore", "aria-label": "Restore ticket #" + t.id,
+                    onclick: ev => restoreTicket(t, ev.currentTarget)}));
+  });
+  $("delList").replaceChildren(...(rows.length ? rows : [el("div", {class: "empty", text: "No deleted tickets."})]));
+}
+
+async function restoreTicket(t, b) {
+  if (S.busy) return;
+  boxMsg("delErr", "");
+  S.busy = true; b.disabled = true;
+  try {
+    const r = await api("POST", "/api/tickets/" + t.id + "/restore", {version: t.version});
+    S.etag = "";
+    flash("Restored #" + t.id + " " + (fullName(r.data) || "") + " to " + (COL_NAMES[r.data.status] || r.data.status) + ".", "ok");
+    poll();
+    loadDeleted();
+  } catch (e) {
+    if (e.status === 409) { boxMsg("delErr", cap(e.message) + " — the list is up to date now."); loadDeleted(); }
+    else if (e.status !== 401) boxMsg("delErr", noRoute(e) ? NOT_HERE : e.message || "Couldn't restore");
+  } finally {
+    S.busy = false; b.disabled = false;
+  }
 }
 
 /* ---------- signed in as ---------- */
@@ -1116,7 +1237,7 @@ function renderUsers() {
 
 function showUsers() {
   flash("");
-  boxMsg("uErr", ""); boxMsg("uOk", ""); boxMsg("kErr", ""); boxMsg("kOk", "");
+  boxMsg("uErr", ""); boxMsg("uOk", "");
   show("users");
   renderUsers();
   loadUsers();
@@ -1235,48 +1356,16 @@ async function setActive(u, active) {
   }
 }
 
-async function useForCheckin() {
-  if (S.busy) return;
-  if (!confirm((hasTyping() ? "What you typed on this page will be lost. " : "") +
-               "This signs you out here and turns this iPad into the customer check-in screen. " +
-               "Don't let Safari save your password on this iPad. Turn on Guided Access to keep customers on this page. Continue?")) return;
-  boxMsg("kErr", ""); boxMsg("kOk", "");
-  usersBusy(true);
-  try {
-    await api("POST", "/api/kiosk", {});
-    location.replace("/checkin");  // Back can't return to the admin page
-  } catch (e) {
-    if (e.status !== 401) boxMsg("kErr", e.message || "Couldn't set up check-in");
-    usersBusy(false);
-  }
-}
-
-async function revokeKiosks() {
-  if (S.busy) return;
-  if (!confirm("Sign out every check-in iPad? Each one will need to be set up again from this page.")) return;
-  boxMsg("kErr", ""); boxMsg("kOk", "");
-  usersBusy(true);
-  try {
-    await api("POST", "/api/kiosk/revoke", {});
-    boxMsg("kOk", "All check-in iPads are signed out.");
-  } catch (e) {
-    if (e.status !== 401) boxMsg("kErr", e.message || "Couldn't sign them out");
-  } finally {
-    usersBusy(false);
-  }
-}
-
 /* ---------- start ---------- */
 
 $("btnNew").addEventListener("click", newTicket);
 $("btnUsers").addEventListener("click", showUsers);
-$("btnBoard").addEventListener("click", () => S.view === "ticket" ? leaveTicket() : leaveUsers());
+$("btnBoard").addEventListener("click", () => S.view === "ticket" ? leaveTicket() : S.view === "users" ? leaveUsers() : show("board"));
 $("a-role").addEventListener("change", addRoleChanged);
 $("addForm").addEventListener("submit", addUser);
 $("resetForm").addEventListener("submit", resetSecret);
 $("btnCancelReset").addEventListener("click", closeReset);
-$("btnKiosk").addEventListener("click", useForCheckin);
-$("btnRevoke").addEventListener("click", revokeKiosks);
+$("btnDeleted").addEventListener("click", showDeleted);
 for (const e of ["focusin", "input", "change"]) document.addEventListener(e, carField);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 window.addEventListener("pageshow", e => { if (e.persisted) location.reload(); });  // from the back/forward cache: ask the server again

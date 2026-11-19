@@ -11,6 +11,9 @@
     },
     {
       "path": "./libs/api-client"
+    },
+    {
+      "path": "./apps/pages-e2e"
     }
   ],
   "compilerOptions": {}

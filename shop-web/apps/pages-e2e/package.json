@@ -1,0 +1,29 @@
+{
+  "name": "@shop/pages-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "nx": {
+    "name": "pages-e2e",
+    "implicitDependencies": [
+      "api"
+    ],
+    "targets": {
+      "e2e": {
+        "executor": "nx:run-commands",
+        "dependsOn": [
+          {
+            "projects": [
+              "api"
+            ],
+            "target": "build"
+          }
+        ],
+        "cache": false,
+        "options": {
+          "command": "playwright test",
+          "cwd": "{projectRoot}"
+        }
+      }
+    }
+  }
+}

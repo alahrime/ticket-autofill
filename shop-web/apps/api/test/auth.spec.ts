@@ -68,6 +68,9 @@ describe('pages and sign-in', () => {
     const r = await s.call('/checkin');
     expect([r.status, r.headers.location]).toEqual([303, '/']);
     const a = await s.admin();
+    expect((await s.call('/checkin', undefined, a)).headers.location).toBe('/'); // signed in too
+    // web/checkin.html is gone and was never served by its file name (nor by shop.py): still nothing there
+    for (const p of ['/checkin.html', '/web/checkin.html']) expect((await s.call(p)).status).toBe(404);
     expect((await s.call('/api/kiosk', {}, a)).status).toBe(404);
     expect((await s.call('/api/kiosk/revoke', {}, a)).status).toBe(404);
     expect((await s.call('/api/me', undefined, a)).status).toBe(200); // nothing signed this admin out

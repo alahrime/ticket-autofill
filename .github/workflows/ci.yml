@@ -23,6 +23,8 @@ jobs:
       - run: npm ci
       - run: npx nx run-many -t lint typecheck test build
       - run: node tools/parity-guard.mjs
+      - run: npx playwright install chromium
+      - run: npx nx e2e pages-e2e
 
   python:
     runs-on: windows-latest

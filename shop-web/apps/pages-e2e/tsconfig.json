@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "out-tsc/e2e",
+    "tsBuildInfoFile": "out-tsc/e2e/tsconfig.tsbuildinfo",
+    "lib": ["es2022", "dom"],
+    "types": ["node"]
+  },
+  "include": ["playwright.config.ts", "src/**/*.ts"],
+  "exclude": ["out-tsc", "test-output"]
+}
