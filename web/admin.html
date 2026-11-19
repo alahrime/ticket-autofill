@@ -954,7 +954,8 @@ async function post(path, body, retry) {
       clearTicketErrors();
       showErrors($("viewTicket"), e, $("tErr"));
     } else if (e.status !== 401) {
-      tError(noRoute(e) && /\/delete$/.test(path) ? NOT_HERE : e.message || "Couldn't save");
+      const del = /\/delete$/.test(path);
+      tError(del && noRoute(e) ? NOT_HERE : del && noTicket(e) ? GONE : e.message || "Couldn't save");
     }
     return null;
   } finally {
@@ -1036,7 +1037,22 @@ async function markFilled() {
 
 /* ---------- delete, and the Deleted list ---------- */
 
+// On /delete and /restore the two 404s differ by body: the TS server's missing ticket (purged) is "no such
+// ticket"; the Python server, which has no such route, answers "not found".
 function noRoute(e) { return e.status === 404 && e.data && e.data.error === "not found"; }  // a server without that call
+function noTicket(e) { return e.status === 404 && e.data && e.data.error === "no such ticket"; }
+const GONE = "This ticket is gone.";
+
+// Whether this server has delete / restore at all (Python's list just answers [] for status=deleted): a restore
+// of ticket 0, which never exists (ids start at 1), changes nothing and gets one of the two 404s above.
+let deleteRoutes = null;  // a promise of true / false, asked once
+function hasDeleteRoutes() {
+  deleteRoutes = deleteRoutes || api("POST", "/api/tickets/0/restore", {version: 1}).then(() => true, e => {
+    if (e.status === 0 || e.status === 401) { deleteRoutes = null; throw e; }  // couldn't tell: ask again next time
+    return !noRoute(e);
+  });
+  return deleteRoutes;
+}
 
 // The confirmation modal for ticket t -> true when the desk pressed Delete. Focus goes back to opener on close.
 function confirmDelete(t, opener) {
@@ -1053,7 +1069,8 @@ function confirmDelete(t, opener) {
   dlg.showModal();
   $("delNo").focus();
   return new Promise(ok => dlg.addEventListener("close", () => {
-    if (opener && opener.isConnected) opener.focus();
+    const back = opener && opener.isConnected ? opener : $("btnDelete");  // a sync may have redrawn the ticket
+    if (back) back.focus();
     ok(dlg.returnValue === "delete");
   }, {once: true}));
 }
@@ -1061,7 +1078,11 @@ function confirmDelete(t, opener) {
 async function deleteOpen(ev) {
   const t = S.cur, opener = ev.currentTarget;
   if (!t || !t.id || S.busy) return;
-  if (!(await confirmDelete(t, opener)) || S.cur !== t) return;
+  if (!(await confirmDelete(t, opener))) return;
+  if (S.cur !== t) {  // another device changed it while the modal was open: what was asked about isn't on screen now
+    if (onTicket(t.id)) tError("Changed on another device — check it and press Delete again.");
+    return;
+  }
   clearTicketErrors();
   const r = await post("/api/tickets/" + t.id + "/delete", {version: t.version});
   if (!r) return;
@@ -1091,6 +1112,11 @@ async function loadDeleted() {
   try {
     const r = await api("GET", "/api/tickets?status=deleted");
     if (!Array.isArray(r.data.tickets)) throw new Http(200, {error: "Unexpected reply from the server"});
+    // none listed: an empty list, or a server without deleting (it lists none whatever is asked)
+    if (!r.data.tickets.length && !(await hasDeleteRoutes())) {
+      if (S.view === "deleted") { $("delList").replaceChildren(); boxMsg("delErr", NOT_HERE); }
+      return;
+    }
     if (S.view === "deleted") renderDeleted(r.data.tickets);
   } catch (e) {
     if (e.status !== 401) boxMsg("delErr", e.message || "Couldn't load the list");
@@ -1125,6 +1151,7 @@ async function restoreTicket(t, b) {
     loadDeleted();
   } catch (e) {
     if (e.status === 409) { boxMsg("delErr", cap(e.message) + " — the list is up to date now."); loadDeleted(); }
+    else if (noTicket(e)) { boxMsg("delErr", GONE); loadDeleted(); }  // purged meanwhile
     else if (e.status !== 401) boxMsg("delErr", noRoute(e) ? NOT_HERE : e.message || "Couldn't restore");
   } finally {
     S.busy = false; b.disabled = false;

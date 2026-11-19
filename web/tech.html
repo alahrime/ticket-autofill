@@ -81,19 +81,19 @@ dialog p{margin:8px 0}
   <button id="newcust" class="wide" type="button">New customer</button>
   <form id="custform" class="card" autocomplete="off" novalidate hidden>
     <h3>New customer</h3>
-    <label>First name <input name="first" maxlength="60" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <label>First name <input name="first" maxlength="80" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
     <p class="ferr" data-for="first"></p>
-    <label>Last name <input name="last" maxlength="60" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <label>Last name <input name="last" maxlength="80" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
     <p class="ferr" data-for="last"></p>
     <label>Phone <input name="phone" type="tel" inputmode="tel" maxlength="30" autocomplete="off"></label>
     <p class="ferr" data-for="phone"></p>
     <label>Year <input name="year" inputmode="numeric" maxlength="4" list="year-list" autocomplete="off"></label>
     <p class="ferr" data-for="year"></p>
-    <label>Make <input name="make" maxlength="40" list="make-list" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <label>Make <input name="make" maxlength="80" list="make-list" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
     <p class="ferr" data-for="make"></p>
-    <label>Model <input name="model" maxlength="40" list="model-list" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <label>Model <input name="model" maxlength="80" list="model-list" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
     <p class="ferr" data-for="model"></p>
-    <label>Plate <input name="plate" maxlength="12" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
+    <label>Plate <input name="plate" maxlength="80" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
     <p class="ferr" data-for="plate"></p>
     <label>What the customer wants done <textarea name="request" maxlength="2000"></textarea></label>
     <p class="ferr" data-for="request"></p>
@@ -404,6 +404,7 @@ $("signout").addEventListener("submit", async ev => {
     }
     for (const id of myDrafts()) store(draftPrefix() + id, "");
     signingOut = true;
+    closeCust();  // a shared phone: a half-typed customer doesn't stay in the page
     $("signout").submit();  // the server clears the session and shows the sign-in page
   } catch (e) {
     signDone();
@@ -449,17 +450,27 @@ function card(t, waiting) {
   return c;
 }
 
+// Check-ins made here, each with the number of polls started before it: a poll that started earlier answers
+// with the board from before, so the new card is kept until a poll started after it has answered.
+let polls = 0;
+const checkedIn = [];  // [{t, after}]
 async function poll() {
   if (!me || polling || document.hidden) return;
   polling = true;
+  const n = ++polls;
   try {
     const r = await api("/api/tickets?status=waiting,working,approved", undefined, etag ? {"If-None-Match": etag} : {});
     $("net").textContent = "";
     if (r.status !== 304) {  // 304: nothing changed, keep the last list
-      const got = r.data.tickets || [];
+      let got = r.data.tickets || [];
       if (got.some(t => t.status !== "waiting" && !mineNow(t))) {  // the server only sends my own: someone else is signed in now
         reloading = true;
         return location.reload();
+      }
+      for (const c of checkedIn.splice(0)) {
+        if (n > c.after) continue;  // this poll saw the board after the check-in: it is the truth now
+        checkedIn.push(c);
+        if (!got.some(x => x.id === c.t.id)) got = [c.t, ...got];
       }
       list = got;
       etag = r.etag;
@@ -488,6 +499,7 @@ function dropJob(id, text, ok) {
   writeDraft(id, {});
   delete known[id];
   list = list.filter(x => x.id !== id);
+  for (let i = checkedIn.length - 1; i >= 0; i--) if (checkedIn[i].t.id === id) checkedIn.splice(i, 1);
   etag = "";
   const here = (cur && cur.id === id) || location.hash === "#t" + id;
   if (cur && cur.id === id) {
@@ -1021,7 +1033,10 @@ $("custform").addEventListener("submit", async ev => {
   try {
     const t = (await api("/api/tickets", body)).data;
     closeCust();
-    if (t.status === "waiting" && !list.some(x => x.id === t.id)) list = [t, ...list];  // newest first, as the server sends
+    if (t.status === "waiting") {
+      checkedIn.push({t, after: polls});  // until a poll started after now answers (see poll)
+      if (!list.some(x => x.id === t.id)) list = [t, ...list];  // newest first, as the server sends
+    }
     renderHome();
     say(`Checked in: ${shortName(t) || "the customer"}. The job is under Waiting.`, true);
     etag = "";
@@ -1029,9 +1044,9 @@ $("custform").addEventListener("submit", async ev => {
   } catch (e) {
     if (e.status === 400) {
       const errs = (e.data && e.data.errors) || {}, rest = [];
-      for (const [k, v] of Object.entries(errs)) {
-        const p = $("custform").querySelector(`.ferr[data-for="${k}"]`);
-        if (p) p.textContent = cap(v); else rest.push(cap(v));
+      for (const [k, v] of Object.entries(errs)) {  // only keys the form has go next to a box: never a selector from the reply
+        const p = CUST.includes(k) ? $("custform").querySelector(`.ferr[data-for="${k}"]`) : null;
+        if (p) p.textContent = cap(String(v)); else rest.push(cap(String(v)));
       }
       $("cerr").textContent = rest.length ? rest.join("\n") : Object.keys(errs).length ? "" : errText(e);
     } else if (e.status === 403) $("cerr").textContent = NOT_HERE;

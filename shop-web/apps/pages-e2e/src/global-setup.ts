@@ -1,25 +1,32 @@
 // Starts the built shop server (apps/api/dist/main.js) on a fresh temp SHOP_ROOT: a copy of web/, parts.csv and
 // vehicles.json, a new tickets.db, the admin made with the server's own `admin <name>` command and two mechanics
 // added through the API. Never the real tickets.db; never start-shop.bat. Returns the teardown.
-import { spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ADMIN, BASE, PASSWORD, PINS, PORT } from './shop';
 
-const REPO = resolve(__dirname, '../../../..'); // the folder holding shop.py and web/
+export const REPO = resolve(__dirname, '../../../..'); // the folder holding shop.py and web/
 export const MAIN = resolve(__dirname, '../../api/dist/main.js');
 
-async function waitUp(): Promise<void> {
+/**
+ * Until the server we spawned is the one answering: it printed its own "Serving on" (only after its listen
+ * succeeded) and is still running. Something else already on the port makes ours exit: that fails here.
+ */
+async function waitUp(server: ChildProcess, output: () => string): Promise<void> {
   for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(BASE + '/')).ok) return;
-    } catch {
-      // not listening yet
+    if (server.exitCode !== null) throw new Error(`the shop server stopped (port ${PORT} in use?): ${output()}`);
+    if (output().includes('Serving on')) {
+      try {
+        if ((await fetch(BASE + '/')).ok && server.exitCode === null) return;
+      } catch {
+        // not answering yet
+      }
     }
     await new Promise((ok) => setTimeout(ok, 100));
   }
-  throw new Error(`the shop server didn't start on ${BASE}`);
+  throw new Error(`the shop server didn't start on ${BASE}: ${output()}`);
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
@@ -42,12 +49,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   server.stderr.on('data', (c: Buffer) => (output += c.toString()));
   const exited = new Promise<void>((ok) => server.once('exit', () => ok()));
   try {
-    await Promise.race([
-      waitUp(),
-      exited.then(() => {
-        throw new Error(`the shop server stopped: ${output}`);
-      }),
-    ]);
+    await waitUp(server, () => output);
     // the mechanics, through the admin's own API
     const login = await fetch(BASE + '/login/admin', {
       method: 'POST',

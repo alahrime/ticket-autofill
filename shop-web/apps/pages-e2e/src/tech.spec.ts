@@ -64,18 +64,81 @@ test('tech new customer', async ({ browser }) => {
   await form.getByLabel('What the customer wants done').fill(c['request'] as string);
   await expect(form.getByLabel('Phone')).toHaveAttribute('inputmode', 'tel');
   await expect(page.locator('#make-list option[value="CADILLAC"]')).toHaveCount(1); // /api/vehicles, as the desk
+
+  // A poll that started before the create answers after it, with the board from before (a fresh 200, not a
+  // 304). While it is out, the page's own poll() after the create is skipped: the card must survive it.
+  let created!: () => void;
+  const afterCreate = new Promise<void>((ok) => (created = ok));
+  let stale = false;
+  let held = false;
+  await page.route(/\/api\/tickets\?status=/, async (route) => {
+    if (held) return route.continue();
+    held = true;
+    const headers = { ...route.request().headers() };
+    delete headers['if-none-match'];
+    const before = await route.fetch({ headers }); // the board as it was when this poll started
+    await afterCreate;
+    await route.fulfill({ response: before });
+    stale = true;
+  });
+  await page.waitForRequest(/\/api\/tickets\?status=/); // that poll is out now
   await form.getByRole('button', { name: 'Check in' }).click();
   await expect(page.locator('#msg')).toContainText('Checked in');
   await expect(form).toBeHidden();
   const card = page.locator('#waiting .card', { hasText: c['request'] as string });
-  await expect(card).toHaveCount(1);
+  await expect(card).toHaveCount(1, { timeout: 500 }); // right away, not on a later poll
+  created();
+  await expect.poll(() => stale).toBe(true);
+  await page.waitForTimeout(100); // the stale reply has been rendered
+  await expect(card).toHaveCount(1, { timeout: 500 }); // the old board didn't drop it
   await expect(card.getByRole('button', { name: 'Accept' })).toBeVisible();
+  await page.unroute(/\/api\/tickets\?status=/);
   // the desk sees it waiting, unassigned
   const r = await context.request.get('/api/tickets?status=waiting');
   const t = ((await r.json()) as { tickets: Array<Record<string, string>> }).tickets.find(
     (x) => x['last'] === (c['last'] as string).toUpperCase(),
   );
   expect([t?.['status'], t?.['mechanic']]).toEqual(['waiting', '']);
+  await context.close();
+});
+
+test('tech sign-out clears a half-typed customer', async ({ browser }) => {
+  const { context, page } = await signedInPage(() => browser.newContext(), 'mechanic', 'Bo Wrench');
+  await page.getByRole('button', { name: 'New customer' }).click();
+  await page.locator('#custform').getByLabel('Last name').fill('Typedhalfway');
+  // what is still on the page as it leaves, kept in this tab's sessionStorage across the navigation
+  await page.evaluate(() =>
+    window.addEventListener('pagehide', () => {
+      const f = document.getElementById('custform') as HTMLFormElement;
+      const last = (f.elements.namedItem('last') as HTMLInputElement).value;
+      sessionStorage.setItem('left', JSON.stringify({ last, hidden: f.hidden }));
+    }),
+  );
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.locator('input[name="secret"]')).toBeVisible(); // signed out: the sign-in page
+  expect(JSON.parse((await page.evaluate(() => sessionStorage.getItem('left'))) ?? 'null')).toEqual({
+    last: '',
+    hidden: true,
+  });
+  await context.close();
+});
+
+test('tech new customer: a 400 with keys the form has not', async ({ browser }) => {
+  const { context, page } = await signedInPage(() => browser.newContext(), 'mechanic', 'Bo Wrench');
+  await page.getByRole('button', { name: 'New customer' }).click();
+  await page.locator('#custform').getByLabel('First name').fill('Jane');
+  const errors = { first: 'first is required', 'x"] .y': 'odd key', lines: 'not yours' };
+  await page.route('**/api/tickets', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'bad', errors }) })
+      : route.fallback(),
+  );
+  const pageErrors: string[] = [];
+  page.on('pageerror', (e) => pageErrors.push(String(e)));
+  await page.getByRole('button', { name: 'Check in' }).click();
+  await expect(page.locator('#custform .ferr[data-for="first"]')).toHaveText('First is required');
+  await expect(page.locator('#cerr')).toHaveText('Odd key\nNot yours');
+  expect(pageErrors).toEqual([]);
   await context.close();
 });
 

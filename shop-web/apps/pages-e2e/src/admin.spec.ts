@@ -107,3 +107,67 @@ test('no kiosk', async ({ page }) => {
   await expect(page.locator('#btnKiosk, #btnRevoke')).toHaveCount(0);
   expect(await page.content()).not.toContain('/api/kiosk');
 });
+
+test('admin delete: changed on another device while the modal is open', async ({ page }) => {
+  const t = await deskWithTicket(page, false);
+  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  const dlg = page.getByRole('dialog');
+  await expect(dlg).toBeVisible();
+  // another device saves it meanwhile; the page's poll brings the new copy in under the modal
+  const r = await page.context().request.post(`/api/tickets/${t.id}`, {
+    data: { version: t.version, notes: 'changed elsewhere' },
+  });
+  expect(r.status()).toBe(200);
+  await expect(page.locator('#t-notes')).toHaveValue('changed elsewhere');
+  await dlg.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.locator('#tErr')).toHaveText('Changed on another device — check it and press Delete again.');
+  await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeFocused();
+  const now = (await (await page.context().request.get(`/api/tickets/${t.id}`)).json()) as Ticket;
+  expect(now.status).toBe('waiting'); // nothing was deleted
+});
+
+const reply = (error: string) => ({ status: 404, contentType: 'application/json', body: JSON.stringify({ error }) });
+
+test('admin delete 404s: a gone ticket, and a server without the call', async ({ page }) => {
+  const t = await deskWithTicket(page, false);
+  const path = `**/api/tickets/${t.id}/delete`;
+  const del = page.getByRole('button', { name: 'Delete', exact: true });
+  await page.route(path, (route) => route.fulfill(reply('no such ticket'))); // TS: purged meanwhile
+  await del.click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
+  await expect(page.locator('#tErr')).toHaveText('This ticket is gone.');
+  await page.unroute(path);
+  await page.route(path, (route) => route.fulfill(reply('not found'))); // shop.py: no such route
+  await del.click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
+  await expect(page.locator('#tErr')).toHaveText('Not available on this server.');
+});
+
+test('restore 404 for a purged ticket: This ticket is gone.', async ({ page }) => {
+  const t = await deskWithTicket(page, false);
+  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
+  await expect(page.locator('#flash')).toContainText(`Deleted ticket #${t.id}`);
+  await page.route(`**/api/tickets/${t.id}/restore`, (route) => route.fulfill(reply('no such ticket')));
+  await page.getByRole('button', { name: 'Deleted', exact: true }).click();
+  await page.getByRole('button', { name: `Restore ticket #${t.id}` }).click();
+  await expect(page.locator('#delErr')).toHaveText('This ticket is gone.');
+});
+
+test('Deleted list on a server without deleting: Not available on this server.', async ({ page }) => {
+  await signIn(page.context().request, 'admin', 'Owner Test');
+  // the real TS server first: its probe (a restore of ticket 0) gets "no such ticket", so the list shows
+  await page.goto('/admin');
+  await page.getByRole('button', { name: 'Deleted', exact: true }).click();
+  await expect(page.locator('#delList .drow, #delList .empty').first()).toBeVisible();
+  await expect(page.locator('#delErr')).toBeHidden();
+  // as shop.py answers: [] for an unknown status, and no restore route at all
+  await page.route('**/api/tickets?status=deleted', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: '{"tickets": []}' }),
+  );
+  await page.route('**/api/tickets/0/restore', (r) => r.fulfill(reply('not found')));
+  await page.reload();
+  await page.getByRole('button', { name: 'Deleted', exact: true }).click();
+  await expect(page.locator('#delErr')).toHaveText('Not available on this server.');
+  await expect(page.locator('#delList')).not.toContainText('No deleted tickets.');
+});
