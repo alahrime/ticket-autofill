@@ -1,6 +1,4 @@
 // `admin <name>`: makes or resets an admin from the shop PC's command line (shop.py main()).
-import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Invalid } from '@shop/domain';
 import { Accounts, makeAdmin } from './accounts';
@@ -11,28 +9,14 @@ export type CliIo = {
   out(s: string): void;
 };
 
-/** The repo root: SHOP_ROOT, else the nearest folder above this file or the cwd that holds shop.py. */
-export function shopRoot(): string {
-  if (process.env['SHOP_ROOT']) return resolve(process.env['SHOP_ROOT']);
-  for (const start of [__dirname, process.cwd()]) {
-    for (let d = resolve(start); ; d = dirname(d)) {
-      if (existsSync(join(d, 'shop.py'))) return d;
-      if (dirname(d) === d) break;
-    }
-  }
-  throw new Error(
-    'shop.py not found; set SHOP_ROOT to the folder holding tickets.db',
-  );
-}
-
-/** Runs `admin <name>` -> exit code. Never echoes the password. */
+/** Runs `admin <name>` on the tickets.db at dbPath (loadConfig().db) -> exit code. Never echoes the password. */
 export async function runAdminCommand(
   args: string[],
   io: CliIo,
-  dbPath?: string,
+  dbPath: string,
 ): Promise<number> {
   if (args.length !== 2 || args[0] !== 'admin') {
-    io.out('usage: node main.js [admin <name>]');
+    io.out('usage: node shop-web/dist/apps/api/main.js [admin <name>]');
     return 1;
   }
   const password = await io.prompt('New password (10+ characters): ', true);
@@ -40,7 +24,7 @@ export async function runAdminCommand(
     io.out("The passwords don't match; nothing changed.");
     return 1;
   }
-  const db = openDb(dbPath ?? join(shopRoot(), 'tickets.db'));
+  const db = openDb(dbPath);
   let name: string;
   try {
     name = (await makeAdmin(new Accounts(db), args[1], password)).name;
@@ -86,6 +70,7 @@ export function terminalIo(): CliIo {
     prompt: async (q, hidden) => {
       const stdin = process.stdin;
       if (!hidden || !stdin.isTTY) {
+        if (hidden) process.stderr.write('Warning: password input may be shown.\n'); // as Python's GetPassWarning
         process.stdout.write(q);
         return nextLine(); // the caller exits the process when done (stdin stays open)
       }

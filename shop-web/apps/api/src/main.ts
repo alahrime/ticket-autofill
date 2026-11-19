@@ -1,43 +1,37 @@
-/**
- * This is not a production server yet!
- * This is only a minimal backend to get started.
- */
+// The shop server: no arguments -> serve on 127.0.0.1:8081; `admin <name>` -> make or reset an admin.
+import { runAdminCommand, terminalIo } from './cli';
+import { loadConfig } from './config';
+import { startServer } from './server';
 
-import express from 'express';
-import * as path from 'path';
-
-const app = express();
-
-app.use('/assets', express.static(path.join(__dirname, 'assets')));
-
-app.get('/api', (req, res) => {
-  res.send({ message: 'Welcome to api!' });
-});
-
-const port = Number(process.env.PORT) || 8081;
-const server = app.listen(port, '127.0.0.1', async (error?: Error) => {
-  // A failed listen also reaches the 'error' listener below
-  if (error) {
-    return;
+async function main(args: string[]): Promise<number | null> {
+  const config = loadConfig();
+  if (!args.length) {
+    await startServer(config);
+    console.log(
+      `Serving on ${config.host}:${config.port}. No admin yet? Open /setup with the code in ${config.setup},` +
+        ' or run: node shop-web/dist/apps/api/main.js admin <name>',
+    );
+    return null; // keeps running
   }
-  console.log(`Listening at http://127.0.0.1:${port}/api`);
-  // Set when Nx waits for this server to be ready
-  if (process.env.NX_READY_SIGNAL_SOCKET) {
-    try {
-      // Function keeps TypeScript and bundlers from rewriting or bundling the import
-      const load = new Function('s', 'return import(s)') as (
-        s: string,
-      ) => Promise<{ emitReadySignal(server: unknown): boolean }>;
-      (await load('@nx/js/ready-signal')).emitReadySignal(server);
-    } catch {
-      // @nx/js isn't installed
+  try {
+    return await runAdminCommand(args, terminalIo(), config.db);
+  } catch (e) {
+    if (e instanceof Error && e.message === 'cancelled') {
+      console.log('Cancelled; nothing changed.');
+      return 1;
     }
+    throw e;
   }
-});
-server.on('error', (error) => {
-  console.error(error);
-  // Errors after listen, such as a failed accept, leave the server running
-  if (!server.listening) {
+}
+
+main(process.argv.slice(2)).then(
+  (code) => {
+    if (code !== null) process.exit(code);
+  },
+  (e: unknown) => {
+    // the shop PC's own console: the reason, never a stack
+    const err = e as NodeJS.ErrnoException;
+    console.error(err?.code === 'EADDRINUSE' ? 'The shop server is already running on this port.' : String(err?.message ?? e));
     process.exit(1);
-  }
-});
+  },
+);

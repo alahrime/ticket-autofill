@@ -1,0 +1,44 @@
+// shop.log: one line per request, no customer data (pinweb.Web.log): time, method, path without the query,
+// status (or "dropped" / "error <Class>"), who asked (role#user id), seconds.
+import { appendFileSync } from 'node:fs';
+import type { Request, RequestHandler, Response } from 'express';
+import type { Session } from '../accounts';
+import { beforeHeaders } from './hooks';
+
+const pad = (n: number): string => String(n).padStart(2, '0');
+const stamp = (d = new Date()): string =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+/** Records the signed-in caller for this request's log line. */
+export function noteActor(res: Response, s: Session | null): void {
+  if (s) res.locals['actor'] = `${s.role}#${s.user_id}`;
+}
+
+/** Appends one line; a log that can't be written never fails the request. */
+export function writeLog(path: string, req: Request, res: Response, what: string): void {
+  const started = (res.locals['started'] as number | undefined) ?? Date.now();
+  const actor = res.locals['actor'] as string | undefined;
+  const url = (req.originalUrl || req.url).split(/[?#]/)[0];
+  const secs = ((Date.now() - started) / 1000).toFixed(1);
+  try {
+    appendFileSync(path, `${stamp()} ${req.method} ${url} ${what}${actor ? ` ${actor}` : ''} ${secs}s\n`, 'utf8');
+  } catch {
+    // pythonw has no console either: nothing to tell
+  }
+}
+
+/** Logs each request when its headers go out, or "dropped" when the connection ends first. */
+export function requestLog(path: string): RequestHandler {
+  return (req, res, next) => {
+    res.locals['started'] = Date.now();
+    let logged = false;
+    beforeHeaders(res, (status) => {
+      logged = true;
+      writeLog(path, req, res, String(status));
+    });
+    res.on('close', () => {
+      if (!logged) writeLog(path, req, res, 'dropped');
+    });
+    next();
+  };
+}
