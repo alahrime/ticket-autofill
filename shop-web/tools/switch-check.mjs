@@ -3,17 +3,18 @@
 // 1. builds the api (apps/api/dist/main.js);  2. nx run-many -t test;  3. the parity guard;
 // 4. every tests/test_*.py prints ok;  5. the built main.js, started on a throwaway root and a spare port
 // (never 8081, never the real tickets.db), answers GET / with 200 and loads openapi.yaml;
-// 6. a second server on that port fails while the first listens (TypeScript or Python's OnlyServer);
+// 6. a second server on that port fails while the first listens (TypeScript: exit 3, or Python's OnlyServer);
 // 7. with no SHOP_ROOT, the bundle in its real place finds the repo root (shop.py) by itself.
-// It never stops or starts the live shop server.
+// It never stops or starts the live shop server. (The Playwright page tests are separate: npx nx e2e pages-e2e.)
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const LIVE_PORT = 8081;
+const PORT_IN_USE = 3; // main.js's exit code when another copy has the port (run-shop.cmd then stops)
 const here = dirname(fileURLToPath(import.meta.url));
 const shopWeb = join(here, '..');
 const repo = join(shopWeb, '..'); // the folder holding shop.py
@@ -60,7 +61,7 @@ function tempRoot() {
   return root;
 }
 
-/** Starts the built server on root/port; `output()` is what it printed so far. */
+/** Starts the built server on root/port; `output()` is what it printed so far, `exited` its exit code. */
 function startServer(root, port) {
   if (port === LIVE_PORT) throw new Error('never the live port');
   const child = spawn(process.execPath, [main], {
@@ -71,8 +72,20 @@ function startServer(root, port) {
   let text = '';
   child.stdout.on('data', (c) => (text += c));
   child.stderr.on('data', (c) => (text += c));
-  const exited = new Promise((ok) => child.once('exit', (code) => ok(code)));
+  const exited = new Promise((ok) => {
+    child.once('exit', (code) => ok(code));
+    child.once('error', (e) => {
+      text += String(e?.message ?? e);
+      ok('failed to start');
+    });
+  });
   return { child, exited, output: () => text };
+}
+
+/** Stops a server we started (our own child, on a spare port) and waits until it is gone. */
+async function stop(server) {
+  if (server.child.exitCode === null && server.child.pid !== undefined) server.child.kill();
+  await server.exited;
 }
 
 /** Until the server we started answers GET / (it printed "Serving on" and is still running) -> the reply. */
@@ -96,9 +109,19 @@ async function waitUp(server, port) {
 const exitWithin = (server, ms) =>
   Promise.race([server.exited, new Promise((ok) => setTimeout(() => ok('running'), ms))]);
 
+/** A server started on a taken port: true when it exits 3 with the "already running" line, else the reason. */
+async function refused(server) {
+  const code = await exitWithin(server, 15_000);
+  await stop(server);
+  return code === PORT_IN_USE && server.output().includes('already running on this port')
+    ? true
+    : `exit ${code}: ${server.output()}`;
+}
+
 /**
  * A Python process that binds port the way shop.py does (pinweb.OnlyServer) or, with plain, the way a default
- * socketserver does (SO_REUSEADDR). It prints `bound` or `in use`, then holds the port until its stdin closes.
+ * socketserver does (SO_REUSEADDR). `said` is `bound` or `in use` (or what went wrong, after 15 s at most);
+ * it then holds the port until release() closes its stdin.
  */
 function pythonBind(port, plain) {
   const code = [
@@ -121,20 +144,46 @@ function pythonBind(port, plain) {
   let text = '';
   child.stdout.on('data', (c) => (text += c));
   child.stderr.on('data', (c) => (text += c));
-  const exited = new Promise((ok) => child.once('exit', () => ok()));
+  let gone = false;
+  const exited = new Promise((ok) => {
+    const done = () => {
+      gone = true;
+      ok();
+    };
+    child.once('exit', done);
+    child.once('error', (e) => {
+      text += `python didn't start: ${e?.message ?? e}`;
+      done();
+    });
+  });
   const said = new Promise((ok) => {
-    const look = () => (/bound|in use/.test(text) || child.exitCode !== null ? ok(text.trim()) : setTimeout(look, 50));
+    const until = Date.now() + 15_000;
+    const look = () => {
+      if (/bound|in use/.test(text) || gone) ok(text.trim());
+      else if (Date.now() > until) ok(`no answer from python: ${text.trim()}`);
+      else setTimeout(look, 50);
+    };
     look();
   });
   const release = async () => {
     child.stdin.end();
+    if (!gone && /^no answer/.test(await said)) child.kill(); // our own child, stuck
     await exited;
   };
   return { said, release };
 }
 
+/** Steps 5 and 6 on one throwaway root, removed afterwards whatever happened. */
 async function bundleChecks() {
   const root = tempRoot();
+  try {
+    await serverChecks(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  }
+}
+
+async function serverChecks(root) {
   const port = await sparePort();
   console.log(`  (throwaway root ${root}, port ${port})`);
   const first = startServer(root, port);
@@ -147,19 +196,17 @@ async function bundleChecks() {
     if (me.status === 401) pass('GET /api/me answers 401 (openapi.yaml loaded from the bundle)');
     else fail('GET /api/me answers 401', `got ${me.status}`);
 
-    if (existsSync(join(root, 'tickets.db')) && existsSync(join(root, 'setup_code.txt')))
-      pass('it opened tickets.db in the throwaway root (and wrote a setup code there)');
-    else fail('it used the throwaway root', readdirSync(root).join(', '));
+    const logFile = join(root, 'shop.log');
+    const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
+    if (existsSync(join(root, 'tickets.db')) && existsSync(join(root, 'setup_code.txt')) && log.includes(` started 127.0.0.1:${port}\n`))
+      pass('it used the throwaway root: tickets.db, a setup code and a "started" line in its shop.log');
+    else fail('it used the throwaway root', `${readdirSync(root).join(', ')} / ${log}`);
 
     step('6. One server per port');
-    const second = startServer(root, port);
-    const code = await exitWithin(second, 15_000);
-    if (code === 1 && second.output().includes('already running on this port'))
-      pass('a second TypeScript server on the same port exits: "The shop server is already running on this port."');
-    else {
-      if (code === 'running') second.child.kill();
-      fail('a second TypeScript server on the same port fails', `exit ${code}: ${second.output()}`);
-    }
+    const second = await refused(startServer(root, port));
+    if (second === true)
+      pass(`a second TypeScript server on the same port exits ${PORT_IN_USE}: "The shop server is already running on this port."`);
+    else fail(`a second TypeScript server on the same port exits ${PORT_IN_USE}`, second);
 
     const only = pythonBind(port, false);
     const onlySaid = await only.said;
@@ -170,7 +217,7 @@ async function bundleChecks() {
     const plain = pythonBind(port, true);
     const plainSaid = await plain.said;
     await plain.release();
-    if (plainSaid === 'in use') pass('even a plain Python server with SO_REUSEADDR can\'t bind there (note only)');
+    if (plainSaid === 'in use') pass("even a plain Python server with SO_REUSEADDR can't bind there (note only)");
     else console.log(`  note  a plain Python server with SO_REUSEADDR said "${plainSaid}" on that port (shop.py doesn't use it)`);
 
     if ((await fetch(`http://127.0.0.1:${port}/`)).status === 200 && first.child.exitCode === null)
@@ -179,29 +226,22 @@ async function bundleChecks() {
   } catch (e) {
     fail('the built main.js starts on a throwaway root', String(e?.message ?? e));
   } finally {
-    if (first.child.exitCode === null) first.child.kill(); // our own child, on the spare port
-    await first.exited;
+    await stop(first);
   }
 
   // the other way round: Python's OnlyServer first, then the TypeScript server
   const port2 = await sparePort();
   const py = pythonBind(port2, false);
-  const pySaid = await py.said;
   try {
+    const pySaid = await py.said;
     if (pySaid !== 'bound') fail("Python's OnlyServer binds a spare port", pySaid);
     else {
-      const ts = startServer(root, port2);
-      const code = await exitWithin(ts, 15_000);
-      if (code === 1 && ts.output().includes('already running on this port'))
-        pass('the TypeScript server exits while Python\'s OnlyServer holds the port');
-      else {
-        if (code === 'running') ts.child.kill();
-        fail('the TypeScript server fails while Python holds the port', `exit ${code}: ${ts.output()}`);
-      }
+      const ts = await refused(startServer(root, port2));
+      if (ts === true) pass(`the TypeScript server exits ${PORT_IN_USE} while Python's OnlyServer holds the port`);
+      else fail(`the TypeScript server exits ${PORT_IN_USE} while Python holds the port`, ts);
     }
   } finally {
     await py.release();
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
   }
 }
 
@@ -244,7 +284,11 @@ async function checks() {
   }
 
   step('5. The built server on a throwaway root');
-  await bundleChecks();
+  try {
+    await bundleChecks();
+  } catch (e) {
+    fail('the built server checks ran to the end', String(e?.message ?? e));
+  }
 
   step('7. The bundle finds its root by itself');
   walkUpCheck();

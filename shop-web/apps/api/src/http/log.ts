@@ -25,11 +25,22 @@ export function logLine(path: string, what: string): void {
 }
 
 /**
- * For process.on('uncaughtException' | 'unhandledRejection') while serving: logs `error <Class>` and lets the
- * server keep going, as Python's threaded server outlives one handler's crash. Never throws.
+ * For process.on('unhandledRejection') while serving: logs `error <Class>` and lets the server keep going, as
+ * Python's threaded server outlives one handler's crash. Never throws.
  */
 export function processGuard(path: string): (e: unknown) => void {
   return (e) => logLine(path, `error ${className(e)}`);
+}
+
+/**
+ * For process.on('uncaughtException') while serving (ruling R13): logs `error <Class>` (synchronously), then
+ * exits 1, so run-shop.cmd starts a clean copy instead of serving on with state half-updated.
+ */
+export function crashExit(path: string, exit: (code: number) => void = (code) => process.exit(code)): (e: unknown) => void {
+  return (e) => {
+    logLine(path, `error ${className(e)}`);
+    exit(1);
+  };
 }
 
 /** Records the signed-in caller for this request's log line. */

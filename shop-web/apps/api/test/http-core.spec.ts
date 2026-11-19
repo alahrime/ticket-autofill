@@ -10,7 +10,7 @@ import { errorHandler } from '../src/app';
 import { loadConfig } from '../src/config';
 import { openDb } from '../src/db';
 import { BadInput, NotFound } from '../src/errors';
-import { processGuard } from '../src/http/log';
+import { crashExit, processGuard } from '../src/http/log';
 import { clientIp, jsonBody } from '../src/http/security';
 import { listen, startServer } from '../src/server';
 import { CAR, makeServer, PINS, send, ADMIN, PASSWORD, type TestServer } from './helpers';
@@ -105,6 +105,25 @@ describe('one server per port', () => {
       expect(() => processGuard(join(dir, 'no', 'such', 'dir.log'))(new Error('x'))).not.toThrow(); // log unwritable
       const lines = readFileSync(log, 'utf8').trim().split('\n');
       expect(lines.map((l) => l.slice(20))).toEqual(['error TypeError', 'error string', 'error Object']);
+    } finally {
+      done();
+    }
+  });
+
+  it('an uncaught error is logged (class name only) before the process exits 1 (R13)', () => {
+    const { dir, done } = tempDir();
+    try {
+      const log = join(dir, 'shop.log');
+      const codes: number[] = [];
+      const onCrash = crashExit(log, (code) => {
+        expect(readFileSync(log, 'utf8')).toMatch(/ error RangeError\n$/); // already written when it exits
+        codes.push(code);
+      });
+      onCrash(new RangeError('secret 123'));
+      expect(codes).toEqual([1]);
+      expect(readFileSync(log, 'utf8')).not.toContain('secret');
+      crashExit(join(dir, 'no', 'such', 'dir.log'), (code) => codes.push(code))(new Error('x')); // log unwritable
+      expect(codes).toEqual([1, 1]);
     } finally {
       done();
     }
