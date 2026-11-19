@@ -98,6 +98,29 @@ export async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
   return new URLSearchParams(new TextDecoder().decode(await readBody(req)));
 }
 
+/**
+ * Python reads tickets.db's JSON back with a recursive parser (RecursionError near 1000 levels), while V8's
+ * JSON.parse takes about 100 000: a body this deep is refused before it is parsed, let alone stored.
+ */
+export const MAX_DEPTH = 64;
+
+/** The deepest { / [ nesting in JSON text, brackets inside strings not counted. One pass, no recursion. */
+export function jsonDepth(text: string): number {
+  let depth = 0;
+  let deepest = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (inString) {
+      if (c === 0x5c) i++; // backslash: the next character is escaped (\" included)
+      else if (c === 0x22) inString = false;
+    } else if (c === 0x22) inString = true;
+    else if (c === 0x7b || c === 0x5b) deepest = Math.max(deepest, ++depth); // { [
+    else if (c === 0x7d || c === 0x5d) depth--; // } ]
+  }
+  return deepest;
+}
+
 /** req.body = the JSON object sent; 400 for another Content-Type (a form from another site can't send JSON). */
 export const jsonBody: RequestHandler = async (req, _res, next) => {
   const type = (header(req.headers, 'content-type') ?? '').split(';')[0]?.trim().toLowerCase();
@@ -111,6 +134,7 @@ export const jsonBody: RequestHandler = async (req, _res, next) => {
     } catch {
       throw new BadInput('JSON must be UTF-8');
     }
+    if (jsonDepth(text) > MAX_DEPTH) throw new BadInput('JSON nested too deep');
     try {
       d = JSON.parse(text);
     } catch {

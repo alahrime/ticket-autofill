@@ -1,15 +1,20 @@
 // The shop server: no arguments -> serve on 127.0.0.1:8081; `admin <name>` -> make or reset an admin.
 import { runAdminCommand, terminalIo } from './cli';
 import { loadConfig } from './config';
+import { processGuard } from './http/log';
 import { startServer } from './server';
 
 async function main(args: string[]): Promise<number | null> {
   const config = loadConfig();
   if (!args.length) {
     await startServer(config);
+    // serving: a stray error is logged (class name only) and the server keeps going, as Python's threads do
+    const guard = processGuard(config.log);
+    process.on('uncaughtException', guard);
+    process.on('unhandledRejection', guard);
     console.log(
       `Serving on ${config.host}:${config.port}. No admin yet? Open /setup with the code in ${config.setup},` +
-        ' or run: node shop-web/dist/apps/api/main.js admin <name>',
+        ' or run: node shop-web/apps/api/dist/main.js admin <name>',
     );
     return null; // keeps running
   }

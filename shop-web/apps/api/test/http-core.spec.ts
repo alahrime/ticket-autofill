@@ -10,6 +10,7 @@ import { errorHandler } from '../src/app';
 import { loadConfig } from '../src/config';
 import { openDb } from '../src/db';
 import { BadInput, NotFound } from '../src/errors';
+import { processGuard } from '../src/http/log';
 import { clientIp, jsonBody } from '../src/http/security';
 import { listen, startServer } from '../src/server';
 import { CAR, makeServer, PINS, send, ADMIN, PASSWORD, type TestServer } from './helpers';
@@ -74,6 +75,40 @@ describe('one server per port', () => {
       done();
     }
   });
+
+  it('a server error after listening is logged, and the server keeps serving', async () => {
+    const { dir, done } = tempDir();
+    const config = loadConfig({ SHOP_ROOT: dir, SHOP_PORT: '0' });
+    const server = await listen(express().get('/', (_q, r) => void r.send('hi')), config, { log: config.log });
+    try {
+      const boom = Object.assign(new Error('EMFILE: too many open files C:\\secret'), { code: 'EMFILE' });
+      expect(() => server.emit('error', boom)).not.toThrow(); // no listener would throw here: the process dies
+      expect(server.listening).toBe(true);
+      const r = await send(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, 'GET', '/');
+      expect(r.text).toBe('hi');
+      const log = readFileSync(config.log, 'utf8');
+      expect(log).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d error Error\n$/);
+    } finally {
+      await new Promise((ok) => server.close(ok));
+      done();
+    }
+  });
+
+  it('the process guard logs the class name only and throws nothing', () => {
+    const { dir, done } = tempDir();
+    try {
+      const log = join(dir, 'shop.log');
+      const guard = processGuard(log);
+      expect(() => guard(new TypeError('secret of undefined'))).not.toThrow();
+      expect(() => guard('a secret string')).not.toThrow();
+      expect(() => guard(Object.assign(Object.create(null), { secret: 1 }))).not.toThrow();
+      expect(() => processGuard(join(dir, 'no', 'such', 'dir.log'))(new Error('x'))).not.toThrow(); // log unwritable
+      const lines = readFileSync(log, 'utf8').trim().split('\n');
+      expect(lines.map((l) => l.slice(20))).toEqual(['error TypeError', 'error string', 'error Object']);
+    } finally {
+      done();
+    }
+  });
 });
 
 describe('http core', () => {
@@ -98,7 +133,16 @@ describe('http core', () => {
       expect((await post('{not json')).status).toBe(400);
       expect(await post('[1, 2]')).toMatchObject({ status: 400, body: { error: 'expected a JSON object' } });
       expect((await post(Buffer.from([0xff, 0xfe]))).status).toBe(400);
-      expect((await post('['.repeat(100_000))).status).toBe(400); // too deep
+      // too deep for Python's json (RecursionError when it reads the row back): refused before parsing
+      const deep = { status: 400, body: { error: 'JSON nested too deep' } };
+      const chain = (n: number): string => '{"a":'.repeat(n) + '1' + '}'.repeat(n);
+      expect(await post('['.repeat(100_000))).toMatchObject(deep);
+      expect(await post(chain(65))).toMatchObject(deep);
+      expect(await post(chain(100_000))).toMatchObject(deep);
+      expect(await post(`{"lines": ${'['.repeat(100)}${']'.repeat(100)}}`)).toMatchObject(deep); // deep in a field
+      expect(await post(chain(64))).toMatchObject({ status: 200 }); // 64 levels: fine
+      const brackets = `{"notes": "${'{['.repeat(5000)}\\"${'[{'.repeat(5000)}"}`; // inside a string: not nesting
+      expect(await post(brackets)).toMatchObject({ status: 200, body: JSON.parse(brackets) });
       expect((await post('null')).status).toBe(400);
       for (const ctype of ['text/plain', 'application/x-www-form-urlencoded']) {
         expect(await post(JSON.stringify(CAR), ctype)).toMatchObject({

@@ -3,6 +3,7 @@ import { createServer, type RequestListener, type Server } from 'node:http';
 import type { Socket } from 'node:net';
 import { Accounts } from './accounts';
 import { createApp } from './app';
+import { className, logLine } from './http/log';
 import type { Config } from './config';
 import { openDb } from './db';
 import { makeSetupCode } from './routes/auth';
@@ -10,11 +11,13 @@ import { TicketStore } from './store';
 
 export const STALL_MS = 20_000; // a client may take this long to send a request; then it ends with no reply
 
-export type ListenOpts = { stallMs?: number };
+/** stallMs: the stall limit (tests shorten it); log: where server errors after listening go (shop.log). */
+export type ListenOpts = { stallMs?: number; log?: string };
 
 /**
  * Listens on host:port alone (exclusive: a second copy fails with EADDRINUSE, as OnlyServer). A request
  * not fully received in stallMs is dropped without a reply; other malformed requests get Node's bare 400.
+ * An error after listening (EMFILE, a failed accept) is logged as `error <Class>`; the server keeps serving.
  */
 export function listen(app: RequestListener, where: { host: string; port: number }, opts: ListenOpts = {}): Promise<Server> {
   const stall = opts.stallMs ?? STALL_MS;
@@ -33,6 +36,9 @@ export function listen(app: RequestListener, where: { host: string; port: number
     server.once('error', fail);
     server.listen({ host: where.host, port: where.port, exclusive: true }, () => {
       server.off('error', fail);
+      server.on('error', (e) => {
+        if (opts.log) logLine(opts.log, `error ${className(e)}`);
+      });
       ok(server);
     });
   });
@@ -48,7 +54,7 @@ export async function startServer(
   try {
     const store = new TicketStore(db);
     const accounts = new Accounts(db);
-    server = await listen(createApp({ store, accounts, config }), config, opts);
+    server = await listen(createApp({ store, accounts, config }), config, { log: config.log, ...opts });
     // straight after listening, before any request is read: a second copy that failed above changed nothing
     try {
       accounts.deleteKioskSessions();

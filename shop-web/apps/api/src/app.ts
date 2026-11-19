@@ -6,7 +6,7 @@ import { Locked, LoginFailed } from './accounts';
 import type { Config } from './config';
 import { BadInput, Gone, NotFound } from './errors';
 import type { Deps } from './http/deps';
-import { requestLog, writeLog } from './http/log';
+import { className, requestLog, writeLog } from './http/log';
 import { refuseCrossSite, refuseHugeBody, securityHeaders, sessionOf } from './http/security';
 import { authRoutes } from './routes/auth';
 import { catalogRoutes } from './routes/catalog';
@@ -37,11 +37,6 @@ function mapError(e: unknown): Mapped | null {
   return null;
 }
 
-/** The thrown value's class name for the log, and nothing else of it. */
-function className(e: unknown): string {
-  const name = e !== null && typeof e === 'object' ? (e.constructor?.name ?? 'Object') : typeof e;
-  return name.replace(/[^\w$.]/g, '').slice(0, 60) || 'unknown';
-}
 
 /** Error mapping (shop.py run() + pinweb Web.run()): never echoes internals, never crashes the process. */
 export function errorHandler(config: Config): ErrorRequestHandler {

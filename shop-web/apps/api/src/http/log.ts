@@ -9,6 +9,29 @@ const pad = (n: number): string => String(n).padStart(2, '0');
 const stamp = (d = new Date()): string =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
+/** The thrown value's class name for the log, and nothing else of it. */
+export function className(e: unknown): string {
+  const name = e !== null && typeof e === 'object' ? ((e.constructor as { name?: string } | undefined)?.name ?? 'Object') : typeof e;
+  return String(name).replace(/[^\w$.]/g, '').slice(0, 60) || 'unknown';
+}
+
+/** A line about no request in particular (a server or process error). Never throws. */
+export function logLine(path: string, what: string): void {
+  try {
+    appendFileSync(path, `${stamp()} ${what}\n`, 'utf8');
+  } catch {
+    // nothing to tell
+  }
+}
+
+/**
+ * For process.on('uncaughtException' | 'unhandledRejection') while serving: logs `error <Class>` and lets the
+ * server keep going, as Python's threaded server outlives one handler's crash. Never throws.
+ */
+export function processGuard(path: string): (e: unknown) => void {
+  return (e) => logLine(path, `error ${className(e)}`);
+}
+
 /** Records the signed-in caller for this request's log line. */
 export function noteActor(res: Response, s: Session | null): void {
   if (s) res.locals['actor'] = `${s.role}#${s.user_id}`;
