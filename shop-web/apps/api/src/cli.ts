@@ -16,7 +16,7 @@ export async function runAdminCommand(
   dbPath: string,
 ): Promise<number> {
   if (args.length !== 2 || args[0] !== 'admin') {
-    io.out('usage: node shop-web/dist/apps/api/main.js [admin <name>]');
+    io.out('usage: node shop-web/apps/api/dist/main.js [admin <name>]');
     return 1;
   }
   const password = await io.prompt('New password (10+ characters): ', true);

@@ -715,7 +715,7 @@ describe('admin command', () => {
       ]);
       expect(out.join('\n')).not.toContain('made-up-pass');
       expect(await runAdminCommand(['admin'], io, path)).toBe(1);
-      expect(out.pop()).toMatch(/^usage: /);
+      expect(out.pop()).toBe('usage: node shop-web/apps/api/dist/main.js [admin <name>]');
       typed.push('short', 'short');
       expect(await runAdminCommand(['admin', 'Test Boss'], io, path)).toBe(1);
       expect(out.pop()).toBe('password must be 10 to 200 characters');
