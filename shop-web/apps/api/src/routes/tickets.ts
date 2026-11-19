@@ -161,7 +161,9 @@ function changeTicket(
     else if (change === 'edit') edit(t, d, WHO[role]);
     else if (change === 'delete') markDeleted(t, `${s.role}#${s.user_id}`, nowIso());
     else restore(t);
-    res.json(asJson(store.save(t, version), role));
+    // R12: only the desk's edit that sent deposits (validated by edit above) replaces a stored value it can't read
+    const depositsSent = change === 'edit' && s.role === 'admin' && Object.hasOwn(d, 'deposits');
+    res.json(asJson(store.save(t, version, { depositsSent }), role));
   } catch (e) {
     if (!(e instanceof Stale || e instanceof Refused)) throw e;
     const now = e instanceof Stale ? e.ticket : store.get(t.id); // the stored one, unedited

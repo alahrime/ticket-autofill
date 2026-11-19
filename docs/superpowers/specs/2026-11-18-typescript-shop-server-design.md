@@ -92,7 +92,8 @@ Every route, status code, JSON shape and rule in `shop.py`, `tickets.py` and `ac
 Owner's decisions (2026-11-18):
 - Delete **hides**; it doesn't erase.
 - **Everyone who can see a ticket can delete it.**
-- A **confirmation pop-up** names the ticket and warns when it has deposits. A ticket with a deposit is never purged (R10, below), so its deposits come back with it whenever the desk restores it.
+- A **confirmation pop-up** names the ticket and warns when it has deposits. A ticket with a deposit is never purged (R10, below), and no save rewrites its stored deposits behind the desk's back (R12, below), so its deposits come back with it whenever the desk restores it.
+- **R11 (owner, 2026-11-19):** the mechanic's pop-up on `tech.html` says "The desk can restore it." A mechanic never sees deposits, so the phone makes no 14-day promise and says nothing about deposits.
 - Unfinished deleted tickets are purged after a grace period of 7–14 days.
 
 Design:
@@ -104,6 +105,7 @@ Design:
 - **Grace period: 14 days** (my call, the safe end of the owner's 7–14). One constant, `PURGE_DAYS`.
 - **Purge:** at server start and every hour, hard-delete rows with `status = 'deleted'` whose `deleted_at` is more than `PURGE_DAYS` old **and** whose `deleted_from` is `waiting`, `working` or `review` **and** that have **no deposits**. Those are the "in-progress bills that are never completed." The rule is checked again inside the purge's transaction, on each row as stored.
 - **Tickets with a deposit are never purged** (owner's ruling R10, 2026-11-19). A customer who paid a deposit can come back after the 14 days when parts are delayed. Whatever `deleted_from` is, such a ticket stays in the Deleted list (`purge_on: null`, shown as "Kept (deposit)") until the desk restores it. The rule judges `deposits` as stored, before any defaults: a row is deposit-free only when the key is missing or holds an empty list. Anything else (`null`, a single object, text) fails safe and counts as a deposit.
+- **R12 (owner, 2026-11-19): saves keep a stored deposits value they can't read.** If a row's stored `deposits` key is present but isn't a list (damaged, or written by something else), every TS save (an edit, move, delete or restore) writes that value back verbatim, as read inside the save's transaction. Writing `[]` instead would lose it and let the purge take the ticket. Only a desk edit that sends a validated deposits list replaces it, deliberately. The replies still show such a ticket's deposits as `[]`, and the purge keeps it (`purge_on: null`). A ticket the store never read counts as holding a deposit (fail closed). Python's `tickets.from_dict` can't load such a row today (out of scope; Python is unchanged).
 - **Ids are never handed out twice.** The purge never removes the row holding `MAX(id)`. SQLite gives a new ticket `MAX(id) + 1` (the table has no AUTOINCREMENT), so keeping that row means a phone, the desk or the shop PC that still holds an old id never sees it reused. That row is purged on a later run, once a newer ticket exists.
 - **Approved and filled tickets are never purged** (my call). A filled ticket is a completed invoice and part of the customer history. An approved ticket may already have been typed into InvoMax before someone deleted it. Deleting either one hides it from the shop lists, but the row stays, marked deleted, and a filled one stays in history.
 - `shopwin.py` needs no change: it lists `approved`/`filled` only, and `tickets.move` refuses `deleted → filled`.

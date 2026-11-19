@@ -228,6 +228,79 @@ describe('create tokens and deleted tickets (R9)', () => {
   });
 });
 
+describe('a stored deposits value TS cannot read (R12)', () => {
+  const DAMAGED: unknown[] = [{ amount: 100 }, null, '100'];
+  const LINE = { desc: 'diag', qty: 1, price: null, labor: 60, code: '', id: 1 };
+
+  /** A live row written straight into the DB, `deposits` as given. */
+  const row = (deposits: unknown, status = 'waiting', extra: object = {}): number =>
+    Number(
+      s.db
+        .prepare('INSERT INTO tickets (status, data) VALUES (?, ?)')
+        .run(status, JSON.stringify({ ...CAR, deposits, ...extra })).lastInsertRowid,
+    );
+  /** The deposits value as stored now. */
+  const stored = (id: number): unknown =>
+    (JSON.parse((s.db.prepare('SELECT data FROM tickets WHERE id = ?').get(id) as { data: string }).data) as J).deposits;
+  const later = (): Date => {
+    const d = new Date();
+    d.setDate(d.getDate() + 15);
+    return d;
+  };
+
+  it.each(DAMAGED)('a delete keeps %j: never purged, purge_on null', async (value) => {
+    const a = await s.admin();
+    const id = row(value);
+    s.store.create(CAR); // the newest row
+    expect((await call(`/api/tickets/${id}/delete`, { version: 1 }, a))[0]).toBe(200);
+    expect(stored(id)).toEqual(value);
+    const list = (await call('/api/tickets?status=deleted', undefined, a))[1];
+    expect(list.tickets.map((x: J) => [x.id, x.purge_on, x.deposits])).toEqual([[id, null, []]]); // shown as none
+    expect(s.store.purge(later())).toBe(0);
+    expect(stored(id)).toEqual(value);
+  });
+
+  it.each(DAMAGED)('delete, restore and delete again keep %j', async (value) => {
+    const a = await s.admin();
+    const id = row(value);
+    s.store.create(CAR);
+    expect((await call(`/api/tickets/${id}/delete`, { version: 1 }, a))[0]).toBe(200);
+    expect((await call(`/api/tickets/${id}/restore`, { version: 2 }, a))[1]).toMatchObject({ status: 'waiting' });
+    expect(stored(id)).toEqual(value);
+    expect((await call(`/api/tickets/${id}/delete`, { version: 3 }, a))[0]).toBe(200);
+    expect(s.store.purge(later())).toBe(0);
+    expect(stored(id)).toEqual(value);
+  });
+
+  it.each(DAMAGED)("a mechanic's edit and move keep %j", async (value) => {
+    const al = await s.tech('Al Fixit');
+    const id = row(value, 'working', { mechanic: 'Al Fixit', lines: [LINE] });
+    expect((await call(`/api/tickets/${id}`, { version: 1, notes: 'checked' }, al))[0]).toBe(200);
+    expect(stored(id)).toEqual(value);
+    expect((await call(`/api/tickets/${id}/move`, { version: 2, to: 'review' }, al))[1]).toMatchObject({ status: 'review' });
+    expect(stored(id)).toEqual(value);
+  });
+
+  it.each(DAMAGED)('the desk keeps %j unless it sends deposits, which replace it', async (value) => {
+    const a = await s.admin();
+    const id = row(value);
+    expect((await call(`/api/tickets/${id}`, { version: 1, notes: 'x' }, a))[0]).toBe(200);
+    expect(stored(id)).toEqual(value); // no deposits sent: kept
+    const [code, t] = await call(`/api/tickets/${id}`, { version: 2, deposits: [{ amount: 50 }] }, a);
+    expect([code, t.deposits.map((x: J) => x.amount)]).toEqual([200, [50]]);
+    expect((stored(id) as J[]).map((x) => x.amount)).toEqual([50]); // deliberately replaced by a valid list
+    expect((await call(`/api/tickets/${id}`, { version: 3, deposits: [] }, a))[0]).toBe(200);
+    expect(stored(id)).toEqual([]); // and the desk may clear it, as any list
+  });
+
+  it('a ticket read nowhere counts as holding a deposit (fails closed); a new one does not', () => {
+    const copy = { ...(s.store.create(CAR) as Ticket) }; // a copy the store never read
+    expect(s.store.purgeOn(markDeleted(copy, 'admin#1', nowIso()))).toBeNull();
+    const fresh = s.store.create(CAR);
+    expect(s.store.purgeOn(markDeleted(fresh, 'admin#1', nowIso()))).toMatch(/^\d{4}-\d\d-\d\d$/);
+  });
+});
+
 describe('purge', () => {
   /** A ticket of `status` deleted `days` ago, straight into the store. */
   function deleted(status: string, days: number, deposit = 0): Ticket {

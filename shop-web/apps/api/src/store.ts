@@ -50,16 +50,32 @@ function fromRow(row: Row): Ticket {
   return t;
 }
 
-/** Whether `t`'s deposits, as stored when it was read, hold one (one built here: from t.deposits). */
-const holds = (t: Ticket): boolean => heldDeposits.get(t) ?? holdsDeposits(t.deposits);
+/** Whether `t`'s deposits, as stored, hold one. A ticket the store never read or wrote fails closed: it does. */
+const holds = (t: Ticket): boolean => heldDeposits.get(t) ?? true;
 
-/** The data column: every field but id and status, unknown keys included, as Python's json.dumps. */
-function toData(t: Ticket): string {
+/** A stored deposits value this side can't read (present, not a list), to write back as it was; else undefined. */
+function unreadDeposits(data: string): { value: unknown } | undefined {
+  const raw = JSON.parse(data) as unknown;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  if (!Object.hasOwn(raw, 'deposits')) return undefined;
+  const value = (raw as Json)['deposits'];
+  return Array.isArray(value) ? undefined : { value };
+}
+
+/**
+ * The data column: every field but id and status, unknown keys included, as Python's json.dumps. `keep`: a
+ * stored deposits value to write back verbatim (R12) in place of t.deposits, which shows it as [].
+ */
+function toData(t: Ticket, keep?: { value: unknown }): string {
   const d: Json = complete(t);
   delete d['id'];
   delete d['status'];
+  if (keep) d['deposits'] = keep.value;
   return pyDumps(d);
 }
+
+/** save()'s options. depositsSent: the desk's edit set deposits from a validated list, which replaces any. */
+export type SaveOpts = { depositsSent?: boolean };
 
 const SELECT = 'SELECT id, status, data FROM tickets';
 
@@ -75,6 +91,7 @@ export class TicketStore {
       .prepare('INSERT INTO tickets (status, data) VALUES (?, ?)')
       .run(t.status, toData(t));
     t.id = Number(lastInsertRowid);
+    heldDeposits.set(t, holdsDeposits(t.deposits)); // stored as written: normalize's list
     return t;
   }
 
@@ -96,17 +113,25 @@ export class TicketStore {
    * Writes `t` if `version` is the stored one, else throws Stale with the stored ticket (NotFound for an
    * unknown id). Check and write are one transaction, so Python's process can't slip a save in between.
    * Returns `t` with version + 1, the new updated time and the stored created time.
+   *
+   * R12: a stored deposits value that isn't a list (damaged, or written by something else) is written back
+   * verbatim, as read in this transaction, unless opts.depositsSent (the desk sent a validated list, which
+   * replaces it). The reply still shows it as []; the purge keeps such a ticket (R10).
    */
-  save(t: Ticket, version: number): Ticket {
+  save(t: Ticket, version: number, opts: SaveOpts = {}): Ticket {
     this.db.exec('BEGIN IMMEDIATE'); // takes the write lock first (busy_timeout: waits up to 5 s)
     let saved: Ticket;
+    let keep: { value: unknown } | undefined;
     try {
       const row = this.db.prepare(`${SELECT} WHERE id = ?`).get(t.id) as Row | undefined;
       if (!row) throw new NotFound(`no ticket ${t.id}`);
       const cur = fromRow(row);
       if (cur.version !== version) throw new Stale(cur);
+      keep = opts.depositsSent ? undefined : unreadDeposits(row.data);
       saved = { ...t, version: version + 1, updated: nowIso(), created: cur.created };
-      this.db.prepare('UPDATE tickets SET status = ?, data = ? WHERE id = ?').run(saved.status, toData(saved), saved.id);
+      this.db
+        .prepare('UPDATE tickets SET status = ?, data = ? WHERE id = ?')
+        .run(saved.status, toData(saved, keep), saved.id);
       this.db.exec('COMMIT');
     } catch (e) {
       if (this.db.isTransaction) this.db.exec('ROLLBACK'); // a failed COMMIT may have ended it already
@@ -115,7 +140,7 @@ export class TicketStore {
     t.version = saved.version;
     t.updated = saved.updated;
     t.created = saved.created;
-    heldDeposits.set(t, holdsDeposits(t.deposits)); // stored now as written: a list
+    heldDeposits.set(t, holdsDeposits(keep ? keep.value : t.deposits)); // as stored now
     return t;
   }
 
