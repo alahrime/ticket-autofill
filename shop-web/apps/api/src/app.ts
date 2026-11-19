@@ -11,6 +11,7 @@ import { refuseCrossSite, refuseHugeBody, securityHeaders, sessionOf } from './h
 import { authRoutes } from './routes/auth';
 import { catalogRoutes } from './routes/catalog';
 import { ticketRoutes } from './routes/tickets';
+import { userRoutes } from './routes/users';
 
 type Mapped = { status: number; body: Record<string, unknown>; headers?: Record<string, string> } | 'drop';
 
@@ -78,6 +79,7 @@ export function createApp(deps: Deps): Express {
   app.use(authRoutes());
   app.use(ticketRoutes());
   app.use(catalogRoutes());
+  app.use(userRoutes());
   app.use((req, res) => {
     // as shop.py: an /api/ GET or any POST needs a session first; then nothing here is 404
     if ((req.path.startsWith('/api/') || req.method === 'POST') && !sessionOf(req))

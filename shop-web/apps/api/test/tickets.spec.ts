@@ -104,7 +104,6 @@ describe('tickets', () => {
     expect(
       (await call(`${url}/move`, { version: 2, to: 'review' }, bo))[0],
     ).toBe(404);
-    expect((await call('/api/tickets', CAR, bo))[0]).toBe(403); // only the desk makes tickets
 
     [code, r] = await call(url, { version: 2, who: 'desk', first: 'JUNE' }, al); // who in the body: ignored
     expect(code).toBe(409);
@@ -852,10 +851,10 @@ describe('tickets', () => {
     ] as const) {
       expect(await call(path, body)).toEqual([401, { error: 'sign in' }]);
     }
-    // a mechanic can't make tickets (403 before the body is read, as Python)
+    // a mechanic may check a customer in (checkin.spec.ts): JSON only, like the desk
     expect(await call('/api/tickets', 'not json', al)).toEqual([
-      403,
-      { error: 'not allowed' },
+      400,
+      { error: 'not valid JSON' },
     ]);
     // a mechanic's move: `who` and `mechanic` in the body never change who accepts
     const [code, w] = await call(

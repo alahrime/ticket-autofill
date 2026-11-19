@@ -31,6 +31,17 @@ const STATUSES: ReadonlySet<string> = new Set(
   [...MOVES].flatMap((m) => m.split('>')),
 );
 const WHO = { admin: 'desk', mechanic: 'mechanic' } as const; // tickets.edit rules by role
+/** What a mechanic's check-in may fill (shop.py's KIOSK, the retired iPad's fields). */
+export const CHECKIN = [
+  'first',
+  'last',
+  'phone',
+  'year',
+  'make',
+  'model',
+  'plate',
+  'request',
+] as const;
 
 type Body = Record<string, unknown>;
 
@@ -146,7 +157,7 @@ const idOf = (req: Request): number => Number(req.params['id']);
 /** The routes; the create-token memory lives in this router. */
 export function ticketRoutes(): Router {
   const r = Router({ caseSensitive: true, strict: true });
-  // (admin id, the page's token) -> ticket id: a re-sent create isn't a second ticket. Oldest first.
+  // (user id, the page's token) -> ticket id: a re-sent create isn't a second ticket. Oldest first.
   const made = new Map<string, number>();
 
   r.get('/api/tickets', signedIn('admin', 'mechanic'), (req, res) => {
@@ -191,21 +202,30 @@ export function ticketRoutes(): Router {
     },
   );
 
-  // the desk may type the whole invoice at once
-  r.post('/api/tickets', signedIn('admin'), jsonBody, (req, res) => {
+  // the desk may type the whole invoice at once; a mechanic checks a customer in (their first details only)
+  r.post('/api/tickets', signedIn('admin', 'mechanic'), jsonBody, (req, res) => {
     const { store, accounts } = depsOf(req);
     const s = sessionIn(res);
-    const d: Body = { ...(req.body as Body) };
-    if (
-      d['mechanic'] === undefined ||
-      d['mechanic'] === null ||
-      d['mechanic'] === ''
-    )
-      delete d['mechanic']; // not assigned yet
-    else d['mechanic'] = mechanicNamed(accounts, d['mechanic']);
+    const body = req.body as Body;
+    let d: Body;
+    if (s.role === 'mechanic') {
+      // waiting and unassigned: every other key (mechanic, status, lines, deposits...) is dropped
+      d = Object.fromEntries(
+        CHECKIN.filter((k) => Object.hasOwn(body, k)).map((k) => [k, body[k]]),
+      );
+    } else {
+      d = { ...body };
+      delete d['token'];
+      if (
+        d['mechanic'] === undefined ||
+        d['mechanic'] === null ||
+        d['mechanic'] === ''
+      )
+        delete d['mechanic']; // not assigned yet
+      else d['mechanic'] = mechanicNamed(accounts, d['mechanic']);
+    }
     // the page sends one per new ticket; the same one again (its reply got lost) is that ticket
-    const tok = d['token'];
-    delete d['token'];
+    const tok = body['token'];
     const key =
       typeof tok === 'string' && pyLen(tok) >= 8 && pyLen(tok) <= 64
         ? JSON.stringify([s.user_id, tok])
