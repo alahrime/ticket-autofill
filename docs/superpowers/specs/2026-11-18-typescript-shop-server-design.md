@@ -92,7 +92,7 @@ Every route, status code, JSON shape and rule in `shop.py`, `tickets.py` and `ac
 Owner's decisions (2026-11-18):
 - Delete **hides**; it doesn't erase.
 - **Everyone who can see a ticket can delete it.**
-- A **confirmation pop-up** names the ticket and warns when it has deposits. If a deposit is needed again later, staff re-enter it by hand.
+- A **confirmation pop-up** names the ticket and warns when it has deposits. A ticket with a deposit is never purged (R10, below), so its deposits come back with it whenever the desk restores it.
 - Unfinished deleted tickets are purged after a grace period of 7–14 days.
 
 Design:
@@ -103,12 +103,12 @@ Design:
 - Deleted tickets are left out of every list, unless the admin asks for `status=deleted`. A single GET of a deleted ticket returns 410 `{"error": "removed by the desk"}` to a mechanic, so the phone can say that instead of "not found". The admin still gets it with 200.
 - **Grace period: 14 days** (my call, the safe end of the owner's 7–14). One constant, `PURGE_DAYS`.
 - **Purge:** at server start and every hour, hard-delete rows with `status = 'deleted'` whose `deleted_at` is more than `PURGE_DAYS` old **and** whose `deleted_from` is `waiting`, `working` or `review` **and** that have **no deposits**. Those are the "in-progress bills that are never completed." The rule is checked again inside the purge's transaction, on each row as stored.
-- **Tickets with a deposit are never purged** (owner's ruling R10, 2026-11-19). A customer who paid a deposit can come back after the 14 days when parts are delayed. Whatever `deleted_from` is, such a ticket stays in the Deleted list (`purge_on: null`, shown as "Kept (deposit)") until the desk restores it.
+- **Tickets with a deposit are never purged** (owner's ruling R10, 2026-11-19). A customer who paid a deposit can come back after the 14 days when parts are delayed. Whatever `deleted_from` is, such a ticket stays in the Deleted list (`purge_on: null`, shown as "Kept (deposit)") until the desk restores it. The rule judges `deposits` as stored, before any defaults: a row is deposit-free only when the key is missing or holds an empty list. Anything else (`null`, a single object, text) fails safe and counts as a deposit.
 - **Ids are never handed out twice.** The purge never removes the row holding `MAX(id)`. SQLite gives a new ticket `MAX(id) + 1` (the table has no AUTOINCREMENT), so keeping that row means a phone, the desk or the shop PC that still holds an old id never sees it reused. That row is purged on a later run, once a newer ticket exists.
 - **Approved and filled tickets are never purged** (my call). A filled ticket is a completed invoice and part of the customer history. An approved ticket may already have been typed into InvoMax before someone deleted it. Deleting either one hides it from the shop lists, but the row stays, marked deleted, and a filled one stays in history.
 - `shopwin.py` needs no change: it lists `approved`/`filled` only, and `tickets.move` refuses `deleted → filled`.
-- **UI in phase 2 (my call):** a Delete button and confirmation pop-up are added to the existing `admin.html` and `tech.html`, plus a Deleted list with Restore in `admin.html`. The owner can then clean up test data right after the switch, without waiting for the React admin. The pop-up reads, for example: "Delete ticket #12 — JANE DOE, XKS-4827, $340.00? It has $100.00 in deposits." / "Deleted tickets can be restored for 14 days."
-- **One-off clean-up:** before the first switch, copy `tickets.db` to `tickets-backup-2026-MM-DD.db`. `.gitignore` must cover `tickets-backup-*.db`. After the switch, the owner deletes the test tickets through the UI, and the purge removes them 14 days later.
+- **UI in phase 2 (my call):** a Delete button and confirmation pop-up are added to the existing `admin.html` and `tech.html`, plus a Deleted list with Restore in `admin.html`. The owner can then clean up test data right after the switch, without waiting for the React admin. The pop-up reads, for example: "Delete ticket #12 — JANE DOE, XKS-4827, $340.00? It has $100.00 in deposits. It stays in the Deleted list until you restore it." (R10/R11: with a deposit) / "Deleted tickets can be restored for 14 days." (without one)
+- **One-off clean-up:** before the first switch, copy `tickets.db` to `tickets-backup-2026-MM-DD.db`. `.gitignore` must cover `tickets-backup-*.db`. After the switch, the owner deletes the test tickets through the UI, and the purge removes them 14 days later, unless they hold a deposit; the newest row waits for a newer ticket.
 
 ### Switch (phase 3)
 

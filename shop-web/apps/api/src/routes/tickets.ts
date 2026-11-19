@@ -13,7 +13,6 @@ import {
   markDeleted,
   move,
   nowIso,
-  purgeOn,
   Refused,
   restore,
   squash,
@@ -210,7 +209,8 @@ export function ticketRoutes(): Router {
     if (req.headers['if-none-match'] === tag) return void res.status(304).end();
     res.json({
       tickets: found.map((t) =>
-        t.status === 'deleted' ? { ...asJson(t, s.role), purge_on: purgeOn(t) } : asJson(t, s.role),
+        // judged on the deposits as stored, as the purge does: a damaged value means kept (null)
+        t.status === 'deleted' ? { ...asJson(t, s.role), purge_on: depsOf(req).store.purgeOn(t) } : asJson(t, s.role),
       ),
     });
   });

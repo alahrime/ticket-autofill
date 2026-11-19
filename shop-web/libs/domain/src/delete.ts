@@ -35,26 +35,40 @@ export function restore(t: Ticket): Ticket {
 /**
  * The local time PURGE_DAYS calendar days after deleted_at, or null when it isn't one the purge takes: not
  * deleted, deleted as an invoice (approved / filled), or holding any deposit (R10: a customer who paid may come
- * back after the 14 days when parts are delayed).
+ * back after the 14 days when parts are delayed). `held`: whether the stored deposits hold one (holdsDeposits).
  */
-function purgeTime(t: Ticket): Date | null {
+function purgeTime(t: Ticket, held: boolean): Date | null {
   if (t.status !== 'deleted' || !PURGED_FROM.includes(t.deleted_from) || !TIME.test(t.deleted_at)) return null;
-  if (!Array.isArray(t.deposits) || t.deposits.length > 0) return null; // R10: kept until the desk restores it
+  if (held) return null; // R10: kept until the desk restores it
   const d = new Date(t.deleted_at); // no offset: local time
   if (Number.isNaN(d.getTime())) return null;
   d.setDate(d.getDate() + PURGE_DAYS);
   return d;
 }
 
-/** The day the purge removes `t` (YYYY-MM-DD), or null when it never will (an invoice, a deposit, not deleted). */
-export const purgeOn = (t: Ticket): string | null => {
-  const d = purgeTime(t);
+/**
+ * Whether a `deposits` value, as stored, holds (or may hold) a deposit. Only a missing key (undefined) or an
+ * empty list is deposit-free: anything else (a list with items, null, one object, text) fails safe, so a damaged
+ * row is kept, never purged. The store passes the raw JSON value, before its defaults turn junk into [].
+ */
+export const holdsDeposits = (stored: unknown): boolean =>
+  stored !== undefined && !(Array.isArray(stored) && stored.length === 0);
+
+/**
+ * The day the purge removes `t` (YYYY-MM-DD), or null when it never will (an invoice, a deposit, not deleted).
+ * held: whether its stored deposits hold one; by default judged from t.deposits.
+ */
+export const purgeOn = (t: Ticket, held: boolean = holdsDeposits(t.deposits)): string | null => {
+  const d = purgeTime(t, held);
   return d ? DAY(d) : null;
 };
 
-/** True when `t` was deleted unfinished PURGE_DAYS or more before `now`. Throws RangeError for an invalid now. */
-export function purgeable(t: Ticket, now: Date): boolean {
+/**
+ * True when `t` was deleted unfinished, with no deposit, PURGE_DAYS or more before `now`. held: as purgeOn.
+ * Throws RangeError for an invalid now.
+ */
+export function purgeable(t: Ticket, now: Date, held: boolean = holdsDeposits(t.deposits)): boolean {
   if (Number.isNaN(now.getTime())) throw new RangeError('invalid clock'); // never "everything is old enough"
-  const d = purgeTime(t);
+  const d = purgeTime(t, held);
   return d !== null && d.getTime() <= now.getTime();
 }

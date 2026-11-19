@@ -1,4 +1,4 @@
-import { markDeleted, PURGE_DAYS, PURGED_FROM, purgeable, purgeOn, restore } from './delete.js';
+import { holdsDeposits, markDeleted, PURGE_DAYS, PURGED_FROM, purgeable, purgeOn, restore } from './delete.js';
 import { nowIso } from './clean.js';
 import { edit, move } from './rules.js';
 import { Refused } from './ticket.js';
@@ -77,6 +77,16 @@ describe('purgeable', () => {
     const unpaid = del('waiting');
     expect(purgeable(unpaid, after(15, 0))).toBe(true); // no deposit: still purged
     expect(purgeOn(unpaid)).toBe('2026-03-16');
+  });
+
+  it('judges the deposits as stored when told: only missing or [] is deposit-free', () => {
+    for (const stored of [{ amount: 100 }, null, '100', 0, [deposit(5)]]) expect(holdsDeposits(stored)).toBe(true);
+    for (const stored of [undefined, []]) expect(holdsDeposits(stored)).toBe(false);
+    const t = del('waiting'); // parsed as deposit-free ([]), but the stored value was damaged
+    expect(purgeable(t, after(15, 0), true)).toBe(false);
+    expect(purgeOn(t, true)).toBeNull();
+    expect(purgeable(t, after(15, 0), false)).toBe(true);
+    expect(purgeable(t, after(15, 0))).toBe(true); // by default, from t.deposits
   });
 
   it('never one whose delete time is missing or not a time', () => {

@@ -275,6 +275,33 @@ describe('purge', () => {
     expect(list.tickets.map((x: J) => [x.id, x.deleted_from, x.purge_on])).toEqual([[paid.id, 'working', null]]);
   });
 
+  it('judges the stored deposits as written: anything but missing or [] keeps the ticket', async () => {
+    const when = new Date();
+    when.setDate(when.getDate() - 15);
+    /** A deleted waiting row 15 days old written straight into the DB, `deposits` as given (absent: no key). */
+    const raw = (...deposits: unknown[]): number => {
+      const data: Record<string, unknown> = { ...CAR, deleted_at: nowIso(when), deleted_by: 'admin#1', deleted_from: 'waiting' };
+      if (deposits.length) data['deposits'] = deposits[0];
+      return Number(s.db.prepare("INSERT INTO tickets (status, data) VALUES ('deleted', ?)").run(JSON.stringify(data)).lastInsertRowid);
+    };
+    const one = raw({ amount: 100 }); // a single object, not a list
+    const nul = raw(null);
+    const str = raw('100');
+    const none = raw(); // no key: an old row, deposit-free
+    const empty = raw([]);
+    s.store.create(CAR); // the newest row
+    const list = (await call('/api/tickets?status=deleted', undefined, await s.admin()))[1];
+    const on = Object.fromEntries(list.tickets.map((x: J) => [x.id, x.purge_on]));
+    expect([on[one], on[nul], on[str]]).toEqual([null, null, null]);
+    expect(typeof on[none]).toBe('string');
+    expect(typeof on[empty]).toBe('string');
+    expect(s.store.purge(new Date())).toBe(2);
+    expect([one, nul, str, none, empty].map((id) => s.store.get(id) !== null)).toEqual([true, true, true, false, false]);
+    const far = new Date();
+    far.setDate(far.getDate() + 400);
+    expect(s.store.purge(far)).toBe(0); // never, however long
+  });
+
   it('never removes the newest row, so no id is handed out twice', () => {
     const old = deleted('waiting', 15); // the newest row
     expect(s.store.purge(new Date())).toBe(0);

@@ -7,7 +7,9 @@ import {
   newTicket,
   normalize,
   nowIso,
+  holdsDeposits,
   purgeable,
+  purgeOn,
   Stale,
   type Ticket,
 } from '@shop/domain';
@@ -33,7 +35,23 @@ function complete(d: Json): Ticket {
   return t;
 }
 
-const fromRow = (row: Row): Ticket => complete({ ...(JSON.parse(row.data) as Json), id: row.id, status: row.status });
+// Per ticket read: whether its stored deposits hold one, judged on the raw JSON before complete() turns a
+// damaged value (null, one object, text) into []. R10 fails safe on it: such a row is kept, never purged.
+const heldDeposits = new WeakMap<Ticket, boolean>();
+
+/** True unless the stored data is an object whose deposits key is missing or an empty list. */
+const rawHolds = (raw: unknown): boolean =>
+  typeof raw !== 'object' || raw === null || Array.isArray(raw) || holdsDeposits((raw as Json)['deposits']);
+
+function fromRow(row: Row): Ticket {
+  const raw = JSON.parse(row.data) as unknown;
+  const t = complete({ ...(raw as Json), id: row.id, status: row.status });
+  heldDeposits.set(t, rawHolds(raw));
+  return t;
+}
+
+/** Whether `t`'s deposits, as stored when it was read, hold one (one built here: from t.deposits). */
+const holds = (t: Ticket): boolean => heldDeposits.get(t) ?? holdsDeposits(t.deposits);
 
 /** The data column: every field but id and status, unknown keys included, as Python's json.dumps. */
 function toData(t: Ticket): string {
@@ -97,7 +115,13 @@ export class TicketStore {
     t.version = saved.version;
     t.updated = saved.updated;
     t.created = saved.created;
+    heldDeposits.set(t, holdsDeposits(t.deposits)); // stored now as written: a list
     return t;
+  }
+
+  /** The day the purge removes `t` (YYYY-MM-DD), or null: judged on its deposits as stored, as purge() does. */
+  purgeOn(t: Ticket): string | null {
+    return purgeOn(t, holds(t));
   }
 
   /**
@@ -120,7 +144,7 @@ export class TicketStore {
         } catch {
           return false; // not ours to judge
         }
-        return purgeable(t, now); // deposits included: never one that has any
+        return purgeable(t, now, holds(t)); // the raw stored deposits, read in this transaction (R10)
       });
       const del = this.db.prepare("DELETE FROM tickets WHERE id = ? AND status = 'deleted'");
       let n = 0;
