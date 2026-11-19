@@ -6,6 +6,7 @@ import { createApp } from './app';
 import { className, logLine } from './http/log';
 import type { Config } from './config';
 import { openDb } from './db';
+import { type PurgeOpts, startPurge } from './purge';
 import { makeSetupCode } from './routes/auth';
 import { TicketStore } from './store';
 
@@ -44,21 +45,27 @@ export function listen(app: RequestListener, where: { host: string; port: number
   });
 }
 
-/** Opens tickets.db and serves; the kiosk's old sessions go and, with no admin yet, a setup code is made. */
+/**
+ * Opens tickets.db and serves; the kiosk's old sessions go and, with no admin yet, a setup code is made. Deleted
+ * tickets due for the purge go at start and every hour (opts.clock / opts.schedule: tests' own).
+ */
 export async function startServer(
   config: Config,
-  opts: ListenOpts = {},
+  opts: ListenOpts & PurgeOpts = {},
 ): Promise<{ port: number; close(): Promise<void> }> {
+  const { clock, schedule, ...listenOpts } = opts;
   const db = openDb(config.db);
   let server: Server;
+  let purge: { stop(): void };
   try {
     const store = new TicketStore(db);
     const accounts = new Accounts(db);
-    server = await listen(createApp({ store, accounts, config }), config, { log: config.log, ...opts });
+    server = await listen(createApp({ store, accounts, config }), config, { log: config.log, ...listenOpts });
     // straight after listening, before any request is read: a second copy that failed above changed nothing
     try {
       accounts.deleteKioskSessions();
       makeSetupCode(accounts, config.setup);
+      purge = startPurge(store, config.log, { clock, schedule });
     } catch (e) {
       server.closeAllConnections();
       await new Promise((ok) => server.close(ok));
@@ -72,6 +79,7 @@ export async function startServer(
   return {
     port: typeof address === 'object' && address ? address.port : config.port,
     close: async () => {
+      purge.stop();
       server.closeAllConnections();
       await new Promise((ok) => server.close(ok));
       db.close();

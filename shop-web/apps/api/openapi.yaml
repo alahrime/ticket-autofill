@@ -48,11 +48,15 @@ paths:
       summary: The tickets this caller sees
       description: |
         Admin: every ticket. Mechanic: waiting ones nobody else was given, and their own working and approved
-        ones. The reply has an ETag; the pages poll with If-None-Match and get 304 when nothing changed.
+        ones. Deleted tickets are listed only when the admin asks for `deleted` (a mechanic asking gets none);
+        each then carries `purge_on`. The reply has an ETag; the pages poll with If-None-Match and get 304 when
+        nothing changed.
       parameters:
         - name: status
           in: query
-          description: Comma-separated statuses to keep (may repeat); unknown ones are dropped. None given = all.
+          description: |
+            Comma-separated statuses to keep (may repeat); unknown ones are dropped. None given = all but deleted.
+            `deleted` is the admin's only.
           schema: { type: string }
           example: waiting,working,approved
         - name: If-None-Match
@@ -72,7 +76,7 @@ paths:
                 properties:
                   tickets:
                     type: array
-                    items: { $ref: '#/components/schemas/Ticket' }
+                    items: { $ref: '#/components/schemas/ListedTicket' }
         '304':
           description: Not changed since the If-None-Match ETag.
         '401': { $ref: '#/components/responses/SignIn' }
@@ -85,8 +89,9 @@ paths:
         Admin: a NewTicket, the whole invoice at once. Mechanic: a CheckIn; every other key is dropped and the
         ticket waits, unassigned. The reply is the new ticket as the caller's role sees it. A `token` (8 to 64
         characters, one per new ticket on the page) sent again by the same account replies with the ticket it
-        made instead of a second one, or 404 once the caller may no longer see that ticket (a mechanic's
-        check-in the desk has given to someone else).
+        made instead of a second one, answered as GET /api/tickets/{id} would answer this caller now: 404 once
+        they may no longer see it (a mechanic's check-in the desk has given to someone else), 410 for a
+        mechanic's deleted one. A replay never makes a deleted ticket again; one purged since makes a new one.
       requestBody:
         required: true
         content:
@@ -115,13 +120,16 @@ paths:
         '401': { $ref: '#/components/responses/SignIn' }
         '403': { $ref: '#/components/responses/NotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
 
   /api/tickets/{id}:
     get:
       operationId: getTicket
       tags: [tickets]
       summary: One ticket
-      description: A mechanic also sees their own ticket in review. Someone else's is 404.
+      description: |
+        A mechanic also sees their own ticket in review. Someone else's is 404. A deleted ticket: the admin's
+        200; 410 for a mechanic who could see it before it was deleted; 404 for anyone else.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       responses:
@@ -133,6 +141,7 @@ paths:
         '401': { $ref: '#/components/responses/SignIn' }
         '403': { $ref: '#/components/responses/NotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
     post:
       operationId: editTicket
       tags: [tickets]
@@ -140,7 +149,8 @@ paths:
       description: |
         Only the keys sent change. `version` is the copy the device saw: another device's save in between is
         409 with the stored ticket. A mechanic edits only their own working or approved job, and only lines,
-        odometer, vin and notes.
+        odometer, vin and notes. A deleted ticket: 409 for the admin (restore it first), 410 or 404 for a
+        mechanic.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -166,6 +176,7 @@ paths:
         '403': { $ref: '#/components/responses/NotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
 
   /api/tickets/{id}/move:
     post:
@@ -175,7 +186,8 @@ paths:
       description: |
         waiting>working, working>review, review>working (needs a note), review>approved, approved>filled,
         waiting>approved, working>approved. A mechanic only accepts (as themselves) and finishes; the desk
-        accepting for a mechanic names one.
+        accepting for a mechanic names one. No move reaches `deleted` (that is POST .../delete). A deleted
+        ticket: 409 for the admin, 410 or 404 for a mechanic.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -190,6 +202,65 @@ paths:
       responses:
         '200':
           description: The moved ticket.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+
+  /api/tickets/{id}/delete:
+    post:
+      operationId: deleteTicket
+      tags: [tickets]
+      summary: Delete a ticket (it can be restored)
+      description: |
+        The admin deletes any ticket; a mechanic, any one they may open (their own, or a waiting one nobody was
+        given). Deleted from waiting, working or review, it is removed for good 14 days later; a deleted
+        approved or filled ticket is kept. Already deleted, or a stale version: 409.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Versioned' }
+            example:
+              version: 3
+      responses:
+        '200':
+          description: The deleted ticket.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+
+  /api/tickets/{id}/restore:
+    post:
+      operationId: restoreTicket
+      tags: [tickets]
+      summary: Put a deleted ticket back where it was (admin)
+      description: Back to the status it was deleted from. Not deleted, or a stale version, is 409.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Versioned' }
+            example:
+              version: 4
+      responses:
+        '200':
+          description: The restored ticket.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Ticket' }
@@ -374,6 +445,12 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    Gone:
+      description: A deleted ticket this mechanic could see before it was deleted.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: removed by the desk }
     Conflict:
       description: Changed on another device, or a move or edit not allowed now; `ticket` is the stored one.
       content:
@@ -413,7 +490,7 @@ components:
 
     Status:
       type: string
-      enum: [waiting, working, review, approved, filled]
+      enum: [waiting, working, review, approved, filled, deleted]
 
     Line:
       description: One invoice line. price null = labor only; labor null = no labor charge.
@@ -479,6 +556,9 @@ components:
         - created
         - updated
         - version
+        - deleted_at
+        - deleted_by
+        - deleted_from
         - totals
         - vin_warning
       properties:
@@ -508,8 +588,23 @@ components:
         created: { type: string, description: 'Local time, YYYY-MM-DDTHH:MM:SS' }
         updated: { type: string, description: 'Local time, YYYY-MM-DDTHH:MM:SS' }
         version: { type: integer, description: Goes up by one on every save. }
+        deleted_at: { type: string, description: "When it was deleted, as `updated`; '' = not deleted." }
+        deleted_by: { type: string, description: "Who deleted it: role#id (admin#1, mechanic#3), never a name." }
+        deleted_from:
+          type: string
+          description: "The status it was deleted from, which a restore puts back; '' = not deleted."
         totals: { $ref: '#/components/schemas/Totals' }
         vin_warning: { type: string, description: "'' when the VIN looks right or is empty." }
+
+    ListedTicket:
+      description: A ticket in a list. A deleted one (the admin asked for them) also says when the purge takes it.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/Ticket'
+      properties:
+        purge_on:
+          description: "YYYY-MM-DD, 14 days after it was deleted; null for an approved or filled one (kept)."
+          type: [string, 'null']
 
     LineIn:
       description: A line as typed. Money may be a number or text ('$1,200.50'); a line without id is new.
@@ -611,6 +706,13 @@ components:
         to: { x-checked-in: route, $ref: '#/components/schemas/Status' }
         note: { x-checked-in: route, type: [string, 'null'], maxLength: 2000, description: Needed to send it back. }
         mechanic: { x-checked-in: route, type: string, description: Who the desk accepts it for. }
+
+    Versioned:
+      description: Only the version the device saw.
+      type: object
+      required: [version]
+      properties:
+        version: { $ref: '#/components/schemas/Version' }
 
     Version:
       description: The ticket version the device saw.

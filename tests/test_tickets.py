@@ -328,6 +328,27 @@ def test_store_create_get_list():
         assert s.get(c.id).status == "waiting" and [t.id for t in s.list(["approved"])] == []
 
 
+def test_deleted_fields_round_trip():
+    # the TS server deletes tickets (status "deleted"); this side must load, keep and refuse to change them
+    with store() as s:
+        keep = s.create(DESK)
+        t = s.create(dict(DESK, first="john"))
+        t.status, t.deleted_at, t.deleted_by, t.deleted_from = "deleted", "2026-11-18T14:03:09", "admin#1", "waiting"
+        s.save(t, 1)
+        got = s.get(t.id)
+        assert got == t and (got.deleted_at, got.deleted_by, got.deleted_from) == ("2026-11-18T14:03:09", "admin#1", "waiting")
+        assert Ticket().deleted_at == Ticket().deleted_by == Ticket().deleted_from == ""
+        assert [x.id for x in s.list()] == [keep.id]  # off the boards
+        assert [x.id for x in s.list(["deleted"])] == [t.id]
+        assert str(raises(Refused, move, got, "filled")) == "can't go from deleted to filled"
+        assert str(raises(Refused, edit, got, {"notes": "x"}, "desk")) == "can't change a deleted ticket"
+        assert str(raises(Refused, edit, got, {"notes": "x"}, "mechanic")) == "the phone can't change a deleted ticket"
+        assert str(raises(Refused, move, s.get(keep.id), "deleted")) == "can't go from waiting to deleted"
+        got.notes = "kept"
+        s.save(got, 2)
+        assert s.get(t.id).deleted_by == "admin#1" and s.get(t.id).status == "deleted"
+
+
 def test_store_round_trips_lines():
     with store() as s:
         t = s.create(DESK)

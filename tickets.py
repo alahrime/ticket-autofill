@@ -62,6 +62,9 @@ class Ticket:
     created: str = ""     # ISO time, seconds
     updated: str = ""
     version: int = 1
+    deleted_at: str = ""    # the TS server's delete: ISO time; "" = not deleted (status "deleted" when set)
+    deleted_by: str = ""    # "role#id"
+    deleted_from: str = ""  # the status it had, which a restore puts back
 
 
 # shop.py maps: Invalid -> 400, Refused / Stale -> 409, KeyError (unknown id) -> 404.
@@ -279,6 +282,8 @@ def edit(ticket, fields, who):
     normalize. Raises Refused (not allowed now / not theirs to change) or Invalid (bad values)."""
     known = set(fields) & set(UPPER + TEXT + REQUIRED + ("lines", "deposits"))
     if who == "desk":
+        if ticket.status == "deleted":  # the TS server deletes and restores; nothing here changes one
+            raise Refused("can't change a deleted ticket")
         if ticket.status == "filled":  # it's in InvoMax now
             raise Refused(f"the desk can't change a {ticket.status} ticket")
     elif who == "mechanic":
@@ -440,11 +445,11 @@ class Store:
         return self._ticket(row) if row else None
 
     def list(self, statuses=None):
-        """Newest first; statuses None = all."""
-        sql, args = "SELECT id, status, data FROM tickets", ()
+        """Newest first; statuses None = all but deleted ones (those only when asked for)."""
+        sql, args = "SELECT id, status, data FROM tickets WHERE status != 'deleted'", ()
         if statuses:
             args = tuple(statuses)
-            sql += f" WHERE status IN ({','.join('?' * len(args))})"
+            sql = f"SELECT id, status, data FROM tickets WHERE status IN ({','.join('?' * len(args))})"
         with self.lock:
             rows = self.db.execute(sql + " ORDER BY id DESC", args).fetchall()
         return [self._ticket(r) for r in rows]

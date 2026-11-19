@@ -44,6 +44,12 @@ export interface Ticket {
   updated: string;
   /** Goes up by one on every save. */
   version: number;
+  /** When it was deleted, as `updated`; '' = not deleted. */
+  deleted_at: string;
+  /** Who deleted it: role#id (admin#1, mechanic#3), never a name. */
+  deleted_by: string;
+  /** The status it was deleted from, which a restore puts back; '' = not deleted. */
+  deleted_from: string;
   totals: Totals;
   /** '' when the VIN looks right or is empty. */
   vin_warning: string;

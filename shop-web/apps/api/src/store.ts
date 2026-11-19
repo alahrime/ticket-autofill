@@ -1,6 +1,16 @@
 // Tickets in SQLite, shared with Python's tickets.Store: id, indexed status, the rest as JSON.
 import type { DatabaseSync } from 'node:sqlite';
-import { type Deposit, Invalid, type Line, newTicket, normalize, nowIso, Stale, type Ticket } from '@shop/domain';
+import {
+  type Deposit,
+  Invalid,
+  type Line,
+  newTicket,
+  normalize,
+  nowIso,
+  purgeable,
+  Stale,
+  type Ticket,
+} from '@shop/domain';
 import { NotFound } from './errors';
 import { pyDumps } from './py-json';
 
@@ -55,9 +65,11 @@ export class TicketStore {
     return row ? fromRow(row) : null;
   }
 
-  /** Newest first; no statuses (or an empty list, as in Python) = all. */
+  /** Newest first; no statuses (or an empty list, as in Python) = all but deleted ones (those only when asked). */
   list(statuses?: string[]): Ticket[] {
-    const where = statuses?.length ? ` WHERE status IN (${statuses.map(() => '?').join(', ')})` : '';
+    const where = statuses?.length
+      ? ` WHERE status IN (${statuses.map(() => '?').join(', ')})`
+      : " WHERE status != 'deleted'";
     const rows = this.db.prepare(`${SELECT}${where} ORDER BY id DESC`).all(...(statuses ?? [])) as Row[];
     return rows.map(fromRow);
   }
@@ -86,5 +98,33 @@ export class TicketStore {
     t.updated = saved.updated;
     t.created = saved.created;
     return t;
+  }
+
+  /**
+   * Removes for good the deleted tickets `purgeable` at `now`, in one transaction; the number removed. Only rows
+   * whose status column is 'deleted' are read or removed; one whose JSON won't parse is left alone.
+   */
+  purge(now: Date): number {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db.prepare(`${SELECT} WHERE status = 'deleted'`).all() as Row[];
+      const gone = rows.filter((row) => {
+        let t: Ticket;
+        try {
+          t = fromRow(row);
+        } catch {
+          return false; // not ours to judge
+        }
+        return purgeable(t, now);
+      });
+      const del = this.db.prepare("DELETE FROM tickets WHERE id = ? AND status = 'deleted'");
+      let n = 0;
+      for (const row of gone) n += Number(del.run(row.id).changes);
+      this.db.exec('COMMIT');
+      return n;
+    } catch (e) {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 }

@@ -39,6 +39,9 @@ export type Ticket = {
   created: string;
   updated: string;
   version: number;
+  deleted_at: string; // when it was deleted (as updated); '' = not deleted
+  deleted_by: string; // who deleted it, "role#id"
+  deleted_from: string; // the status it had, which restore puts back
   // unknown JSON keys read from the database ride along untouched
   [extra: string]: unknown;
 };
@@ -123,6 +126,9 @@ export function newTicket(clean: Partial<Ticket>, now: string): Ticket {
     created: now,
     updated: now,
     version: 1,
+    deleted_at: '',
+    deleted_by: '',
+    deleted_from: '',
     ...clean,
   };
 }

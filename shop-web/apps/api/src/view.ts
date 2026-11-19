@@ -34,6 +34,9 @@ const TICKET_FIELDS = [
   'created',
   'updated',
   'version',
+  'deleted_at',
+  'deleted_by',
+  'deleted_from',
 ] as const;
 const LINE_FIELDS = ['desc', 'qty', 'price', 'labor', 'code', 'id'] as const;
 const DEPOSIT_FIELDS = ['amount', 'method', 'date', 'note', 'id'] as const;
@@ -82,6 +85,16 @@ export function sees(s: Session, t: Ticket, one = false): boolean {
       : ['working', 'approved']
     ).includes(t.status)
   );
+}
+
+/**
+ * What GET /api/tickets/:id gives this caller: 'ok' (200), 'gone' (410: a mechanic's ticket that would be theirs
+ * to see had it not been deleted) or 'hidden' (404). The desk opens a deleted ticket like any other.
+ */
+export function reach(s: Session, t: Ticket): 'ok' | 'gone' | 'hidden' {
+  if (t.status !== 'deleted') return sees(s, t, true) ? 'ok' : 'hidden';
+  if (s.role === 'admin') return 'ok';
+  return sees(s, { ...t, status: t.deleted_from }, true) ? 'gone' : 'hidden';
 }
 
 /** The session signedIn found. */

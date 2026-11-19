@@ -30,6 +30,7 @@ import type {
   ConflictResponse,
   Edit,
   GetCatalogParams,
+  GoneResponse,
   Hint,
   ListMechanics200,
   ListTickets200,
@@ -45,7 +46,8 @@ import type {
   Ticket,
   User,
   UserChange,
-  Vehicles
+  Vehicles,
+  Versioned
 } from './model';
 
 import { shopFetch } from '../fetcher.js';
@@ -235,7 +237,9 @@ export const getListTicketsUrl = (params?: ListTicketsParams,) => {
 
 /**
  * Admin: every ticket. Mechanic: waiting ones nobody else was given, and their own working and approved
- * ones. The reply has an ETag; the pages poll with If-None-Match and get 304 when nothing changed.
+ * ones. Deleted tickets are listed only when the admin asks for `deleted` (a mechanic asking gets none);
+ * each then carries `purge_on`. The reply has an ETag; the pages poll with If-None-Match and get 304 when
+ * nothing changed.
  * @summary The tickets this caller sees
  */
 export const listTickets = async (params?: ListTicketsParams, options?: Parameters<typeof shopFetch>[1]): Promise<listTicketsResponse> => {
@@ -353,10 +357,15 @@ export type createTicketResponse404 = {
   status: 404
 }
 
+export type createTicketResponse410 = {
+  data: GoneResponse
+  status: 410
+}
+
 export type createTicketResponseSuccess = (createTicketResponse200) & {
   headers: Headers;
 };
-export type createTicketResponseError = (createTicketResponse400 | createTicketResponse401 | createTicketResponse403 | createTicketResponse404) & {
+export type createTicketResponseError = (createTicketResponse400 | createTicketResponse401 | createTicketResponse403 | createTicketResponse404 | createTicketResponse410) & {
   headers: Headers;
 };
 
@@ -374,8 +383,9 @@ export const getCreateTicketUrl = () => {
  * Admin: a NewTicket, the whole invoice at once. Mechanic: a CheckIn; every other key is dropped and the
  * ticket waits, unassigned. The reply is the new ticket as the caller's role sees it. A `token` (8 to 64
  * characters, one per new ticket on the page) sent again by the same account replies with the ticket it
- * made instead of a second one, or 404 once the caller may no longer see that ticket (a mechanic's
- * check-in the desk has given to someone else).
+ * made instead of a second one, answered as GET /api/tickets/{id} would answer this caller now: 404 once
+ * they may no longer see it (a mechanic's check-in the desk has given to someone else), 410 for a
+ * mechanic's deleted one. A replay never makes a deleted ticket again; one purged since makes a new one.
  * @summary A new ticket (the desk's whole invoice, or a mechanic's check-in)
  */
 export const createTicket = async (newTicketCheckIn: NewTicket | CheckIn, options?: Parameters<typeof shopFetch>[1]): Promise<createTicketResponse> => {
@@ -409,7 +419,7 @@ return shopFetch<createTicketResponse>(getCreateTicketUrl(),
 
 export const getCreateTicketMutationKey = () => ['createTicket'] as const;
 
-export const getCreateTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>,
+export const getCreateTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTicket>>, TError,CreateTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createTicket>>, TError,CreateTicketMutationVariables, TContext> => {
 
@@ -438,13 +448,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateTicketMutationResult = NonNullable<Awaited<ReturnType<typeof createTicket>>>
     export type CreateTicketMutationBody = BodyType<NewTicket | CheckIn>
-    export type CreateTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>
+    export type CreateTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>
     export type CreateTicketMutationVariables = {data: BodyType<NewTicket | CheckIn>}
 
     /**
  * @summary A new ticket (the desk's whole invoice, or a mechanic's check-in)
  */
-export const useCreateTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>,
+export const useCreateTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTicket>>, TError,CreateTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createTicket>>,
@@ -475,10 +485,15 @@ export type getTicketResponse404 = {
   status: 404
 }
 
+export type getTicketResponse410 = {
+  data: GoneResponse
+  status: 410
+}
+
 export type getTicketResponseSuccess = (getTicketResponse200) & {
   headers: Headers;
 };
-export type getTicketResponseError = (getTicketResponse401 | getTicketResponse403 | getTicketResponse404) & {
+export type getTicketResponseError = (getTicketResponse401 | getTicketResponse403 | getTicketResponse404 | getTicketResponse410) & {
   headers: Headers;
 };
 
@@ -493,7 +508,8 @@ export const getGetTicketUrl = (id: number,) => {
 }
 
 /**
- * A mechanic also sees their own ticket in review. Someone else's is 404.
+ * A mechanic also sees their own ticket in review. Someone else's is 404. A deleted ticket: the admin's
+ * 200; 410 for a mechanic who could see it before it was deleted; 404 for anyone else.
  * @summary One ticket
  */
 export const getTicket = async (id: number, options?: Parameters<typeof shopFetch>[1]): Promise<getTicketResponse> => {
@@ -518,7 +534,7 @@ export const getGetTicketQueryKey = (id: number,) => {
     }
 
 
-export const getGetTicketQueryOptions = <TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+export const getGetTicketQueryOptions = <TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>>(id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -537,10 +553,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetTicketQueryResult = NonNullable<Awaited<ReturnType<typeof getTicket>>>
-export type GetTicketQueryError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>
+export type GetTicketQueryError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>
 
 
-export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>>(
  id: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTicket>>,
@@ -550,7 +566,7 @@ export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TErr
       >, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>>(
  id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTicket>>,
@@ -560,7 +576,7 @@ export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TErr
       >, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>>(
  id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -568,7 +584,7 @@ export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TErr
  * @summary One ticket
  */
 
-export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+export function useGetTicket<TData = Awaited<ReturnType<typeof getTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | GoneResponse>>(
  id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -616,10 +632,15 @@ export type editTicketResponse409 = {
   status: 409
 }
 
+export type editTicketResponse410 = {
+  data: GoneResponse
+  status: 410
+}
+
 export type editTicketResponseSuccess = (editTicketResponse200) & {
   headers: Headers;
 };
-export type editTicketResponseError = (editTicketResponse400 | editTicketResponse401 | editTicketResponse403 | editTicketResponse404 | editTicketResponse409) & {
+export type editTicketResponseError = (editTicketResponse400 | editTicketResponse401 | editTicketResponse403 | editTicketResponse404 | editTicketResponse409 | editTicketResponse410) & {
   headers: Headers;
 };
 
@@ -636,7 +657,8 @@ export const getEditTicketUrl = (id: number,) => {
 /**
  * Only the keys sent change. `version` is the copy the device saw: another device's save in between is
  * 409 with the stored ticket. A mechanic edits only their own working or approved job, and only lines,
- * odometer, vin and notes.
+ * odometer, vin and notes. A deleted ticket: 409 for the admin (restore it first), 410 or 404 for a
+ * mechanic.
  * @summary Change a ticket's fields
  */
 export const editTicket = async (id: number,
@@ -671,7 +693,7 @@ return shopFetch<editTicketResponse>(getEditTicketUrl(id),
 
 export const getEditTicketMutationKey = () => ['editTicket'] as const;
 
-export const getEditTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>,
+export const getEditTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof editTicket>>, TError,EditTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof editTicket>>, TError,EditTicketMutationVariables, TContext> => {
 
@@ -700,13 +722,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type EditTicketMutationResult = NonNullable<Awaited<ReturnType<typeof editTicket>>>
     export type EditTicketMutationBody = BodyType<Edit>
-    export type EditTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>
+    export type EditTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>
     export type EditTicketMutationVariables = {id: number;data: BodyType<Edit>}
 
     /**
  * @summary Change a ticket's fields
  */
-export const useEditTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>,
+export const useEditTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof editTicket>>, TError,EditTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof editTicket>>,
@@ -747,10 +769,15 @@ export type moveTicketResponse409 = {
   status: 409
 }
 
+export type moveTicketResponse410 = {
+  data: GoneResponse
+  status: 410
+}
+
 export type moveTicketResponseSuccess = (moveTicketResponse200) & {
   headers: Headers;
 };
-export type moveTicketResponseError = (moveTicketResponse400 | moveTicketResponse401 | moveTicketResponse403 | moveTicketResponse404 | moveTicketResponse409) & {
+export type moveTicketResponseError = (moveTicketResponse400 | moveTicketResponse401 | moveTicketResponse403 | moveTicketResponse404 | moveTicketResponse409 | moveTicketResponse410) & {
   headers: Headers;
 };
 
@@ -767,7 +794,8 @@ export const getMoveTicketUrl = (id: number,) => {
 /**
  * waiting>working, working>review, review>working (needs a note), review>approved, approved>filled,
  * waiting>approved, working>approved. A mechanic only accepts (as themselves) and finishes; the desk
- * accepting for a mechanic names one.
+ * accepting for a mechanic names one. No move reaches `deleted` (that is POST .../delete). A deleted
+ * ticket: 409 for the admin, 410 or 404 for a mechanic.
  * @summary Move a ticket to another status
  */
 export const moveTicket = async (id: number,
@@ -802,7 +830,7 @@ return shopFetch<moveTicketResponse>(getMoveTicketUrl(id),
 
 export const getMoveTicketMutationKey = () => ['moveTicket'] as const;
 
-export const getMoveTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>,
+export const getMoveTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof moveTicket>>, TError,MoveTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof moveTicket>>, TError,MoveTicketMutationVariables, TContext> => {
 
@@ -831,13 +859,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type MoveTicketMutationResult = NonNullable<Awaited<ReturnType<typeof moveTicket>>>
     export type MoveTicketMutationBody = BodyType<Move>
-    export type MoveTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>
+    export type MoveTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>
     export type MoveTicketMutationVariables = {id: number;data: BodyType<Move>}
 
     /**
  * @summary Move a ticket to another status
  */
-export const useMoveTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>,
+export const useMoveTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof moveTicket>>, TError,MoveTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof moveTicket>>,
@@ -846,6 +874,271 @@ export const useMoveTicket = <TError = ErrorType<BadRequestResponse | SignInResp
         TContext
       > => {
       return useMutation(getMoveTicketMutationOptions(options), queryClient);
+    }
+
+export type deleteTicketResponse200 = {
+  data: Ticket
+  status: 200
+}
+
+export type deleteTicketResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type deleteTicketResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type deleteTicketResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type deleteTicketResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type deleteTicketResponse409 = {
+  data: ConflictResponse
+  status: 409
+}
+
+export type deleteTicketResponse410 = {
+  data: GoneResponse
+  status: 410
+}
+
+export type deleteTicketResponseSuccess = (deleteTicketResponse200) & {
+  headers: Headers;
+};
+export type deleteTicketResponseError = (deleteTicketResponse400 | deleteTicketResponse401 | deleteTicketResponse403 | deleteTicketResponse404 | deleteTicketResponse409 | deleteTicketResponse410) & {
+  headers: Headers;
+};
+
+export type deleteTicketResponse = (deleteTicketResponseSuccess | deleteTicketResponseError)
+
+export const getDeleteTicketUrl = (id: number,) => {
+
+
+
+
+  return `/api/tickets/${id}/delete`
+}
+
+/**
+ * The admin deletes any ticket; a mechanic, any one they may open (their own, or a waiting one nobody was
+ * given). Deleted from waiting, working or review, it is removed for good 14 days later; a deleted
+ * approved or filled ticket is kept. Already deleted, or a stale version: 409.
+ * @summary Delete a ticket (it can be restored)
+ */
+export const deleteTicket = async (id: number,
+    versioned: Versioned, options?: Parameters<typeof shopFetch>[1]): Promise<deleteTicketResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<deleteTicketResponse>(getDeleteTicketUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(versioned)
+  }
+);}
+
+
+
+
+
+export const getDeleteTicketMutationKey = () => ['deleteTicket'] as const;
+
+export const getDeleteTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTicket>>, TError,DeleteTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteTicket>>, TError,DeleteTicketMutationVariables, TContext> => {
+
+const mutationKey = getDeleteTicketMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteTicket>>, DeleteTicketMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  deleteTicket(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteTicketMutationResult = NonNullable<Awaited<ReturnType<typeof deleteTicket>>>
+    export type DeleteTicketMutationBody = BodyType<Versioned>
+    export type DeleteTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>
+    export type DeleteTicketMutationVariables = {id: number;data: BodyType<Versioned>}
+
+    /**
+ * @summary Delete a ticket (it can be restored)
+ */
+export const useDeleteTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse | GoneResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTicket>>, TError,DeleteTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteTicket>>,
+        TError,
+        DeleteTicketMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteTicketMutationOptions(options), queryClient);
+    }
+
+export type restoreTicketResponse200 = {
+  data: Ticket
+  status: 200
+}
+
+export type restoreTicketResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type restoreTicketResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type restoreTicketResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type restoreTicketResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type restoreTicketResponse409 = {
+  data: ConflictResponse
+  status: 409
+}
+
+export type restoreTicketResponseSuccess = (restoreTicketResponse200) & {
+  headers: Headers;
+};
+export type restoreTicketResponseError = (restoreTicketResponse400 | restoreTicketResponse401 | restoreTicketResponse403 | restoreTicketResponse404 | restoreTicketResponse409) & {
+  headers: Headers;
+};
+
+export type restoreTicketResponse = (restoreTicketResponseSuccess | restoreTicketResponseError)
+
+export const getRestoreTicketUrl = (id: number,) => {
+
+
+
+
+  return `/api/tickets/${id}/restore`
+}
+
+/**
+ * Back to the status it was deleted from. Not deleted, or a stale version, is 409.
+ * @summary Put a deleted ticket back where it was (admin)
+ */
+export const restoreTicket = async (id: number,
+    versioned: Versioned, options?: Parameters<typeof shopFetch>[1]): Promise<restoreTicketResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<restoreTicketResponse>(getRestoreTicketUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(versioned)
+  }
+);}
+
+
+
+
+
+export const getRestoreTicketMutationKey = () => ['restoreTicket'] as const;
+
+export const getRestoreTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreTicket>>, TError,RestoreTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restoreTicket>>, TError,RestoreTicketMutationVariables, TContext> => {
+
+const mutationKey = getRestoreTicketMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restoreTicket>>, RestoreTicketMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  restoreTicket(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestoreTicketMutationResult = NonNullable<Awaited<ReturnType<typeof restoreTicket>>>
+    export type RestoreTicketMutationBody = BodyType<Versioned>
+    export type RestoreTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>
+    export type RestoreTicketMutationVariables = {id: number;data: BodyType<Versioned>}
+
+    /**
+ * @summary Put a deleted ticket back where it was (admin)
+ */
+export const useRestoreTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreTicket>>, TError,RestoreTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof restoreTicket>>,
+        TError,
+        RestoreTicketMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRestoreTicketMutationOptions(options), queryClient);
     }
 
 export type getVehiclesResponse200 = {

@@ -34,6 +34,7 @@ export function edit(
 ): Ticket {
   const known = Object.keys(fields).filter((k) => KNOWN.has(k));
   if (who === 'desk') {
+    if (t.status === 'deleted') throw new Refused("can't change a deleted ticket"); // restore it first
     if (t.status === 'filled') throw new Refused(`the desk can't change a ${t.status} ticket`); // it's in InvoMax now
   } else if (who === 'mechanic') {
     if (!(MECHANIC_EDITS as readonly string[]).includes(t.status)) {

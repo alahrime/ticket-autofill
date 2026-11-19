@@ -177,7 +177,9 @@ describe('TicketStore', () => {
     const { data } = db.prepare('SELECT data FROM tickets WHERE id = ?').get(t.id) as { data: string };
     expect(data.startsWith('{"first": "JANE", "last": "DOE", "phone": "(555)010-0000", ')).toBe(true);
     expect(data).toContain('"notes": "caf\\u00e9 \\"ok\\"\\n2", "lines": [], "deposits": [], "back_note": ""');
-    expect(data.endsWith(`"updated": "${t.updated}", "version": 1}`)).toBe(true);
+    expect(
+      data.endsWith(`"updated": "${t.updated}", "version": 1, "deleted_at": "", "deleted_by": "", "deleted_from": ""}`),
+    ).toBe(true); // the three are always written, empty when not deleted (the dataclass has them)
     expect(data).not.toMatch(/"id"|"status"/);
   });
 });

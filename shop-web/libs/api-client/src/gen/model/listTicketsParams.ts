@@ -7,6 +7,9 @@
  */
 
 export type ListTicketsParams = {
-  /** Comma-separated statuses to keep (may repeat); unknown ones are dropped. None given = all. */
+  /**
+   * Comma-separated statuses to keep (may repeat); unknown ones are dropped. None given = all but deleted.
+   * `deleted` is the admin's only.
+   */
   status?: string;
 };

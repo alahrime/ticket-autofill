@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { edit, type Ticket } from '@shop/domain';
+import { edit, markDeleted, type Ticket } from '@shop/domain';
 import { openDb } from '../src/db';
 import { TicketStore } from '../src/store';
 import { py, pyEnv, REPO_ROOT, tempDir } from './py';
@@ -108,6 +108,35 @@ describe('tickets.db shared with python', () => {
       { DB: path, ID: String(t.id) },
     );
     expect(JSON.parse(back)).toEqual(['from TS', 2]);
+  });
+
+  it('python save keeps deleted fields', () => {
+    const t = s.create(DESK);
+    s.save(markDeleted(t, 'mechanic#3', '2026-11-18T14:03:09'), 1);
+    const out = py(
+      [
+        'import json, os, tickets',
+        's = tickets.Store(os.environ["DB"])',
+        't = s.get(int(os.environ["ID"]))',
+        'seen = [t.status, t.deleted_at, t.deleted_by, t.deleted_from]',
+        't.notes = "from python"',
+        's.save(t, t.version)',
+        'listed = [x.id for x in s.list()]',
+        's.close()',
+        'print(json.dumps({"seen": seen, "listed": listed}))',
+      ].join('\n'),
+      { DB: path, ID: String(t.id) },
+    );
+    // python loads the three fields, keeps them on its save, and leaves the deleted ticket off its list
+    expect(JSON.parse(out)).toEqual({ seen: ['deleted', '2026-11-18T14:03:09', 'mechanic#3', 'waiting'], listed: [] });
+    expect(s.get(t.id)).toMatchObject({
+      status: 'deleted',
+      notes: 'from python',
+      version: 3,
+      deleted_at: '2026-11-18T14:03:09',
+      deleted_by: 'mechanic#3',
+      deleted_from: 'waiting',
+    });
   });
 
   it('waits for a python write lock', async () => {

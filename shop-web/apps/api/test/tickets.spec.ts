@@ -893,6 +893,9 @@ describe('tickets', () => {
       'created',
       'updated',
       'version',
+      'deleted_at',
+      'deleted_by',
+      'deleted_from',
       'totals',
       'vin_warning',
     ]);

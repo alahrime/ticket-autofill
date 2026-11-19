@@ -15,4 +15,5 @@ export const Status = {
   review: 'review',
   approved: 'approved',
   filled: 'filled',
+  deleted: 'deleted',
 } as const;

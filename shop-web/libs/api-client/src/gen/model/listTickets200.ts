@@ -5,8 +5,8 @@
  * The JSON API behind web/admin.html (the desk) and web/tech.html (the mechanics' phones).
  * OpenAPI spec version: 1.0.0
  */
-import type { Ticket } from './ticket.js';
+import type { ListedTicket } from './listedTicket.js';
 
 export type ListTickets200 = {
-  tickets: Ticket[];
+  tickets: ListedTicket[];
 };
