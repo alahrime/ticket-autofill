@@ -4,6 +4,7 @@ import express, { type ErrorRequestHandler, type Express, type Request, type Res
 import { Invalid, Refused, Stale } from '@shop/domain';
 import { Locked, LoginFailed } from './accounts';
 import type { Config } from './config';
+import { contract } from './http/contract';
 import { BadInput, Gone, NotFound } from './errors';
 import type { Deps } from './http/deps';
 import { className, requestLog, writeLog } from './http/log';
@@ -71,6 +72,7 @@ export function createApp(deps: Deps): Express {
   app.set('case sensitive routing', true);
   app.set('strict routing', true);
   app.locals['deps'] = deps;
+  app.locals['contract'] = contract(); // openapi.yaml: a route checks its request against it (validRequest)
 
   app.use(requestLog(deps.config.log));
   app.use(securityHeaders);

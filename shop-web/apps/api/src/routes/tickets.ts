@@ -20,6 +20,7 @@ import {
 } from '@shop/domain';
 import { type Accounts, casefold, type Session } from '../accounts';
 import { BadInput } from '../errors';
+import { validRequest } from '../http/contract';
 import { depsOf } from '../http/deps';
 import { jsonBody } from '../http/security';
 import { asJson, mine, queryValues, sees, sessionIn, signedIn } from '../view';
@@ -160,7 +161,7 @@ export function ticketRoutes(): Router {
   // (user id, the page's token) -> ticket id: a re-sent create isn't a second ticket. Oldest first.
   const made = new Map<string, number>();
 
-  r.get('/api/tickets', signedIn('admin', 'mechanic'), (req, res) => {
+  r.get('/api/tickets', signedIn('admin', 'mechanic'), validRequest, (req, res) => {
     const s = sessionIn(res);
     const asked = queryValues(req.originalUrl, 'status');
     const want = asked.length
@@ -203,7 +204,7 @@ export function ticketRoutes(): Router {
   );
 
   // the desk may type the whole invoice at once; a mechanic checks a customer in (their first details only)
-  r.post('/api/tickets', signedIn('admin', 'mechanic'), jsonBody, (req, res) => {
+  r.post('/api/tickets', signedIn('admin', 'mechanic'), jsonBody, validRequest, (req, res) => {
     const { store, accounts } = depsOf(req);
     const s = sessionIn(res);
     const body = req.body as Body;
@@ -246,10 +247,10 @@ export function ticketRoutes(): Router {
   });
 
   const staff = signedIn('admin', 'mechanic');
-  r.post('/api/tickets/:id', staff, validId, jsonBody, (req, res) =>
+  r.post('/api/tickets/:id', staff, validId, jsonBody, validRequest, (req, res) =>
     changeTicket(req, res, idOf(req), false),
   );
-  r.post('/api/tickets/:id/move', staff, validId, jsonBody, (req, res) =>
+  r.post('/api/tickets/:id/move', staff, validId, jsonBody, validRequest, (req, res) =>
     changeTicket(req, res, idOf(req), true),
   );
   return r;

@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { Router } from 'express';
 import { pyStrip } from '@shop/domain';
+import { validRequest } from '../http/contract';
 import { depsOf } from '../http/deps';
 import { queryValues, signedIn } from '../view';
 
@@ -155,7 +156,7 @@ export function catalogRoutes(): Router {
     res.setHeader('Content-Type', 'application/json'); // as Python: the file's bytes, no charset added
     res.send(vehicles(depsOf(req).config.vehicles));
   });
-  r.get('/api/catalog', signedIn('admin', 'mechanic'), (req, res) => {
+  r.get('/api/catalog', signedIn('admin', 'mechanic'), validRequest, (req, res) => {
     res.json(
       hints(
         queryValues(req.originalUrl, 'q')[0] ?? '',

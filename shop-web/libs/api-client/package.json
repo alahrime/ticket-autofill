@@ -1,0 +1,38 @@
+{
+  "name": "@shop/api-client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "@org/source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "nx": {
+    "name": "api-client",
+    "targets": {
+      "generate": {
+        "executor": "nx:run-commands",
+        "inputs": [
+          "{workspaceRoot}/apps/api/openapi.yaml",
+          "{workspaceRoot}/orval.config.ts",
+          "{projectRoot}/src/fetcher.ts"
+        ],
+        "outputs": ["{projectRoot}/src/gen"],
+        "cache": true,
+        "options": {
+          "command": "orval --config orval.config.ts",
+          "cwd": "{workspaceRoot}"
+        }
+      }
+    }
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.105.0"
+  }
+}

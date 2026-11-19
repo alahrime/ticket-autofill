@@ -3,6 +3,7 @@
 import { type RequestHandler, Router } from 'express';
 import { checkNewSecret, Locked, LoginFailed } from '../accounts';
 import { BadInput } from '../errors';
+import { validRequest } from '../http/contract';
 import { depsOf } from '../http/deps';
 import { clientIp, jsonBody, sessionCookie } from '../http/security';
 import { sessionIn, signedIn } from '../view';
@@ -27,14 +28,14 @@ export function userRoutes(): Router {
   r.get('/api/users', admin, (req, res) => {
     res.json({ users: depsOf(req).accounts.list() });
   });
-  r.post('/api/users', admin, jsonBody, async (req, res) => {
+  r.post('/api/users', admin, jsonBody, validRequest, async (req, res) => {
     const d = req.body as Body;
     res.json(await depsOf(req).accounts.add(d['name'], d['role'], d['secret']));
   });
 
   // {secret} resets their PIN/password, {active: bool} turns them on or off. Everything is checked before
   // anything is written: no half-applied change.
-  r.post('/api/users/:id', admin, validId, jsonBody, async (req, res) => {
+  r.post('/api/users/:id', admin, validId, jsonBody, validRequest, async (req, res) => {
     const { accounts } = depsOf(req);
     const s = sessionIn(res);
     const d = req.body as Body;

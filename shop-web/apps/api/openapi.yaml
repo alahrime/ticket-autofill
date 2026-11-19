@@ -1,0 +1,658 @@
+# The shop's JSON API (shop.py's, ported to apps/api). The server checks requests against this file, and
+# libs/api-client is generated from it (npx nx run api-client:generate; commit the result).
+#
+# Every /api/ route needs a session (the `sid` cookie from POST /login/admin or /login/tech): without one the
+# reply is 401 {"error": "sign in"}; with the wrong role, 403 {"error": "not allowed"}. Both come before any
+# body is read. A POST body must be a JSON object sent as `Content-Type: application/json`, at most 1 MB and
+# nested at most 64 deep; else 400 {"error"}. A POST from another site is 403. Errors never echo the input.
+#
+# Request validation (src/http/contract.ts) runs after the sign-in and role gates and the body rules. A schema
+# marked `x-checked-in: domain` or `x-checked-in: route` documents what to send, but the ticket / account rules
+# or the route check it, with their own messages, field errors ({error, errors}) and order, so the validator
+# accepts anything there. `x-error` is the message a failed check of that schema replies with.
+# Examples are made up (Jane Testcase, 555 010 0000): no customer data here.
+openapi: 3.1.0
+info:
+  title: Shop API
+  version: 1.0.0
+  description: The JSON API behind web/admin.html (the desk) and web/tech.html (the mechanics' phones).
+servers:
+  - url: /
+security:
+  - session: []
+
+tags:
+  - name: session
+  - name: tickets
+  - name: catalog
+  - name: users
+
+paths:
+  /api/me:
+    get:
+      operationId: getMe
+      tags: [session]
+      summary: Who is signed in on this device
+      responses:
+        '200':
+          description: The session's role, name and user id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/SignIn' }
+
+  /api/tickets:
+    get:
+      operationId: listTickets
+      tags: [tickets]
+      summary: The tickets this caller sees
+      description: |
+        Admin: every ticket. Mechanic: waiting ones nobody else was given, and their own working and approved
+        ones. The reply has an ETag; the pages poll with If-None-Match and get 304 when nothing changed.
+      parameters:
+        - name: status
+          in: query
+          description: Comma-separated statuses to keep (may repeat); unknown ones are dropped. None given = all.
+          schema: { type: string }
+          example: waiting,working,approved
+        - name: If-None-Match
+          in: header
+          schema: { type: string }
+      responses:
+        '200':
+          description: The tickets, newest first, each as the caller's role sees it.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tickets]
+                properties:
+                  tickets:
+                    type: array
+                    items: { $ref: '#/components/schemas/Ticket' }
+        '304':
+          description: Not changed since the If-None-Match ETag.
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+    post:
+      operationId: createTicket
+      tags: [tickets]
+      summary: A new ticket (the desk's whole invoice, or a mechanic's check-in)
+      description: |
+        Admin: a NewTicket, the whole invoice at once. Mechanic: a CheckIn; every other key is dropped and the
+        ticket waits, unassigned. The reply is the new ticket as the caller's role sees it. A `token` (8 to 64
+        characters, one per new ticket on the page) sent again by the same account replies with the ticket it
+        made instead of a second one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              anyOf:
+                - $ref: '#/components/schemas/NewTicket'
+                - $ref: '#/components/schemas/CheckIn'
+            example:
+              first: Jane
+              last: Testcase
+              phone: 555 010 0000
+              year: '2019'
+              make: Cadillac
+              model: XT5
+              plate: tst-0001
+              request: brakes squeak
+              token: tok-00000002
+      responses:
+        '200':
+          description: The ticket made (or the one this token made before).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/tickets/{id}:
+    get:
+      operationId: getTicket
+      tags: [tickets]
+      summary: One ticket
+      description: A mechanic also sees their own ticket in review. Someone else's is 404.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: The ticket as the caller's role sees it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: editTicket
+      tags: [tickets]
+      summary: Change a ticket's fields
+      description: |
+        Only the keys sent change. `version` is the copy the device saw: another device's save in between is
+        409 with the stored ticket. A mechanic edits only their own working or approved job, and only lines,
+        odometer, vin and notes.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Edit' }
+            example:
+              version: 1
+              notes: customer will wait
+      responses:
+        '200':
+          description: The saved ticket.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/tickets/{id}/move:
+    post:
+      operationId: moveTicket
+      tags: [tickets]
+      summary: Move a ticket to another status
+      description: |
+        waiting>working, working>review, review>working (needs a note), review>approved, approved>filled,
+        waiting>approved, working>approved. A mechanic only accepts (as themselves) and finishes; the desk
+        accepting for a mechanic names one.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Move' }
+            example:
+              version: 2
+              to: working
+              mechanic: Al Fixit
+      responses:
+        '200':
+          description: The moved ticket.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/vehicles:
+    get:
+      operationId: getVehicles
+      tags: [catalog]
+      summary: Makes, their models and model years (vehicles.json)
+      responses:
+        '200':
+          description: Make -> model -> [first year, last year]; {} when the file is missing or bad.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vehicles' }
+        '401': { $ref: '#/components/responses/SignIn' }
+
+  /api/catalog:
+    get:
+      operationId: getCatalog
+      tags: [catalog]
+      summary: Part hints from parts.csv
+      parameters:
+        - name: q
+          in: query
+          description: Text to find in a part's code, description or aliases (any case). Empty = no hints.
+          schema: { type: string }
+          example: brake
+      responses:
+        '200':
+          description: Up to 8 matching parts.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 8
+                items: { $ref: '#/components/schemas/Hint' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/mechanics:
+    get:
+      operationId: listMechanics
+      tags: [users]
+      summary: Active mechanics' names (admin)
+      responses:
+        '200':
+          description: Names, for the desk's pick list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mechanics]
+                properties:
+                  mechanics:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: Every account (admin)
+      responses:
+        '200':
+          description: Accounts, by name; no hashes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+    post:
+      operationId: addUser
+      tags: [users]
+      summary: A new account (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewUser' }
+            example:
+              name: Cy Newhire
+              role: mechanic
+              secret: '11223344'
+      responses:
+        '200':
+          description: The account made.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/users/{id}:
+    post:
+      operationId: changeUser
+      tags: [users]
+      summary: Reset a PIN / password, or turn an account on or off (admin)
+      description: |
+        All or nothing: everything is checked before anything is written. A new secret or turning an account
+        off signs it out everywhere; the last active admin stays on. Changing your own password signs this
+        device back in (a new Set-Cookie).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9]{1,9}$' }
+          example: 2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserChange' }
+            example:
+              active: true
+      responses:
+        '200':
+          description: The account as it is now.
+          headers:
+            Set-Cookie:
+              description: Only when you changed your own password.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: sid
+
+  parameters:
+    TicketId:
+      name: id
+      in: path
+      required: true
+      description: 1 to 9 digits; anything else is 404.
+      schema: { type: string, pattern: '^[0-9]{1,9}$' }
+      example: 1
+
+  responses:
+    BadRequest:
+      description: |
+        Bad input. Field-level problems from the ticket rules or the account rules carry `errors`
+        (field -> message), which the pages show next to each field.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    SignIn:
+      description: No live session.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotAllowed:
+      description: The wrong role, someone else's job, or a POST from another site.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such ticket or user, or not one this caller may see.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Changed on another device, or a move or edit not allowed now; `ticket` is the stored one.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Conflict' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, examples: ['sign in'] }
+        errors:
+          description: Field -> message, from the ticket or account rules.
+          type: object
+          additionalProperties: { type: string }
+          examples: [{ phone: phone is required }]
+
+    Conflict:
+      type: object
+      required: [error, ticket]
+      properties:
+        error: { type: string, examples: ['changed on another device'] }
+        ticket: { $ref: '#/components/schemas/Ticket' }
+
+    Me:
+      type: object
+      required: [role, name, id]
+      properties:
+        role: { $ref: '#/components/schemas/Role' }
+        name: { type: string }
+        id: { type: [integer, 'null'] }
+
+    Role:
+      type: string
+      enum: [admin, mechanic]
+
+    Status:
+      type: string
+      enum: [waiting, working, review, approved, filled]
+
+    Line:
+      description: One invoice line. price null = labor only; labor null = no labor charge.
+      type: object
+      required: [desc, qty, price, labor, code, id]
+      properties:
+        desc: { type: string }
+        qty: { type: number }
+        price: { type: [number, 'null'] }
+        labor: { type: [number, 'null'] }
+        code: { type: string, description: The parts.csv code when matched. }
+        id: { type: integer }
+
+    Deposit:
+      type: object
+      required: [amount, method, date, note, id]
+      properties:
+        amount: { type: number }
+        method: { $ref: '#/components/schemas/Method' }
+        date: { type: string, description: YYYY-MM-DD }
+        note: { type: string }
+        id: { type: integer }
+
+    Method:
+      type: string
+      enum: [cash, card, check, other]
+
+    Totals:
+      description: Money in dollars, rounded half-up to cents per line. `deposits` is the admin's only.
+      type: object
+      required: [parts, labor, total]
+      properties:
+        parts: { type: number }
+        labor: { type: number }
+        total: { type: number }
+        deposits: { type: number }
+
+    Ticket:
+      description: |
+        A ticket as the caller's role sees it. Admin: every field, deposits and totals.deposits. Mechanic: no
+        `deposits` and no totals.deposits. `vin_warning` is worked out per reply, not stored. Stored rows keep
+        keys this version doesn't know (written by Python), so a client must allow extra keys.
+      type: object
+      additionalProperties: true
+      required:
+        - id
+        - status
+        - first
+        - last
+        - phone
+        - year
+        - make
+        - model
+        - plate
+        - request
+        - mechanic
+        - odometer
+        - vin
+        - notes
+        - lines
+        - back_note
+        - mech_edit
+        - created
+        - updated
+        - version
+        - totals
+        - vin_warning
+      properties:
+        id: { type: integer }
+        status: { $ref: '#/components/schemas/Status' }
+        first: { type: string }
+        last: { type: string }
+        phone: { type: string, examples: ['(555)010-0000'] }
+        year: { type: string }
+        make: { type: string }
+        model: { type: string }
+        plate: { type: string }
+        request: { type: string }
+        mechanic: { type: string, description: The mechanic account's name; '' = not assigned. }
+        odometer: { type: string }
+        vin: { type: string }
+        notes: { type: string }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/Line' }
+        deposits:
+          description: Admin only.
+          type: array
+          items: { $ref: '#/components/schemas/Deposit' }
+        back_note: { type: string, description: Why the desk sent it back. }
+        mech_edit: { type: string, description: When a mechanic last changed the invoice; '' = never. }
+        created: { type: string, description: 'Local time, YYYY-MM-DDTHH:MM:SS' }
+        updated: { type: string, description: 'Local time, YYYY-MM-DDTHH:MM:SS' }
+        version: { type: integer, description: Goes up by one on every save. }
+        totals: { $ref: '#/components/schemas/Totals' }
+        vin_warning: { type: string, description: "'' when the VIN looks right or is empty." }
+
+    LineIn:
+      description: A line as typed. Money may be a number or text ('$1,200.50'); a line without id is new.
+      type: object
+      required: [desc]
+      properties:
+        desc: { type: string }
+        qty: { type: [number, string, 'null'] }
+        price: { type: [number, string, 'null'] }
+        labor: { type: [number, string, 'null'] }
+        code: { type: string }
+        id: { type: integer }
+
+    DepositIn:
+      description: A deposit as typed; method defaults to cash, date to today.
+      type: object
+      required: [amount]
+      properties:
+        amount: { type: [number, string] }
+        method: { $ref: '#/components/schemas/Method' }
+        date: { type: string }
+        note: { type: string }
+        id: { type: integer }
+
+    CheckIn:
+      description: What a mechanic's check-in keeps; every other key is dropped.
+      x-checked-in: domain
+      type: object
+      required: [first, last, phone, year, make, model]
+      properties:
+        first: { type: string }
+        last: { type: string }
+        phone: { type: string, description: '10 digits, any punctuation.' }
+        year: { type: string, description: 1950 to next year. }
+        make: { type: string }
+        model: { type: string }
+        plate: { type: string }
+        request: { type: string }
+        token: { type: string, minLength: 8, maxLength: 64, description: One per new ticket on the page. }
+
+    NewTicket:
+      description: The desk's new ticket, the whole invoice at once if it likes. Unknown keys are ignored.
+      x-checked-in: domain
+      type: object
+      required: [first, last, phone, year, make, model]
+      properties:
+        first: { type: string }
+        last: { type: string }
+        phone: { type: string }
+        year: { type: string }
+        make: { type: string }
+        model: { type: string }
+        plate: { type: string }
+        request: { type: string }
+        mechanic: { type: string, description: An active mechanic's name (any case); '' or none = not assigned. }
+        odometer: { type: string }
+        vin: { type: string }
+        notes: { type: string }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/LineIn' }
+        deposits:
+          type: array
+          items: { $ref: '#/components/schemas/DepositIn' }
+        token: { type: string, minLength: 8, maxLength: 64 }
+
+    Edit:
+      description: The fields to change, and the version the device saw. Unknown keys (and `who`) are ignored.
+      type: object
+      required: [version]
+      properties:
+        version: { $ref: '#/components/schemas/Version' }
+        first: { type: string, x-checked-in: domain }
+        last: { type: string, x-checked-in: domain }
+        phone: { type: string, x-checked-in: domain }
+        year: { type: string, x-checked-in: domain }
+        make: { type: string, x-checked-in: domain }
+        model: { type: string, x-checked-in: domain }
+        plate: { type: string, x-checked-in: domain }
+        request: { type: string, x-checked-in: domain }
+        mechanic: { type: string, x-checked-in: domain }
+        odometer: { type: string, x-checked-in: domain }
+        vin: { type: string, x-checked-in: domain }
+        notes: { type: string, x-checked-in: domain }
+        lines:
+          x-checked-in: domain
+          type: array
+          items: { $ref: '#/components/schemas/LineIn' }
+        deposits:
+          x-checked-in: domain
+          type: array
+          items: { $ref: '#/components/schemas/DepositIn' }
+
+    Move:
+      type: object
+      required: [version, to]
+      properties:
+        version: { $ref: '#/components/schemas/Version' }
+        to: { x-checked-in: route, $ref: '#/components/schemas/Status' }
+        note: { x-checked-in: route, type: [string, 'null'], maxLength: 2000, description: Needed to send it back. }
+        mechanic: { x-checked-in: route, type: string, description: Who the desk accepts it for. }
+
+    Version:
+      description: The ticket version the device saw.
+      x-error: version must be a whole number
+      type: integer
+      minimum: -9007199254740991
+      maximum: 9007199254740991
+
+    NewUser:
+      x-checked-in: domain
+      type: object
+      required: [name, role, secret]
+      properties:
+        name: { type: string, maxLength: 80 }
+        role: { $ref: '#/components/schemas/Role' }
+        secret: { type: string, description: 'Admin: a password, 10 or more characters. Mechanic: a PIN of digits.' }
+
+    UserChange:
+      description: Either or both.
+      x-checked-in: route
+      type: object
+      properties:
+        secret: { type: string }
+        active: { type: boolean }
+
+    User:
+      type: object
+      required: [id, name, role, active, created]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        active: { type: boolean }
+        created: { type: string }
+
+    Hint:
+      type: object
+      required: [code, description, part_price, labor_price]
+      properties:
+        code: { type: string, examples: [FBP] }
+        description: { type: string, examples: [FRONT BRAKE PADS] }
+        part_price: { type: number }
+        labor_price: { type: number }
+
+    Vehicles:
+      description: Make -> model -> [first model year, last model year].
+      type: object
+      additionalProperties:
+        type: object
+        additionalProperties:
+          type: array
+          items: { type: integer }
