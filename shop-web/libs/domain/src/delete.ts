@@ -32,16 +32,21 @@ export function restore(t: Ticket): Ticket {
   return t;
 }
 
-/** The local time PURGE_DAYS calendar days after deleted_at, or null when it isn't one the purge takes. */
+/**
+ * The local time PURGE_DAYS calendar days after deleted_at, or null when it isn't one the purge takes: not
+ * deleted, deleted as an invoice (approved / filled), or holding any deposit (R10: a customer who paid may come
+ * back after the 14 days when parts are delayed).
+ */
 function purgeTime(t: Ticket): Date | null {
   if (t.status !== 'deleted' || !PURGED_FROM.includes(t.deleted_from) || !TIME.test(t.deleted_at)) return null;
+  if (!Array.isArray(t.deposits) || t.deposits.length > 0) return null; // R10: kept until the desk restores it
   const d = new Date(t.deleted_at); // no offset: local time
   if (Number.isNaN(d.getTime())) return null;
   d.setDate(d.getDate() + PURGE_DAYS);
   return d;
 }
 
-/** The day the purge removes `t` (YYYY-MM-DD), or null when it never will (an invoice, or not deleted). */
+/** The day the purge removes `t` (YYYY-MM-DD), or null when it never will (an invoice, a deposit, not deleted). */
 export const purgeOn = (t: Ticket): string | null => {
   const d = purgeTime(t);
   return d ? DAY(d) : null;

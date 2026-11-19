@@ -102,12 +102,17 @@ export class TicketStore {
 
   /**
    * Removes for good the deleted tickets `purgeable` at `now`, in one transaction; the number removed. Only rows
-   * whose status column is 'deleted' are read or removed; one whose JSON won't parse is left alone.
+   * whose status column is 'deleted' are read or removed; one whose JSON won't parse is left alone. Each row is
+   * judged as parsed inside the transaction, so a deposit added since (R10) keeps it. The row holding MAX(id) is
+   * never removed: SQLite hands out MAX(id) + 1 (no AUTOINCREMENT), so keeping it means no id is ever given to a
+   * second ticket while a phone, the desk or the shop PC still holds the old one. A later run takes it once a
+   * newer ticket exists.
    */
   purge(now: Date): number {
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const rows = this.db.prepare(`${SELECT} WHERE status = 'deleted'`).all() as Row[];
+      const { top } = this.db.prepare('SELECT MAX(id) AS top FROM tickets').get() as { top: number | null };
+      const rows = this.db.prepare(`${SELECT} WHERE status = 'deleted' AND id < ?`).all(top ?? 0) as Row[];
       const gone = rows.filter((row) => {
         let t: Ticket;
         try {
@@ -115,7 +120,7 @@ export class TicketStore {
         } catch {
           return false; // not ours to judge
         }
-        return purgeable(t, now);
+        return purgeable(t, now); // deposits included: never one that has any
       });
       const del = this.db.prepare("DELETE FROM tickets WHERE id = ? AND status = 'deleted'");
       let n = 0;

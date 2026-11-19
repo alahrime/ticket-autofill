@@ -930,8 +930,9 @@ export const getDeleteTicketUrl = (id: number,) => {
 
 /**
  * The admin deletes any ticket; a mechanic, any one they may open (their own, or a waiting one nobody was
- * given). Deleted from waiting, working or review, it is removed for good 14 days later; a deleted
- * approved or filled ticket is kept. Already deleted, or a stale version: 409.
+ * given). Deleted from waiting, working or review with no deposit, it is removed for good 14 days later;
+ * a deleted approved or filled ticket, or one with any deposit, is kept until restored. Already deleted,
+ * or a stale version: 409. The only 403 is the one every POST from another site gets.
  * @summary Delete a ticket (it can be restored)
  */
 export const deleteTicket = async (id: number,

@@ -25,6 +25,7 @@ export * from './listMechanics200.js';
 export * from './listTickets200.js';
 export * from './listTicketsParams.js';
 export * from './listUsers200.js';
+export * from './liveStatus.js';
 export * from './me.js';
 export * from './method.js';
 export * from './move.js';

@@ -49,10 +49,15 @@ describe('delete and restore', () => {
     expect(ids((await call('/api/tickets', undefined, a))[1])).toEqual([keep.id]);
     const [lcode, list] = await call('/api/tickets?status=deleted', undefined, a);
     expect([lcode, ids(list)]).toEqual([200, [t.id]]);
-    const when = new Date(d.deleted_at);
-    when.setDate(when.getDate() + 14);
-    expect(list.tickets[0].purge_on).toBe(isoDay(when));
+    expect(list.tickets[0].purge_on).toBeNull(); // R10: a deposit keeps it until restored
     expect((await call(`/api/tickets/${t.id}`, undefined, a))[0]).toBe(200); // the desk still opens it
+    // one without a deposit: removed for good 14 days on
+    const plain = await made(a);
+    const [, pd] = await call(`/api/tickets/${plain.id}/delete`, { version: 1 }, a);
+    const when = new Date(pd.deleted_at);
+    when.setDate(when.getDate() + 14);
+    expect((await call('/api/tickets?status=deleted', undefined, a))[1].tickets[0]).toMatchObject({ id: plain.id, purge_on: isoDay(when) });
+    expect((await call(`/api/tickets/${plain.id}/restore`, { version: 2 }, a))[0]).toBe(200);
     expect((await call(`/api/tickets/${keep.id}`, undefined, a))[1]).not.toHaveProperty('purge_on');
 
     const [rcode, back] = await call(`/api/tickets/${t.id}/restore`, { version: 2 }, a);
@@ -60,7 +65,7 @@ describe('delete and restore', () => {
     expect(back).toMatchObject({ status: 'waiting', version: 3, deleted_at: '', deleted_by: '', deleted_from: '' });
     expect(back.deposits).toEqual(t.deposits);
     expect(back.totals.deposits).toBe(100);
-    expect(ids((await call('/api/tickets?status=waiting', undefined, a))[1])).toEqual([keep.id, t.id]);
+    expect(ids((await call('/api/tickets?status=waiting', undefined, a))[1])).toEqual([plain.id, keep.id, t.id]);
     expect((await call('/api/tickets?status=deleted', undefined, a))[1]).toEqual({ tickets: [] });
   });
 
@@ -72,6 +77,7 @@ describe('delete and restore', () => {
     [, f] = await call(`/api/tickets/${f.id}/move`, { version: 1, to: 'approved' }, a);
     [, f] = await call(`/api/tickets/${f.id}/move`, { version: 2, to: 'filled' }, a);
     const w = await made(a);
+    const live = await made(a);
     for (const x of [t, f, w]) expect((await call(`/api/tickets/${x.id}/delete`, { version: x.version }, a))[0]).toBe(200);
     const list = (await call('/api/tickets?status=deleted', undefined, a))[1];
     expect(list.tickets.map((x: J) => [x.id, x.deleted_from, x.purge_on === null])).toEqual([
@@ -79,9 +85,14 @@ describe('delete and restore', () => {
       [f.id, 'filled', true],
       [t.id, 'approved', true],
     ]);
-    // a mixed list: deleted ones carry purge_on, the others don't
+    // a mixed list: deleted ones carry purge_on, the live one doesn't
     const mixed = (await call('/api/tickets?status=waiting,deleted', undefined, a))[1];
-    expect(ids(mixed)).toEqual([w.id, f.id, t.id]);
+    expect(mixed.tickets.map((x: J) => [x.id, 'purge_on' in x])).toEqual([
+      [live.id, false],
+      [w.id, true],
+      [f.id, true],
+      [t.id, true],
+    ]);
   });
 
   it('a mechanic deletes their own working ticket, then sees it was removed', async () => {
@@ -192,21 +203,21 @@ describe('create tokens and deleted tickets (R9)', () => {
     expect(s.store.list(['waiting', 'working', 'deleted']).map((x) => x.id)).toEqual([b.id, c.id, t.id]);
   });
 
-  it('after a purge reuses the id, the old token makes a new ticket', async () => {
+  it('after a purge, or with the id taken again, the old token makes a new ticket', async () => {
     const a = await s.admin();
     const t = (await call('/api/tickets', { ...CAR, token: 'tok-desk-0002' }, a))[1];
+    const newer = await made(a); // so t isn't the newest row, which the purge keeps
     await call(`/api/tickets/${t.id}/delete`, { version: 1 }, a);
     const later = new Date();
     later.setDate(later.getDate() + 15);
     expect(s.store.purge(later)).toBe(1);
     expect(s.store.get(t.id)).toBeNull();
-    // missing: a miss, so a new ticket
+    // missing: a miss, so a new ticket, under a new id (the newest row stayed, so SQLite gives max + 1)
     const [code, n] = await call('/api/tickets', { ...CAR, first: 'jo', token: 'tok-desk-0002' }, a);
     expect([code, n.first, n.status]).toEqual([200, 'JO', 'waiting']);
-    expect(n.id).toBe(t.id); // INTEGER PRIMARY KEY without AUTOINCREMENT: the id came back
-    // the same id under another created time: also a miss
-    await call(`/api/tickets/${n.id}/delete`, { version: 1 }, a);
-    expect(s.store.purge(later)).toBe(1);
+    expect(n.id).toBe(newer.id + 1);
+    // the same id under another created time (written by hand, or by another program): also a miss
+    s.db.prepare('DELETE FROM tickets WHERE id = ?').run(n.id);
     s.db.prepare('INSERT INTO tickets (id, status, data) VALUES (?, ?, ?)').run(n.id, 'waiting', JSON.stringify({ ...CAR, created: '2001-01-01T00:00:00' }));
     const [c2, m] = await call('/api/tickets', { ...CAR, first: 'mo', token: 'tok-desk-0002' }, a);
     expect([c2, m.first]).toEqual([200, 'MO']);
@@ -219,8 +230,8 @@ describe('create tokens and deleted tickets (R9)', () => {
 
 describe('purge', () => {
   /** A ticket of `status` deleted `days` ago, straight into the store. */
-  function deleted(status: string, days: number): Ticket {
-    const t = s.store.create(CAR);
+  function deleted(status: string, days: number, deposit = 0): Ticket {
+    const t = s.store.create(deposit ? { ...CAR, deposits: [{ amount: deposit }] } : CAR);
     t.status = status;
     if (status === 'approved' || status === 'filled') {
       t.mechanic = 'Al Fixit';
@@ -250,6 +261,31 @@ describe('purge', () => {
     expect(s.store.get(recent.id)).toBeNull();
   });
 
+  it('never removes a ticket with a deposit (R10): purge_on is null', async () => {
+    const paid = deleted('working', 15, 100);
+    const unpaid = deleted('working', 15);
+    s.store.create(CAR); // the newest row
+    expect(s.store.purge(new Date())).toBe(1);
+    expect(s.store.get(unpaid.id)).toBeNull(); // no deposit: still purged
+    expect(s.store.get(paid.id)?.deposits).toHaveLength(1);
+    const far = new Date();
+    far.setDate(far.getDate() + 400);
+    expect(s.store.purge(far)).toBe(0);
+    const list = (await call('/api/tickets?status=deleted', undefined, await s.admin()))[1];
+    expect(list.tickets.map((x: J) => [x.id, x.deleted_from, x.purge_on])).toEqual([[paid.id, 'working', null]]);
+  });
+
+  it('never removes the newest row, so no id is handed out twice', () => {
+    const old = deleted('waiting', 15); // the newest row
+    expect(s.store.purge(new Date())).toBe(0);
+    expect(s.store.get(old.id)).not.toBeNull();
+    const next = s.store.create(CAR);
+    expect(next.id).toBe(old.id + 1);
+    expect(s.store.purge(new Date())).toBe(1); // a newer ticket exists now: a later run takes it
+    expect(s.store.get(old.id)).toBeNull();
+    expect(s.store.create(CAR).id).toBe(next.id + 1); // still never old.id again
+  });
+
   it('never removes a row that is not deleted, whatever its JSON says', () => {
     const t = s.store.create({ ...CAR });
     s.db.prepare('UPDATE tickets SET data = ? WHERE id = ?').run(
@@ -264,6 +300,7 @@ describe('purge', () => {
   it('runs at start and every hour, logs only the count, survives a failure', async () => {
     const t = deleted('working', 20);
     const keep = deleted('working', 1);
+    s.store.create(CAR); // the newest row: never purged
     let now = new Date();
     let broken = false;
     const ticks: Array<() => void> = [];
@@ -286,7 +323,7 @@ describe('purge', () => {
       expect(ticks).toHaveLength(1);
       (ticks[0] as () => void)(); // nothing to purge yet
       expect(s.store.get(keep.id)).not.toBeNull();
-      now =new Date(now.getTime() + 14 * 86_400_000);
+      now = new Date(now.getTime() + 14 * 86_400_000);
       (ticks[0] as () => void)();
       expect(s.store.get(keep.id)).toBeNull(); // an hour's tick
       expect(s.log().trim().split('\n').map((l) => l.slice(20))).toEqual(['purged 1', 'purged 1']); // none for 0

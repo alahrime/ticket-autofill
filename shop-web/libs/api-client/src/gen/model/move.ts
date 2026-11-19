@@ -5,12 +5,12 @@
  * The JSON API behind web/admin.html (the desk) and web/tech.html (the mechanics' phones).
  * OpenAPI spec version: 1.0.0
  */
-import type { Status } from './status.js';
+import type { LiveStatus } from './liveStatus.js';
 import type { Version } from './version.js';
 
 export interface Move {
   version: Version;
-  to: Status;
+  to: LiveStatus;
   /**
      * Needed to send it back.
      * @maxLength 2000

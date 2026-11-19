@@ -46,7 +46,8 @@ test('admin delete with deposit warning', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Deleted', exact: true }).click();
   const row = page.locator('#delList .drow', { hasText: t.last });
-  await expect(row).toContainText('from Waiting'); // its purge cell waits for R10's server change (Task 9 fix)
+  await expect(row).toContainText('from Waiting');
+  await expect(row).toContainText('Kept (deposit)'); // R10: purge_on is null, so never removed for good
   await row.getByRole('button', { name: `Restore ticket #${t.id}` }).click();
   await expect(page.locator('#flash')).toContainText(`Restored #${t.id}`);
   await expect(row).toHaveCount(0);

@@ -140,6 +140,31 @@ describe('the OpenAPI contract', () => {
     expect(check(reply, t.body)).toBeNull();
   });
 
+  it('the Deleted list is ListedTicket and a 410 is Gone, as the spec says', async () => {
+    const check = responseChecker();
+    const a = await s.admin();
+    const al = await s.tech('Al Fixit');
+    const paid = (await s.call('/api/tickets', { ...CAR, deposits: [{ amount: 100 }] }, a)).body as J;
+    const own = (await s.call('/api/tickets', CAR, al)).body as J;
+    expect((await s.call(`/api/tickets/${paid.id}/delete`, { version: 1 }, a)).status).toBe(200);
+    expect((await s.call(`/api/tickets/${own.id}/delete`, { version: 1 }, al)).status).toBe(200);
+    const list = await s.call('/api/tickets?status=deleted', undefined, a);
+    const listSchema = SPEC.paths['/api/tickets'].get.responses['200'].content['application/json'].schema;
+    expect(listSchema.properties.tickets.items).toEqual({ $ref: '#/components/schemas/ListedTicket' });
+    expect(check(listSchema, list.body)).toBeNull();
+    expect((list.body as J).tickets.map((x: J) => typeof x.purge_on)).toEqual(['string', 'object']); // a date; null
+    const gone = await s.call(`/api/tickets/${own.id}`, undefined, al);
+    expect(gone.status).toBe(410);
+    const reply = SPEC.paths['/api/tickets/{id}'].get.responses['410'];
+    expect(reply).toEqual({ $ref: '#/components/responses/Gone' });
+    expect(check(SPEC.components.responses.Gone.content['application/json'].schema, gone.body)).toBeNull();
+    expect(check({ $ref: '#/components/schemas/Error' }, gone.body)).toBeNull();
+    // a move's `to` is a live status: the client never offers `deleted` (the route still says why not)
+    expect(SPEC.components.schemas.Move.properties.to.$ref).toBe('#/components/schemas/LiveStatus');
+    expect(SPEC.components.schemas.LiveStatus.enum).not.toContain('deleted');
+    expect(SPEC.components.schemas.Status.enum).toContain('deleted');
+  });
+
   it('validation messages come from the spec, never the input', () => {
     const { dir, done } = tempDir();
     try {

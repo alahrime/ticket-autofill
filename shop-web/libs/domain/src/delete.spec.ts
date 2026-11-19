@@ -1,4 +1,4 @@
-import { markDeleted, PURGE_DAYS, PURGED_FROM, purgeable, restore } from './delete.js';
+import { markDeleted, PURGE_DAYS, PURGED_FROM, purgeable, purgeOn, restore } from './delete.js';
 import { nowIso } from './clean.js';
 import { edit, move } from './rules.js';
 import { Refused } from './ticket.js';
@@ -68,6 +68,15 @@ describe('purgeable', () => {
   it('never an approved or filled one, nor one not deleted', () => {
     for (const from of ['approved', 'filled']) expect(purgeable(del(from), after(400, 0))).toBe(false);
     expect(purgeable(tk({ status: 'waiting', deleted_from: 'waiting', deleted_at: AT }), after(400, 0))).toBe(false);
+  });
+
+  it('never one with a deposit (R10: the customer may come back for delayed parts)', () => {
+    const paid = markDeleted(tk({ status: 'waiting', deposits: [deposit(100, { id: 1 })] }), 'admin#1', AT);
+    expect(purgeable(paid, after(15, 0))).toBe(false);
+    expect(purgeOn(paid)).toBeNull();
+    const unpaid = del('waiting');
+    expect(purgeable(unpaid, after(15, 0))).toBe(true); // no deposit: still purged
+    expect(purgeOn(unpaid)).toBe('2026-03-16');
   });
 
   it('never one whose delete time is missing or not a time', () => {

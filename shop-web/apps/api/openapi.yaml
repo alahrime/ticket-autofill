@@ -219,8 +219,9 @@ paths:
       summary: Delete a ticket (it can be restored)
       description: |
         The admin deletes any ticket; a mechanic, any one they may open (their own, or a waiting one nobody was
-        given). Deleted from waiting, working or review, it is removed for good 14 days later; a deleted
-        approved or filled ticket is kept. Already deleted, or a stale version: 409.
+        given). Deleted from waiting, working or review with no deposit, it is removed for good 14 days later;
+        a deleted approved or filled ticket, or one with any deposit, is kept until restored. Already deleted,
+        or a stale version: 409. The only 403 is the one every POST from another site gets.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -492,6 +493,11 @@ components:
       type: string
       enum: [waiting, working, review, approved, filled, deleted]
 
+    LiveStatus:
+      description: A status a move can reach; `deleted` is only reached by POST /api/tickets/{id}/delete.
+      type: string
+      enum: [waiting, working, review, approved, filled]
+
     Line:
       description: One invoice line. price null = labor only; labor null = no labor charge.
       type: object
@@ -603,7 +609,9 @@ components:
         - $ref: '#/components/schemas/Ticket'
       properties:
         purge_on:
-          description: "YYYY-MM-DD, 14 days after it was deleted; null for an approved or filled one (kept)."
+          description: |
+            YYYY-MM-DD, 14 days after it was deleted; null when it is kept until restored: deleted as an approved
+            or filled invoice, or holding any deposit (the customer may come back when parts are delayed).
           type: [string, 'null']
 
     LineIn:
@@ -703,7 +711,7 @@ components:
       required: [version, to]
       properties:
         version: { $ref: '#/components/schemas/Version' }
-        to: { x-checked-in: route, $ref: '#/components/schemas/Status' }
+        to: { x-checked-in: route, $ref: '#/components/schemas/LiveStatus' }
         note: { x-checked-in: route, type: [string, 'null'], maxLength: 2000, description: Needed to send it back. }
         mechanic: { x-checked-in: route, type: string, description: Who the desk accepts it for. }
 

@@ -12,7 +12,8 @@ import type { Ticket } from './ticket.js';
  */
 export type ListedTicket = Ticket & ({
   /**
-     * YYYY-MM-DD, 14 days after it was deleted; null for an approved or filled one (kept).
+     * YYYY-MM-DD, 14 days after it was deleted; null when it is kept until restored: deleted as an approved
+     * or filled invoice, or holding any deposit (the customer may come back when parts are delayed).
      * @nullable
      */
   purge_on?: string | null;
