@@ -85,7 +85,8 @@ paths:
         Admin: a NewTicket, the whole invoice at once. Mechanic: a CheckIn; every other key is dropped and the
         ticket waits, unassigned. The reply is the new ticket as the caller's role sees it. A `token` (8 to 64
         characters, one per new ticket on the page) sent again by the same account replies with the ticket it
-        made instead of a second one.
+        made instead of a second one, or 404 once the caller may no longer see that ticket (a mechanic's
+        check-in the desk has given to someone else).
       requestBody:
         required: true
         content:
@@ -113,6 +114,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/SignIn' }
         '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/tickets/{id}:
     get:

@@ -348,10 +348,15 @@ export type createTicketResponse403 = {
   status: 403
 }
 
+export type createTicketResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
 export type createTicketResponseSuccess = (createTicketResponse200) & {
   headers: Headers;
 };
-export type createTicketResponseError = (createTicketResponse400 | createTicketResponse401 | createTicketResponse403) & {
+export type createTicketResponseError = (createTicketResponse400 | createTicketResponse401 | createTicketResponse403 | createTicketResponse404) & {
   headers: Headers;
 };
 
@@ -369,7 +374,8 @@ export const getCreateTicketUrl = () => {
  * Admin: a NewTicket, the whole invoice at once. Mechanic: a CheckIn; every other key is dropped and the
  * ticket waits, unassigned. The reply is the new ticket as the caller's role sees it. A `token` (8 to 64
  * characters, one per new ticket on the page) sent again by the same account replies with the ticket it
- * made instead of a second one.
+ * made instead of a second one, or 404 once the caller may no longer see that ticket (a mechanic's
+ * check-in the desk has given to someone else).
  * @summary A new ticket (the desk's whole invoice, or a mechanic's check-in)
  */
 export const createTicket = async (newTicketCheckIn: NewTicket | CheckIn, options?: Parameters<typeof shopFetch>[1]): Promise<createTicketResponse> => {
@@ -403,7 +409,7 @@ return shopFetch<createTicketResponse>(getCreateTicketUrl(),
 
 export const getCreateTicketMutationKey = () => ['createTicket'] as const;
 
-export const getCreateTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+export const getCreateTicketMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTicket>>, TError,CreateTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createTicket>>, TError,CreateTicketMutationVariables, TContext> => {
 
@@ -432,13 +438,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateTicketMutationResult = NonNullable<Awaited<ReturnType<typeof createTicket>>>
     export type CreateTicketMutationBody = BodyType<NewTicket | CheckIn>
-    export type CreateTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>
+    export type CreateTicketMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>
     export type CreateTicketMutationVariables = {data: BodyType<NewTicket | CheckIn>}
 
     /**
  * @summary A new ticket (the desk's whole invoice, or a mechanic's check-in)
  */
-export const useCreateTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+export const useCreateTicket = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTicket>>, TError,CreateTicketMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createTicket>>,

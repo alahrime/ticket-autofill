@@ -1,22 +1,15 @@
 // User admin (shop.py: get()'s /api/mechanics and /api/users, post()'s /api/users, user()). Admin only: a
 // mechanic gets 403 before any body is read, as Python's refuse().
-import { type RequestHandler, Router } from 'express';
+import { Router } from 'express';
 import { checkNewSecret, Locked, LoginFailed } from '../accounts';
 import { BadInput } from '../errors';
 import { validRequest } from '../http/contract';
 import { depsOf } from '../http/deps';
+import { validId } from '../http/ids';
 import { clientIp, jsonBody, sessionCookie } from '../http/security';
 import { sessionIn, signedIn } from '../view';
 
-const ID = /^[0-9]{1,9}$/;
-
 type Body = Record<string, unknown>;
-
-/** On to the next route (in the end, the 404) unless :id is 1 to 9 digits; before any body is read. */
-const validId: RequestHandler = (req, _res, next) => {
-  const id = req.params['id'];
-  next(typeof id === 'string' && ID.test(id) ? undefined : 'route');
-};
 
 export function userRoutes(): Router {
   const r = Router({ caseSensitive: true, strict: true });

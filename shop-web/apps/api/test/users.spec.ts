@@ -125,6 +125,22 @@ describe('users', () => {
     expect([code, moved.mechanic]).toEqual([200, 'Strauss']);
   });
 
+  it('only admin and mechanic accounts can be made', async () => {
+    const a = await s.admin();
+    const [code, r] = await call('/api/users', { name: 'Ki Osk', role: 'kiosk', secret: '11223344' }, a);
+    expect([code, r.errors]).toEqual([400, { role: 'role must be admin or mechanic' }]);
+    expect(s.accounts.find('Ki Osk')).toBeNull();
+  });
+
+  it('a user change ignores name and role in the body', async () => {
+    const a = await s.admin();
+    const id = s.ids['Al Fixit'] as number;
+    const before = s.accounts.get(id);
+    const [code, u] = await call(`/api/users/${id}`, { name: 'Al Renamed', role: 'admin', active: true }, a);
+    expect([code, u.name, u.role]).toEqual([200, 'Al Fixit', 'mechanic']);
+    expect(s.accounts.get(id)).toEqual(before);
+  });
+
   it('users routes are admin only', async () => {
     const al = await s.tech('Al Fixit');
     const no = [403, { error: 'not allowed' }];
@@ -136,7 +152,7 @@ describe('users', () => {
     expect(s.accounts.find('Cy Newhire')).toBeNull();
     expect(await call('/api/users', undefined)).toEqual([401, { error: 'sign in' }]);
     const a = await s.admin();
-    expect((await call('/api/users/abc', { active: true }, a))[0]).toBe(404);
+    expect(await call('/api/users/abc', { active: true }, a)).toEqual([404, { error: 'not found' }]);
     expect((await call(`/api/users/${s.ids['Al Fixit']}`, 'not json', a))[0]).toBe(400);
   });
 });

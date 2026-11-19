@@ -4,7 +4,6 @@
 import { createHash } from 'node:crypto';
 import {
   type Request,
-  type RequestHandler,
   type Response,
   Router,
 } from 'express';
@@ -22,12 +21,12 @@ import { type Accounts, casefold, type Session } from '../accounts';
 import { BadInput } from '../errors';
 import { validRequest } from '../http/contract';
 import { depsOf } from '../http/deps';
+import { validId } from '../http/ids';
 import { jsonBody } from '../http/security';
 import { asJson, mine, queryValues, sees, sessionIn, signedIn } from '../view';
 
 export const MAX_NOTE = 2000;
 export const MAX_MADE = 500; // create tokens remembered
-const ID = /^[0-9]{1,9}$/;
 const STATUSES: ReadonlySet<string> = new Set(
   [...MOVES].flatMap((m) => m.split('>')),
 );
@@ -147,12 +146,6 @@ function changeTicket(
   }
 }
 
-/** On to the next route (in the end, the 404) unless :id is 1 to 9 digits; before any body is read. */
-const validId: RequestHandler = (req, _res, next) => {
-  const id = req.params['id'];
-  next(typeof id === 'string' && ID.test(id) ? undefined : 'route');
-};
-
 const idOf = (req: Request): number => Number(req.params['id']);
 
 /** The routes; the create-token memory lives in this router. */
@@ -233,6 +226,9 @@ export function ticketRoutes(): Router {
         : null;
     const known = key === null ? undefined : made.get(key);
     let t = known === undefined ? null : store.get(known);
+    // a replay shows what this caller may still see: a check-in the desk gave someone else is theirs now
+    if (t && !sees(s, t, true))
+      return void res.status(404).json({ error: 'not found' });
     if (!t) {
       t = store.create(d);
       if (key !== null) {

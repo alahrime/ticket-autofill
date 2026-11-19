@@ -31,6 +31,9 @@ describe('mechanic check-in', () => {
         mechanic: 'Bo Wrench',
         status: 'done',
         notes: 'not kept',
+        odometer: '9',
+        back_note: 'y',
+        id: 77,
       },
       al,
     );
@@ -47,6 +50,9 @@ describe('mechanic check-in', () => {
       '',
     ]);
     expect(stored?.first).toBe('JANE');
+    expect(t.id).not.toBe(77);
+    expect([stored?.id, stored?.odometer, stored?.back_note]).toEqual([t.id, '', '']);
+    expect(s.store.get(77)).toBeNull();
     const [, list] = await call('/api/tickets', undefined, al);
     expect(list.tickets.map((x: J) => x.id)).toEqual([t.id]);
     const [, bo] = await call('/api/tickets', undefined, await s.tech('Bo Wrench'));
@@ -75,5 +81,18 @@ describe('mechanic check-in', () => {
     const [, t3] = await call('/api/tickets', { ...CAR, token: 'tok-00000001' }, await s.tech('Bo Wrench'));
     expect(t3.id).not.toBe(t1.id);
     expect(s.store.list()).toHaveLength(2);
+  });
+
+  it('a replay shows the ticket only while the mechanic still sees it', async () => {
+    const al = await s.tech('Al Fixit');
+    const a = await s.admin();
+    const body = { ...CAR, token: 'tok-00000002' };
+    const [, t] = await call('/api/tickets', body, al);
+    const [code, again] = await call('/api/tickets', body, al); // waiting, unassigned: still Al's to see
+    expect([code, again.id]).toEqual([200, t.id]);
+    const [moved] = await call(`/api/tickets/${t.id}/move`, { version: 1, to: 'working', mechanic: 'Bo Wrench' }, a);
+    expect(moved).toBe(200);
+    expect(await call('/api/tickets', body, al)).toEqual([404, { error: 'not found' }]); // Bo's job now
+    expect(s.store.list()).toHaveLength(1); // and no second ticket
   });
 });
