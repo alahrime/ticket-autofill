@@ -205,3 +205,40 @@ test('tech page at 375 px: no sideways scroll, form and modal open', async ({ br
   await desk.close();
   await context.close();
 });
+
+test('tech asks about an open job that left the list once, not on every poll', async ({ browser, page }) => {
+  await signIn(page.context().request, 'admin', 'Owner Test');
+  const desk = page.context().request;
+  const waiting = await createTicket(desk, { ...car(), lines: [{ desc: 'diag', labor: 60 }] }); // finishing needs a line
+  const phone = await signedInPage(() => browser.newContext(), 'mechanic', 'Al Fixit');
+  let mine = await moveTicket(phone.context.request, waiting, 'working');
+  const p = phone.page;
+  await p.goto(`/tech#t${mine.id}`);
+  await expect(p.locator('#jcust')).toBeVisible();
+
+  let asked = 0; // GET /api/tickets/<id>: the probe of the open job
+  let polls = 0; // GET /api/tickets?status=...: the 4 s list poll
+  p.on('request', (r) => {
+    if (r.method() !== 'GET') return;
+    if (new RegExp(`/api/tickets/${mine.id}$`).test(r.url())) asked += 1;
+    else if (/\/api\/tickets\?status=/.test(r.url())) polls += 1;
+  });
+  const pollsFrom = async (n: number): Promise<void> => {
+    const from = polls;
+    await expect.poll(() => polls - from, { timeout: 30_000 }).toBeGreaterThanOrEqual(n);
+  };
+
+  mine = await moveTicket(phone.context.request, mine, 'review'); // Finish job elsewhere: off this phone's list
+  await pollsFrom(3);
+  expect(asked).toBe(1); // asked once, then left alone
+  await expect(p.locator('#banner')).toBeVisible();
+
+  const back = await desk.post(`/api/tickets/${mine.id}/move`, { data: { version: mine.version, to: 'working', note: 'check the pads' } });
+  expect(back.status(), await back.text()).toBe(200);
+  mine = (await back.json()) as typeof mine; // sent back: on the list again
+  await pollsFrom(1);
+  mine = await moveTicket(phone.context.request, mine, 'review'); // and off again: one more question
+  await pollsFrom(3);
+  expect(asked).toBe(2);
+  await phone.context.close();
+});

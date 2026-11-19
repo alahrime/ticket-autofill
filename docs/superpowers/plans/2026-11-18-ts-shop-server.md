@@ -358,6 +358,7 @@
   - the iPad is retired;
   - mechanics can check customers in;
   - fallback to `shop.py`, with its caveat that deleted tickets show again there;
+    (Superseded after Task 9: on `shop.py` deleted tickets stay hidden and can't be changed; no Restore. See the README and HANDOFF.)
   - "Nothing is deleted" replaced.
 - HANDOFF:
   - where things are;

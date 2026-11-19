@@ -25,6 +25,12 @@ rem An "admin <name>" password reset running in a console is left alone.
 %PS% -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'cmd.exe' -and $_.CommandLine -match '/[ck]\s+\x22*[^\x22]*shop-web\\tools\\run-shop\.cmd(\x22|\s|$)' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 %PS% -NoProfile -Command "$main = ($env:START_SHOP_DIR + 'shop-web\apps\api\dist\main.js').ToLower(); Get-CimInstance Win32_Process | Where-Object { ($_.Name -like 'python*.exe' -and $_.CommandLine -match '\b(shop|phone)\.py\b' -and $_.CommandLine -notmatch '\bshop\.py admin\b') -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains($main) -and $_.CommandLine -notmatch 'main\.js\W+admin\b') -or ($_.Name -eq 'cloudflared.exe' -and $_.CommandLine -match 'inspection\.yml') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 timeout /t 2 /nobreak >nul
+rem Then wait (up to about 10 s) until nothing listens on port 8081: the old server's socket can linger a moment.
+for /l %%i in (1,1,10) do (
+  netstat -ano -p tcp | findstr /r /c:":8081 .*LISTENING" >nul || goto port_free
+  ping -n 2 127.0.0.1 >nul
+)
+:port_free
 
 rem Today's date and the time, the same on any Windows language setting.
 set "today="

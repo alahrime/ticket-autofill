@@ -485,11 +485,19 @@ async function poll() {
     polling = false;
   }
 }
+// The open job's id once it left the list and was asked about: asked once, not on every 4 s poll, until it is
+// back on the list or opened again (setCur).
+let probed = null;
 function checkOpen() {  // the open job changed somewhere else (desk, another phone): offer a reload
   if (!cur || pending) return;
   const t = list.find(x => x.id === cur.id);
   if (!t || t.version > cur.version) $("banner").hidden = false;
-  if (!t) probeOpen(cur.id);  // off the list: finished elsewhere, taken, or deleted (410)
+  if (t) {
+    if (probed === cur.id) probed = null;
+  } else if (probed !== cur.id) {  // off the list: finished elsewhere, taken, or deleted (410)
+    probed = cur.id;
+    probeOpen(cur.id);
+  }
 }
 async function probeOpen(id) {
   try { await api(`/api/tickets/${id}`); } catch (e) { if (e.status === 410 && (cur && cur.id === id)) dropJob(id, GONE_TEXT); }
@@ -609,6 +617,7 @@ function setCur(t) {
   const same = cur && cur.id === t.id;
   const dirty = same ? dirtyBoxes() : {};
   remember(t);
+  if (!cur || cur.id !== t.id) probed = null;  // opened (again): it may be asked about once more
   cur = t;
   $("banner").hidden = true;
   $("jcust").textContent = shortName(t);

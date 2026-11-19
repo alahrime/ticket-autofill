@@ -114,9 +114,11 @@ Design:
 
 ### Switch (phase 3)
 
-- `start-shop.bat` starts `node shop-web/dist/apps/api/main.js` instead of `pythonw shop.py`, after the same "stop any copy already running" step (extended to `node.exe` running that file).
+- `start-shop.bat` starts `node shop-web/apps/api/dist/main.js` (the webpack output, ruling R6) instead of `pythonw shop.py`, after the same "stop any copy already running" step (extended to `node.exe` running that file).
+- **Restart loop (R13):** the server runs under `shop-web/tools/run-shop.cmd`. An uncaught exception is logged (class only) and exits 1 for a clean restart; the loop restarts with back-off (5 s doubling to 5 min, reset after a run over 60 s). A port already taken exits 3: retried twice, 10 s apart, then the loop stops.
+- **Day's backup (R14):** the first `start-shop.bat` run on a day saves `tickets-backup-YYYY-MM-DD.db` with SQLite's online backup (to a `.tmp`, checked, renamed on success; a failure is logged and the shop still starts), until phase 4's nightly backups.
 - Before the switch: back up the database and run the full Python test list plus the Jest suite.
-- **Fallback:** `shop.py` stays in the repo. If something breaks, switch the line back. One caveat: `shop.py` doesn't know the `deleted` status, so deleted tickets would show again in the old admin's unfiltered list until the switch back.
+- **Fallback:** `shop.py` stays in the repo. If something breaks, switch the line back. Caveat on `shop.py`: deleted tickets stay hidden and can't be changed; no Restore (and no Deleted list, purge or mechanic check-in).
 
 ### Customer history (phase 4)
 

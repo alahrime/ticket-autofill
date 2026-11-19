@@ -12,6 +12,7 @@ phone_pin.txt
 phone.log
 cloudflared.log
 tickets.db
+tickets.db-*
 mechanics.txt
 shop_pin.txt
 shop_secret.txt
@@ -21,6 +22,5 @@ setup_code.txt
 shop-web/node_modules/
 shop-web/dist/
 shop-web/.nx/
-tickets-backup-*.db
+tickets-backup-*
 backups/
-tickets-backup-*.tmp
