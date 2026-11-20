@@ -1,6 +1,15 @@
 # Handoff — ticket-autofill
 
-**Updated:** 2026-11-19. **Branches:** `main` (pushed up to `b5eb458`) and **`ts-shop-server`** (the TypeScript shop server, 22+ commits on top of `main`, not merged, not pushed; see "TypeScript shop server" below). This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers. **Live today: still `shop.py`.** The switch to the TypeScript server is the owner's call, after the final review (checklist below).
+**Updated:** 2026-11-20. **Branch:** `main`, pushed. The TypeScript shop server (`ts-shop-server`) passed its final two-seat review and was merged into `main` on 2026-11-20 as a fast-forward; see "TypeScript shop server" below. This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
+
+**Live today: still `shop.py`, serving the merged pages.** Since the merge, the iPad check-in page is gone. On Python the new Delete and New customer buttons say "Not available on this server." The switch to the TypeScript server is the owner's call; follow the checklist below from step 3, since step 2 (merge) is done. `shop.py` and `shopwin.py` pick up the new `tickets.py` only when they restart.
+
+**Next task:** phase 4 of the spec, **bill history and backups**. That covers:
+- the `invoice_finals` table, written by `shopwin.py` "Record bill & mark filled" from InvoMax's final numbers;
+- `GET /api/invoices` search by tag, name, phone, VIN and dates;
+- nightly backups into `backups/` with 90 kept, plus `copy-backups <drive>`.
+
+It needs its own plan first: brainstorm, then a plan, then implementation with two reviewers per task.
 
 Read first:
 - Design: `specs/2026-10-26-invomax-overlay-design.md`. This covers the side panel, the draft model, the step runner and every InvoMax recipe learned so far. It supersedes the overlay part of `specs/2026-10-14-invomax-autofill-design.md`.
@@ -24,7 +33,7 @@ A drop-in replacement for `shop.py` (same port 127.0.0.1:8081, URLs, JSON, `tick
 
 **Where things are**
 - Spec: `specs/2026-11-18-typescript-shop-server-design.md`. Plan: `plans/2026-11-18-ts-shop-server.md` (Tasks 1–11, phases 1–3 of the spec). Task briefs, reports and the review ledger (rulings R1–R14, every deferred minor): `.superpowers/sdd/2026-11-18-ts-shop-server/` in the worktree (git-ignored; `progress.md` is the ledger). **Tracked copy of the ledger:** `ledgers/2026-11-18-ts-shop-server-progress.md` (taken at the final polish round; it outlives the worktree).
-- Worktree: `.claude/worktrees/ts-shop-server` (branch `ts-shop-server`). Merge it into `main` in the real folder for the switch.
+- Worktree: `.claude/worktrees/ts-shop-server` (branch `ts-shop-server`). **Merged into `main` on 2026-11-20** in the real folder, as a fast-forward to `091916a`. The worktree can be removed once the owner no longer needs its git-ignored `.superpowers/` notes; the tracked ledger copy keeps the summary.
 - `shop-web/` (Nx 24 workspace, Node 26.13.1): `apps/api` (the Express server; `src/main.ts` serves or runs `admin <name>`; `openapi.yaml` is the contract), `libs/domain` (`@shop/domain`, the ported `tickets.py` rules), `libs/api-client` (Orval-generated client for the React pages to come), `apps/pages-e2e` (Playwright on the built server, temp root, port 18081), `tools/parity-guard.mjs` + `PARITY` (CI fails if `shop.py` / `tickets.py` / `accounts.py` / `pinweb.py` change without the TS side), `tools/switch-check.mjs`, `tools/run-shop.cmd`.
 - **The built server is `shop-web\apps\api\dist\main.js`** (webpack; not `shop-web\dist\apps\api\main.js` as the plan said: ruling R6). Build: `cd shop-web && npm ci && npx nx build api`.
 - `start-shop.bat` now: refuses any argument but `python` (a message, nothing stopped); stops the restart loop (`cmd.exe /c` or `/k` running `shop-web\tools\run-shop.cmd`), then `python shop.py`/`phone.py`, `node` running **this folder's** `shop-web\apps\api\dist\main.js` (not an `admin` reset) and the tunnel; the first run on a day saves `tickets-backup-YYYY-MM-DD.db` with SQLite's online backup (Python `sqlite3`, source opened read-only, `quick_check`, written to `.tmp` and renamed only on success; a failure is logged and the shop still starts: ruling R14). There is a copy only on days `start-shop.bat` runs. Then it starts `shop-web\tools\run-shop.cmd` minimised (window "Shop server": `UV_THREADPOOL_SIZE=8`, then absolute `node.exe` on the absolute `main.js`). `start-shop.bat python` starts `pythonw shop.py` instead, after the same stop and copy. If `main.js` isn't built, it starts `shop.py` and logs why.
@@ -34,7 +43,7 @@ A drop-in replacement for `shop.py` (same port 127.0.0.1:8081, URLs, JSON, `tick
 
 ### Switch-over checklist (the owner does it, at a quiet time; Python stays as the fallback)
 1. Pick a quiet time (no job mid-repair on a phone, nobody typing at the desk), and plan to watch the first day.
-2. In the real folder (`C:\Users\Owner\Downloads\ticket-autofill`): `git pull` / merge `ts-shop-server` into `main`.
+2. In the real folder (`C:\Users\Owner\Downloads\ticket-autofill`): `git pull --ff-only`. The merge of `ts-shop-server` was **done on 2026-11-20**; the pull brings in any later commits, such as this handoff update.
 3. `cd shop-web && npm ci && npx nx build api` (`npm ci` needs the internet, registry.npmjs.org, and installs the whole dev tree: Nx, Jest, Playwright, Orval).
 4. `node tools/switch-check.mjs` → must end with `ready` (it never touches the live server, port 8081 or the real `tickets.db`). Anything else: stop here.
 5. Close and reopen `shopwin.py` (`run.bat` → Shop tickets): it holds the old `tickets.py` `Ticket` class, without the three `deleted_*` fields.
