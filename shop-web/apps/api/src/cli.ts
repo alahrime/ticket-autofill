@@ -1,9 +1,12 @@
 // `admin <name>`: makes or resets an admin from the shop PC's command line (shop.py main()).
 import { createInterface } from 'node:readline';
+import { join } from 'node:path';
 import { Invalid } from '@shop/domain';
 import { Accounts, makeAdmin } from './accounts';
+import { copyBackups, restoreBackup } from './backup';
 import type { Config } from './config';
 import { openDb } from './db';
+import { BadInput } from './errors';
 import { importOnce, type ImportOpts } from './invomax/import';
 
 export type CliIo = {
@@ -59,6 +62,33 @@ export async function runImportCommand(
       `(${r.tries} ${r.tries === 1 ? 'try' : 'tries'}).`,
   );
   return 0;
+}
+
+/** `restore <file>`: puts a backup in place of the live db (the server must be stopped) -> exit code. */
+export async function runRestoreCommand(config: Config, file: string, out: (s: string) => void): Promise<number> {
+  try {
+    const aside = await restoreBackup(file, config);
+    out(`Restored. ${aside ? `The old file is kept as ${aside}.` : 'There was no old file.'}`);
+    return 0;
+  } catch (e) {
+    out(`Nothing restored: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+}
+
+/** `copy-backups <drive>`: copies the backups to <drive>\shop-backups -> exit code. */
+export function runCopyBackupsCommand(config: Config, drive: string, out: (s: string) => void, now = new Date()): number {
+  try {
+    const root = /^[A-Za-z]:$/.test(drive) ? drive + '\\' : drive; // "E:" alone means that drive's current folder
+    const target = join(root, 'shop-backups');
+    const r = copyBackups(config.backups, target, now);
+    out(`Copied ${r.copied} backup${r.copied === 1 ? '' : 's'} to ${target} (${r.skipped} already there).`);
+    return 0;
+  } catch (e) {
+    if (!(e instanceof BadInput)) throw e;
+    out(`Nothing copied: ${e.message}`);
+    return 1;
+  }
 }
 
 /** Prompts on the terminal; a hidden prompt shows nothing of what is typed (like Python's getpass). */

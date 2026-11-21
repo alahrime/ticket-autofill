@@ -1,8 +1,8 @@
 // The shop server: no arguments -> serve on 127.0.0.1:8081; `admin <name>` -> make or reset an admin;
-// `import-invomax` -> copy InvoMax's bills into invomax.db.
+// `import-invomax` -> copy InvoMax's bills into invomax.db; `restore <file>`, `copy-backups <drive>` -> backups.
 // Exit codes while serving (shop-web/tools/run-shop.cmd reads them): 1 = stopped by an error, restart it;
 // 3 = the port is already taken (another copy is serving), don't.
-import { runAdminCommand, runImportCommand, terminalIo } from './cli';
+import { runAdminCommand, runCopyBackupsCommand, runImportCommand, runRestoreCommand, terminalIo } from './cli';
 import { loadConfig } from './config';
 import { crashExit, logLine, processGuard } from './http/log';
 import { startServer } from './server';
@@ -25,6 +25,8 @@ async function main(args: string[]): Promise<number | null> {
     return null; // keeps running
   }
   if (args.length === 1 && args[0] === 'import-invomax') return runImportCommand(config, console.log);
+  if (args.length === 2 && args[0] === 'restore') return runRestoreCommand(config, args[1] as string, console.log);
+  if (args.length === 2 && args[0] === 'copy-backups') return runCopyBackupsCommand(config, args[1] as string, console.log);
   try {
     return await runAdminCommand(args, terminalIo(), config.db);
   } catch (e) {
