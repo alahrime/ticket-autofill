@@ -1,5 +1,6 @@
 // Synthetic InvoMax files for specs. Writes the format described in ../LAYOUT.md.
 // Fixtures are generated here; nothing is ever copied from the shop's real files.
+import type { ImInvoice, ImLine } from './records.js';
 
 export function real48Bytes(n: number): Buffer {
   const out = Buffer.alloc(6);
@@ -149,4 +150,63 @@ export function btrieveFile(opts: {
     out.push(page);
   }
   return Buffer.concat(out);
+}
+
+// ---- INVOICE / DETAIL record builders (offsets from ../LAYOUT.md) ----
+
+function putString(rec: Buffer, at: number, s: string, max: number): void {
+  shortStringBytes(s, max).copy(rec, at);
+}
+
+function putMoney(rec: Buffer, at: number, cents?: number): void {
+  if (cents !== undefined) real48Bytes(cents / 100).copy(rec, at);
+}
+
+const ISO = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** A full 498-byte INVOICE record. An ISO date is written as MMDDYYYY; any other text as given. */
+export function invoiceBytes(f: Partial<ImInvoice>): Buffer {
+  const rec = Buffer.alloc(498);
+  const d = f.date === undefined ? null : ISO.exec(f.date);
+  putString(rec, 5, f.invoice_no ?? '', 8);
+  putString(rec, 14, f.key ?? '', 8);
+  putString(rec, 23, f.date === undefined ? '' : d ? `${d[2]}${d[3]}${d[1]}` : f.date, 8);
+  putString(rec, 60, f.plate ?? '', 8);
+  putString(rec, 78, f.name ?? `${f.first ?? ''} ${f.last ?? ''}`.trim(), 28);
+  putString(rec, 107, f.phone ?? '', 14);
+  putMoney(rec, 136, f.total);
+  putMoney(rec, 142, f.balance);
+  putMoney(rec, 172, f.tax);
+  putMoney(rec, 204, f.discount);
+  putString(rec, 284, f.address ?? '', 28);
+  if (f.tax_rate !== undefined) real48Bytes(f.tax_rate).copy(rec, 372);
+  putMoney(rec, 403, f.labor);
+  putMoney(rec, 409, f.deposit);
+  putMoney(rec, 415, f.parts);
+  putMoney(rec, 445, f.supplies);
+  return rec;
+}
+
+/**
+ * A full 265-byte DETAIL record. `date` is ISO (written YYMMDD) or any text as given;
+ * `ref` is the @96 field (a word there marks a payment line); `order` is the @81 byte.
+ */
+export function detailBytes(
+  f: Partial<ImLine> & { date?: string; ref?: string; order?: number; key?: string },
+): Buffer {
+  const rec = Buffer.alloc(265);
+  const d = f.date === undefined ? null : ISO.exec(f.date);
+  const kind = f.kind === 'part' ? 'M' : f.kind === 'labor' ? 'L' : '*';
+  putString(rec, 4, f.invoice_no ?? '', 8);
+  putString(rec, 13, f.code ?? '', 8);
+  putString(rec, 22, f.vehicle ?? '', 30);
+  if (f.qty !== undefined) putString(rec, 63, String(f.qty).padStart(8), 8);
+  rec[81] = f.order ?? 0;
+  putString(rec, 96, f.ref ?? '', 12);
+  rec[111] = kind.charCodeAt(0);
+  if (f.unit !== undefined) putString(rec, 127, (f.unit / 100).toFixed(2).padStart(13), 13);
+  putString(rec, 162, f.description ?? '', 50);
+  putString(rec, 213, f.key ?? '', 42);
+  putString(rec, 256, f.date === undefined ? '' : d ? `${d[1].slice(2)}${d[2]}${d[3]}` : f.date, 8);
+  return rec;
 }
