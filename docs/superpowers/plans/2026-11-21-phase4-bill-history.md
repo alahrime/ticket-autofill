@@ -161,12 +161,12 @@ test('shortString caps a bad length byte', () => {
 - Consumes: `readBtrieve`, `real48`, `shortString` (Task 2) and `LAYOUT.md`.
 - Produces:
   - `type ImInvoice`, all money in cents:
-    - text fields: `invoice_no: string`, `date: string` (ISO, or `''` if bad), `name: string` (@14), `first: string`, `last: string`, `phone: string` (digits only), `plate: string` (normalised), `vin: string`, `address: string`;
-    - money and rate: `parts`, `labor`, `supplies`, `discount`, `deposit`, `tax`, `total`, `balance`, `tax_rate: number`;
+    - text fields: `invoice_no: string`, `date: string` (ISO, or `''` if bad), `key: string` (@14, customer key), `name: string` (@78, full name), `first: string` (all but the name's last word), `last: string` (the name's last word), `phone: string` (digits only), `plate: string` (normalised), `address: string` (@284 and @313 joined by `, ` when the second isn't blank). There is no VIN (LAYOUT.md);
+    - money and rate (labor from @403, per LAYOUT.md): `parts`, `labor`, `supplies`, `discount`, `deposit`, `tax`, `total`, `balance`, `tax_rate: number`;
     - `hash: string`: sha256 hex of the raw record.
   - `type ImLine = { invoice_no: string; line_no: number; code: string; description: string; kind: 'part' | 'labor' | 'other'; qty: number; unit: number; amount: number; vehicle: string }`. `unit` and `amount` are cents.
-  - `decodeInvoice(rec: Buffer): ImInvoice` and `decodeDetail(rec: Buffer): ImLine`. `ImLine.line_no` is the order within its invoice; if the record has no order field, `readInvoiceFiles` assigns file order.
-  - `readInvoiceFiles(invoiceFile: Buffer, detailFile: Buffer): { invoices: ImInvoice[]; lines: ImLine[]; headerCounts: { invoice: number; detail: number } }`. It throws `BtrieveError` on any record whose invoice number isn't 6–7 digits; a record like that means the walk is wrong.
+  - `decodeInvoice(rec: Buffer): ImInvoice` and `decodeDetail(rec: Buffer): ImLine & { date: string }` (the line's own date @256 as ISO, or `''`). Payment lines (LAYOUT.md) are `kind: 'other'`. `ImLine.line_no` is the order within its invoice; if the record has no order field, `readInvoiceFiles` assigns file order.
+  - `readInvoiceFiles(invoiceFile: Buffer, detailFile: Buffer): { invoices: ImInvoice[]; lines: ImLine[]; headerCounts: { invoice: number; detail: number } }`. It throws `BtrieveError` on any record whose invoice number isn't 1–7 digits; a record like that means the walk is wrong. An invoice with no readable date takes its first line's date.
   - `type Vehicles = Record<string, Record<string, [number, number]>>` (the shape of `vehicles.json`).
   - `parseVehicle(text: string, v: Vehicles): { year: number | null; make: string; model: string; trim: string }`.
   - `normalPlate(s: string): string` and `phoneDigits(s: string): string`.
@@ -225,7 +225,7 @@ test('keys', () => {
   - `Config` gains these fields: `invomaxDir: string`, `invomaxDb: string` (`<root>/invomax.db`), `importDir: string` (`<root>/invomax-import`), `backups: string` (`<root>/backups`), `backupTargets: string[]`, `app: string` (`<root>/shop-web/apps/admin-app/dist`).
   - `openImDb(path: string): DatabaseSync` turns on WAL and creates these tables:
     - `im_invoices`: `ImInvoice` columns, plus `first_seen`, `updated_at` and `gone_at` (`''` while present). Indexes on `date`, `plate`, `phone` and `name`.
-    - `im_lines`: `ImLine` columns, plus `year`, `make`, `model` and `trim` from `parseVehicle`. The primary key is `(invoice_no, line_no)`, with an index on `code`.
+    - `im_lines`: `ImLine` columns (plus the line's `date`), plus `year`, `make`, `model` and `trim` from `parseVehicle`. The primary key is `(invoice_no, line_no)`, with an index on `code`.
     - `im_imports`: `id`, `started`, `finished`, `ok` (0/1), `tries`, `invoices`, `lines`, `added`, `changed`, `gone`, `error`.
   - `type ImportResult = { ok: boolean; tries: number; invoices: number; lines: number; added: number; changed: number; gone: number; error: string }`.
   - `importOnce(config: Config, opts?: { sleep?: (ms: number) => Promise<void>; now?: () => Date; vehicles?: Vehicles }): Promise<ImportResult>`. It works like this:
@@ -380,7 +380,7 @@ test('import-invomax command', async () => { expect(await runImportCommand(cfg, 
   - `class History`, built on its own read-only connection to `tickets.db` with `ATTACH '<invomaxDb>' AS im` (an empty `invomax.db` is created if missing):
     - `search(q: { tag?: string; name?: string; phone?: string; vin?: string; from?: string; to?: string; page?: number }): { rows: BillRow[]; total: number; page: number; per_page: 50 }`. Rows are newest first.
     - A linked pair is one row keyed `im<no>`; an InvoMax bill alone is `im<no>`; a filled ticket with no bill is `t<id>`.
-    - `name` matches first, last or the name key, partially and ignoring case. `phone` is partial digits, `tag` a partial normalised plate and `vin` a partial match. If InvoMax has no VIN (Task 1), `vin` searches tickets only.
+    - `name` matches first, last or the full name, partially and ignoring case. `phone` is partial digits, `tag` a partial normalised plate and `vin` a partial match on our tickets only, since InvoMax keeps no VIN (LAYOUT.md); the page says so.
   - `type BillRow = { key: string; date: string; invoice_no: string | null; ticket_id: number | null; name: string; phone: string; vehicle: string; plate: string; total: number | null }`. `total` is in dollars.
   - `History.bill(key: string): Bill | null`, where `Bill = { key; before: { ticket_id; lines: Line[]; parts; labor; subtotal } | null; after: { invoice_no; date; parts; labor; supplies; discount; deposit; tax; total; balance; lines: ImLineOut[]; source: 'invomax' | 'typed'; gone: boolean } | null; link: { linked_by; linked_at; version } | null; difference: number | null }`. `difference` is our subtotal minus InvoMax's parts + labor, in dollars.
   - `History.customer(phone: string): { phone: string; vehicles: { plate: string; vin: string; vehicle: string; bills: BillRow[] }[] }`.
@@ -389,7 +389,7 @@ test('import-invomax command', async () => { expect(await runImportCommand(cfg, 
     - `GET /api/upkeep/status` → `{ backup: {last, stale, offsite}, import: {running, last: {finished, ok, invoices} | null}, needs_bill: number }`.
     - `POST /api/upkeep/import` → 202 `{started: true}`, or 409 `{error: 'an import is already running'}`.
     - `POST /api/upkeep/copy-backups` → `{copies: [...]}`, or 400 `{error: 'no USB drive set up'}` / `{error: 'drive not found'}`.
-    - `GET /api/invoices?tag&name&phone&vin&from&to&page` and `GET /api/invoices/:key`, where key matches `^(im\d{6,7}|t\d{1,9})$` and anything else is 404.
+    - `GET /api/invoices?tag&name&phone&vin&from&to&page` and `GET /api/invoices/:key`, where key matches `^(im\d{1,7}|t\d{1,9})$` and anything else is 404.
     - `GET /api/customers/:phone` (digits).
     - `GET /api/needs-bill`.
     - `POST /api/invoices/:key/link {invoice_no}`, `/unlink {}`, `/none {}` and `/final {invoice_no?, parts, labor, supplies, tax, total, version}`. These take `t<id>` keys only; an `im` key gives 404.

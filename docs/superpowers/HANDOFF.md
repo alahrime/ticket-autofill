@@ -21,6 +21,10 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
   - What our app must do that InvoMax does today: supplies (5% of parts + labor, max $20: owner confirmed 2026-11-21), sales tax (6% of parts + supplies, from the backup spike), invoice numbers, printing, the customer and vehicle lists, and the "Vehicle Invoice History". Each needs the owner's rules, since today the app only records what InvoMax shows.
   - The remote fill and print project (below) is about driving InvoMax. It probably changes or goes away.
 
+## Phase 4 build (started 2026-11-21, branch `phase4-bill-history`, worktree `.claude/worktrees/phase4-bill-history-2aa87d`)
+- Design approved; plan `docs/superpowers/plans/2026-11-21-phase4-bill-history.md`; ledger `.superpowers/sdd/2026-11-21-phase4-bill-history/progress.md` (in the worktree).
+- **Task 1 done:** InvoMax's Btrieve layout is fully mapped in `shop-web/libs/invomax/LAYOUT.md`. A throwaway decoder (`probe/layout/`) finds exactly the header's record count (INVOICE 53,447; DETAIL 245,602), and the lines add up to the bills on ~99%. **Owner checked 3 recent bills' lines on screen (2026-11-21): all match.** Labor is @403 (not @272); payments sit among the lines; InvoMax keeps no VIN on bills.
+
 ## InvoMax backup spike (2026-11-21, throwaway; owner said yes)
 - **Owner decisions:** keep the InvoMax final-bill read (a fallback if the replacement takes long, and data for the new app's rules); InvoMax stays paid for 1–2 more months at most. InvoMax has no list of past bills the owner can find, but File → Make Backup Files works.
 - **Where InvoMax keeps its data:** program `C:\hunni\invomax.exe`, live tables `C:\hunni\files\*.btv` (Btrieve, no `.DDF` schema). The backup `IVBACK.IBK` is a **plain ZIP** of those tables. Old backups `C:\hunni\files\2310xx.IBK` / `231122.IBK` (newest 2023-11-22; none on this PC since). Never write in `C:\hunni`.
