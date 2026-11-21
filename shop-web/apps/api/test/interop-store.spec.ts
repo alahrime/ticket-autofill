@@ -1,9 +1,11 @@
 // tickets.db is shared with Python's tickets.Store: each side reads what the other wrote.
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { edit, markDeleted, type Ticket } from '@shop/domain';
 import { openDb } from '../src/db';
+import { LinkStore } from '../src/history/links';
+import { openImDb } from '../src/invomax/imdb';
 import { TicketStore } from '../src/store';
 import { py, pyEnv, REPO_ROOT, tempDir } from './py';
 
@@ -137,6 +139,52 @@ describe('tickets.db shared with python', () => {
       deleted_by: 'mechanic#3',
       deleted_from: 'waiting',
     });
+  });
+
+  it('python saves and fills tickets with the link tables there, and leaves them alone', () => {
+    const im = openImDb(join(dirname(path), 'invomax.db'));
+    const links = new LinkStore(db, im);
+    const a = s.create(DESK);
+    const b = s.create({ ...DESK, plate: 'tst-0001' });
+    py(
+      [
+        'import os, tickets',
+        's = tickets.Store(os.environ["DB"])',
+        't = s.get(int(os.environ["A"]))',
+        't.status = "filled"',
+        's.save(t, t.version)',
+        'u = s.get(int(os.environ["B"]))',
+        'u.notes = "from python"',
+        's.save(u, u.version)',
+        's.close()',
+      ].join('\n'),
+      { DB: path, A: String(a.id), B: String(b.id) },
+    );
+    im.prepare(
+      `INSERT INTO im_invoices VALUES ('9000001', ?, '', 'JANE DOE', '', '', '5550100000', 'XKS-4827', '',
+        0, 0, 0, 0, 0, 0, 20000, 0, 0, '', '', '', '', '')`,
+    ).run(today());
+    expect(links.autoLink(new Date())).toBe(1);
+    links.markNone(a.id, 'admin#1'); // a second write after Python's
+    py(
+      [
+        'import os, tickets',
+        's = tickets.Store(os.environ["DB"])',
+        't = s.get(int(os.environ["B"]))',
+        't.notes = "again"',
+        's.save(t, t.version)',
+        's.close()',
+      ].join('\n'),
+      { DB: path, B: String(b.id) },
+    );
+    const q = (sql: string): unknown[] => db.prepare(sql).all();
+    expect(q("SELECT name FROM sqlite_master WHERE name IN ('invoice_finals','invoice_unlinked') ORDER BY name")).toEqual([
+      { name: 'invoice_finals' },
+      { name: 'invoice_unlinked' },
+    ]);
+    expect(q('SELECT ticket_id, source, version FROM invoice_finals')).toEqual([{ ticket_id: a.id, source: 'none', version: 2 }]);
+    expect(s.get(b.id)).toMatchObject({ notes: 'again', version: 3 });
+    im.close();
   });
 
   it('waits for a python write lock', async () => {
