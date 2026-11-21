@@ -2,13 +2,17 @@
 // Only files named exactly tickets-YYYY-MM-DD.db or invomax-YYYY-MM-DD.db are ever pruned or copied.
 import {
   copyFileSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
@@ -16,6 +20,7 @@ import { basename, dirname, join, parse, resolve } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import type { Config } from './config';
 import { BadInput } from './errors';
+import { releaseLock, takeLock } from './invomax/import';
 
 const DATED = /^(tickets|invomax)-(\d{4})-(\d{2})-(\d{2})\.db$/;
 const TICKETS_KEPT = 90;
@@ -63,15 +68,20 @@ async function backupOne(src: string, dest: string): Promise<void> {
   renameSync(tmp, dest);
 }
 
-/** Throws unless PRAGMA quick_check says ok. */
-function quickCheck(file: string): void {
+/** Throws unless PRAGMA quick_check says ok; with tables, also unless each of them exists. */
+function quickCheck(file: string, readOnly = false, tables: string[] = [], what = 'backup'): void {
   let db: DatabaseSync | undefined;
   try {
-    db = new DatabaseSync(file);
+    db = new DatabaseSync(file, { readOnly });
     const r = db.prepare('PRAGMA quick_check').all() as Array<Record<string, unknown>>;
     if (r.length !== 1 || Object.values(r[0] ?? {})[0] !== 'ok') throw new Error('backup failed its check');
+    for (const t of tables) {
+      if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t))
+        throw new BadInput(`not a ${what} backup`);
+    }
   } catch (e) {
-    throw e instanceof Error && e.message === 'backup failed its check' ? e : new Error('backup failed its check');
+    if (e instanceof BadInput) throw e;
+    throw new Error('backup failed its check');
   } finally {
     db?.close();
   }
@@ -139,10 +149,22 @@ export function backupHealth(dir: string, now: Date): { last: string | null; sta
   };
 }
 
-/** Copies the dated backups to target (made if missing), skipping a file already there with the same size. */
-export function copyBackups(dir: string, target: string, now: Date): { copied: number; skipped: number } {
+const sameRoot = (a: string, b: string): boolean =>
+  parse(resolve(a)).root.toLowerCase() === parse(resolve(b)).root.toLowerCase();
+const MTIME_SLACK_MS = 2000; // FAT (USB sticks) stores times to 2 seconds
+
+export type CopyOpts = {
+  /** Tests only: allow a target on the backups' own drive. */
+  allowSameDrive?: boolean;
+  /** Tests only: runs on each fresh copy (still named .tmp) before its check. */
+  afterCopy?: (tmpPath: string) => void;
+};
+
+/** Copies the dated backups to target (made if missing), skipping a file already there with the same size and mtime. */
+export function copyBackups(dir: string, target: string, now: Date, opts: CopyOpts = {}): { copied: number; skipped: number } {
   const where = resolve(target);
   if (!existsSync(parse(where).root)) throw new BadInput('drive not found');
+  if (!opts.allowSameDrive && sameRoot(where, dir)) throw new BadInput('that drive holds the backups already; use the USB drive');
   mkdirSync(where, { recursive: true });
   const names = [...dated(dir, 'tickets'), ...dated(dir, 'invomax')];
   let copied = 0;
@@ -150,16 +172,33 @@ export function copyBackups(dir: string, target: string, now: Date): { copied: n
   for (const n of names) {
     const from = join(dir, n);
     const to = join(where, n);
-    if (existsSync(to) && statSync(to).size === statSync(from).size) {
-      skipped++;
-      continue;
+    const src = statSync(from);
+    if (existsSync(to)) {
+      const have = statSync(to);
+      if (have.size === src.size && Math.abs(have.mtimeMs - src.mtimeMs) <= MTIME_SLACK_MS) {
+        skipped++;
+        continue;
+      }
     }
     const tmp = `${to}.tmp`;
     try {
       copyFileSync(from, tmp);
+      const fd = openSync(tmp, 'r+');
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      utimesSync(tmp, src.atime, src.mtime);
+      opts.afterCopy?.(tmp);
+      try {
+        quickCheck(tmp, true);
+      } finally {
+        removeFiles(`${tmp}-wal`, `${tmp}-shm`);
+      }
       renameSync(tmp, to);
     } catch (e) {
-      removeFiles(tmp);
+      removeFiles(tmp, `${tmp}-wal`, `${tmp}-shm`);
       throw e;
     }
     copied++;
@@ -170,6 +209,7 @@ export function copyBackups(dir: string, target: string, now: Date): { copied: n
   return { copied, skipped };
 }
 
+/** Only a refused connection means nobody is serving; a timeout or any other error counts as "up". */
 function serverIsUp(host: string, port: number): Promise<boolean> {
   return new Promise((ok) => {
     const s = connect({ host, port });
@@ -178,38 +218,74 @@ function serverIsUp(host: string, port: number): Promise<boolean> {
       s.destroy();
       ok(true);
     });
-    s.once('error', () => ok(false));
+    s.once('error', (e: NodeJS.ErrnoException) => ok(e.code !== 'ECONNREFUSED'));
     s.once('timeout', () => {
       s.destroy();
-      ok(false);
+      ok(true);
     });
   });
 }
 
+export type RestoreOpts = { rename?: (from: string, to: string) => void }; // tests: a rename that can fail
+
 /** Puts a backup in place of tickets.db or invomax.db (by the file name); the old file is set aside -> its name. */
-export async function restoreBackup(file: string, config: Config): Promise<string> {
+export async function restoreBackup(file: string, config: Config, opts: RestoreOpts = {}): Promise<string> {
   if (await serverIsUp(config.host, config.port)) throw new Error('stop the shop server first');
   const prefix = /^(tickets|invomax)-/.exec(basename(file))?.[1];
   if (!prefix) throw new BadInput('the file name must start with tickets- or invomax-');
   if (!existsSync(file)) throw new BadInput('backup file not found');
-  const live = prefix === 'tickets' ? config.db : config.invomaxDb;
+  if (prefix === 'tickets') return swapIn(file, config.db, ['tickets'], 'tickets', opts);
+  const lock = takeLock(config.importDir);
+  if (!lock) throw new Error('an InvoMax import is running; try again later');
+  try {
+    return swapIn(file, config.invomaxDb, ['im_invoices', 'im_lines'], 'invomax', opts);
+  } finally {
+    releaseLock(lock);
+  }
+}
+
+function swapIn(file: string, live: string, tables: string[], what: string, opts: RestoreOpts): string {
+  const rename = opts.rename ?? renameSync;
   const staged = `${live}.restoring`;
-  removeFiles(staged, `${staged}-wal`, `${staged}-shm`);
+  const cleanStaged = (): void => removeFiles(staged, `${staged}-wal`, `${staged}-shm`);
+  cleanStaged();
   try {
     copyFileSync(file, staged);
-    quickCheck(staged);
+    quickCheck(staged, false, tables, what);
   } catch (e) {
-    removeFiles(staged, `${staged}-wal`, `${staged}-shm`);
+    cleanStaged();
     throw e;
   }
   const d = new Date();
   const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
   const aside = `${basename(live)}.before-restore-${stamp}`;
-  if (existsSync(live)) {
+  const moved: Array<[string, string]> = []; // [from, to] already renamed
+  try {
     for (const ext of ['', '-wal', '-shm']) {
-      if (existsSync(live + ext)) renameSync(live + ext, join(dirname(live), aside + ext));
+      if (!existsSync(live + ext)) continue;
+      const to = join(dirname(live), aside + ext);
+      rename(live + ext, to);
+      moved.push([live + ext, to]);
     }
+    rename(staged, live);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    const stuck: string[] = [];
+    for (const [from, to] of [...moved].reverse()) {
+      try {
+        rename(to, from);
+      } catch {
+        stuck.push(basename(to));
+      }
+    }
+    if (stuck.length) {
+      throw new Error(
+        `Restore failed (${why}) and could not put the old files back. Your data is in ${stuck.join(', ')} (in ${dirname(live)}); ` +
+          `the backup copy is ${staged}. Rename the ${basename(live)}.before-restore files back to ${basename(live)} before starting the shop server.`,
+      );
+    }
+    cleanStaged();
+    throw new Error(`Restore failed and was undone; the old file is back in place (${why})`);
   }
-  renameSync(staged, live);
-  return existsSync(join(dirname(live), aside)) ? aside : '';
+  return moved.length ? aside : '';
 }

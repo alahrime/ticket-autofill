@@ -27,8 +27,8 @@ npx nx run-many -t lint typecheck test build
 
 `backup.ts` makes `backups/tickets-YYYY-MM-DD.db` (and `invomax-YYYY-MM-DD.db` when `invomax.db` exists) with SQLite's online backup (`.tmp`, `quick_check`, then renamed); the nightly schedule is wired separately. Retention: the newest 90 tickets files; for InvoMax the newest 14 daily plus the first file of each of the newest 24 months. Only files named exactly like that are ever deleted.
 
-- `node shop-web/apps/api/dist/main.js copy-backups E:` copies the backups to `E:\shop-backups` (skipping files already there with the same size) and records it in `backups/offsite.json` once every file is there. A missing drive is refused.
-- `node shop-web/apps/api/dist/main.js restore backups/tickets-2026-11-20.db` (or an `invomax-` file) replaces `tickets.db` / `invomax.db` after checking the backup. Stop the shop server first (it refuses while anything listens on the port). The old file and its `-wal`/`-shm` are kept as `<name>.before-restore-YYYYMMDD-HHMMSS`.
+- `node shop-web/apps/api/dist/main.js copy-backups E:` copies the backups to `E:\shop-backups` (only a drive letter like `E:` is accepted, never the backups' own drive; files already there with the same size and time are skipped, each new copy is flushed and checked) and records it in `backups/offsite.json` once every file is there. A missing drive is refused.
+- `node shop-web/apps/api/dist/main.js restore backups/tickets-2026-11-20.db` (or an `invomax-` file) replaces `tickets.db` / `invomax.db` after checking the backup. Stop the shop server first: close the "Shop server" (run-shop) window, not just node, or run-shop restarts it after 5 s. It refuses unless nothing is listening on the port, checks that the backup holds the right tables, and puts the old files back if the swap fails part-way. An invomax restore also refuses while an import is running. The old file and its `-wal`/`-shm` are kept as `<name>.before-restore-YYYYMMDD-HHMMSS`.
 - `start-shop.bat`'s daily `tickets-backup-*.db` copy stays as the safety net for the rollback path (`start-shop.bat python`); the two do not interfere.
 
 ## Parity guard

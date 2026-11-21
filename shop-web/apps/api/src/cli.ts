@@ -71,7 +71,7 @@ export async function runRestoreCommand(config: Config, file: string, out: (s: s
     out(`Restored. ${aside ? `The old file is kept as ${aside}.` : 'There was no old file.'}`);
     return 0;
   } catch (e) {
-    out(`Nothing restored: ${e instanceof Error ? e.message : String(e)}`);
+    out(`Restore failed: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
 }
@@ -79,7 +79,8 @@ export async function runRestoreCommand(config: Config, file: string, out: (s: s
 /** `copy-backups <drive>`: copies the backups to <drive>\shop-backups -> exit code. */
 export function runCopyBackupsCommand(config: Config, drive: string, out: (s: string) => void, now = new Date()): number {
   try {
-    const root = /^[A-Za-z]:$/.test(drive) ? drive + '\\' : drive; // "E:" alone means that drive's current folder
+    if (!/^[A-Za-z]:\\?$/.test(drive)) throw new BadInput('give a drive letter, like D:');
+    const root = drive.slice(0, 2) + '\\'; // "E:" alone would mean that drive's current folder
     const target = join(root, 'shop-backups');
     const r = copyBackups(config.backups, target, now);
     out(`Copied ${r.copied} backup${r.copied === 1 ? '' : 's'} to ${target} (${r.skipped} already there).`);

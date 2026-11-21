@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -7,11 +7,13 @@ import { runCopyBackupsCommand, runRestoreCommand } from '../src/cli';
 import { type Config, loadConfig } from '../src/config';
 import { BadInput } from '../src/errors';
 import { openImDb } from '../src/invomax/imdb';
+import { releaseLock, takeLock } from '../src/invomax/import';
 import { tempDir } from './py';
 
 let tmp: { dir: string; done: () => void };
 let cfg: Config;
 const NOW = new Date(2026, 10, 21, 2, 0, 0); // local 2026-11-21 02:00
+const SAME = { allowSameDrive: true }; // temp dirs share one drive
 
 beforeEach(() => {
   tmp = tempDir();
@@ -22,17 +24,22 @@ afterEach(() => tmp.done());
 const makeDb = (path: string, value: string): void => {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL');
-  db.exec('CREATE TABLE IF NOT EXISTS notes (v TEXT)');
-  db.prepare('INSERT INTO notes (v) VALUES (?)').run(value);
+  db.exec('CREATE TABLE IF NOT EXISTS tickets (v TEXT)');
+  db.prepare('INSERT INTO tickets (v) VALUES (?)').run(value);
   db.close();
 };
 const rows = (path: string): string[] => {
   const db = new DatabaseSync(path);
   try {
-    return (db.prepare('SELECT v FROM notes ORDER BY rowid').all() as { v: string }[]).map((r) => r.v);
+    return (db.prepare('SELECT v FROM tickets ORDER BY rowid').all() as { v: string }[]).map((r) => r.v);
   } finally {
     db.close();
   }
+};
+/** Real (tiny, valid) sqlite backups in the backups folder. */
+const real = (names: string[]): void => {
+  mkdirSync(cfg.backups, { recursive: true });
+  for (const n of names) makeDb(join(cfg.backups, n), n);
 };
 const touch = (dir: string, names: string[]): void => {
   mkdirSync(dir, { recursive: true });
@@ -83,7 +90,7 @@ describe('backupNow', () => {
     makeDb(cfg.db, 'committed');
     const other = new DatabaseSync(cfg.db);
     other.exec('BEGIN IMMEDIATE');
-    other.prepare('INSERT INTO notes (v) VALUES (?)').run('pending');
+    other.prepare('INSERT INTO tickets (v) VALUES (?)').run('pending');
     try {
       const r = await backupNow(cfg, NOW);
       expect(rows(r.tickets)).toEqual(['committed']);
@@ -180,29 +187,56 @@ describe('lastGoodBackup and backupHealth', () => {
 
 describe('copyBackups', () => {
   it('copies, is idempotent, and writes offsite.json', () => {
-    touch(cfg.backups, ['tickets-2026-11-20.db', 'invomax-2026-11-20.db', 'notes.txt']);
+    real(['tickets-2026-11-20.db', 'invomax-2026-11-20.db']);
+    touch(cfg.backups, ['notes.txt']);
     const target = join(tmp.dir, 'usb', 'shop-backups');
-    expect(copyBackups(cfg.backups, target, NOW)).toEqual({ copied: 2, skipped: 0 });
+    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 2, skipped: 0 });
     expect(readdirSync(target).sort()).toEqual(['invomax-2026-11-20.db', 'tickets-2026-11-20.db']);
-    expect(copyBackups(cfg.backups, target, NOW)).toEqual({ copied: 0, skipped: 2 });
+    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 0, skipped: 2 });
     const o = JSON.parse(readFileSync(join(cfg.backups, 'offsite.json'), 'utf8')) as { at: string; target: string };
     expect(o).toEqual({ at: NOW.toISOString(), target });
   });
 
-  it('recopies a file whose size differs', () => {
-    touch(cfg.backups, ['tickets-2026-11-20.db']);
+  it('recopies a same-size file whose mtime differs, and keeps the source mtime on the copy', () => {
+    real(['tickets-2026-11-20.db']);
     const target = join(tmp.dir, 'usb');
-    copyBackups(cfg.backups, target, NOW);
-    writeFileSync(join(cfg.backups, 'tickets-2026-11-20.db'), 'a longer body than before');
-    expect(copyBackups(cfg.backups, target, NOW)).toEqual({ copied: 1, skipped: 0 });
+    const src = join(cfg.backups, 'tickets-2026-11-20.db');
+    const when = new Date(2026, 10, 20, 2, 0, 0);
+    utimesSync(src, when, when);
+    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
+    expect(Math.abs(statSync(join(target, 'tickets-2026-11-20.db')).mtimeMs - when.getTime())).toBeLessThan(2000);
+    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 0, skipped: 1 });
+    const later = new Date(2026, 10, 20, 5, 0, 0); // same name and size, different time
+    utimesSync(src, later, later);
+    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
+  });
+
+  it('fails a corrupt copy, deletes it and writes no offsite.json', () => {
+    real(['tickets-2026-11-20.db']);
+    const target = join(tmp.dir, 'usb');
+    const corrupt = (tmpPath: string): void => {
+      const b = readFileSync(tmpPath);
+      for (let i = 0; i < b.length; i += 5) b[i] = 0xff;
+      writeFileSync(tmpPath, b);
+    };
+    expect(() => copyBackups(cfg.backups, target, NOW, { ...SAME, afterCopy: corrupt })).toThrow('failed its check');
+    expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false);
+    expect(readdirSync(target)).toEqual([]);
+  });
+
+  it('refuses a target on the same drive as the backups', () => {
+    real(['tickets-2026-11-20.db']);
+    expect(() => copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW)).toThrow(BadInput);
+    expect(() => copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW)).toThrow('that drive holds the backups already');
+    expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false);
   });
 
   it('throws BadInput for a missing drive and writes no offsite.json', () => {
-    touch(cfg.backups, ['tickets-2026-11-20.db']);
+    real(['tickets-2026-11-20.db']);
     const root = missingRoot();
     expect(existsSync(root)).toBe(false);
-    expect(() => copyBackups(cfg.backups, join(root, 'shop-backups'), NOW)).toThrow(BadInput);
-    expect(() => copyBackups(cfg.backups, join(root, 'shop-backups'), NOW)).toThrow('drive not found');
+    expect(() => copyBackups(cfg.backups, join(root, 'shop-backups'), NOW, SAME)).toThrow(BadInput);
+    expect(() => copyBackups(cfg.backups, join(root, 'shop-backups'), NOW, SAME)).toThrow('drive not found');
     expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false);
   });
 });
@@ -259,6 +293,80 @@ describe('restoreBackup', () => {
     expect(readdirSync(tmp.dir).filter((n) => n.includes('before-restore') || n.includes('.restoring'))).toEqual([]);
   });
 
+  it('treats a non-refused connect error as the server being up', async () => {
+    makeDb(cfg.db, 'now');
+    const good = await backupNow(cfg, NOW);
+    const odd = { ...cfg, host: '256.256.256.256', port: await freePort() }; // an error that is not ECONNREFUSED
+    await expect(restoreBackup(good.tickets, odd)).rejects.toThrow('stop the shop server first');
+    expect(rows(cfg.db)).toEqual(['now']);
+  });
+
+  it('puts the old files back when the final rename fails', async () => {
+    makeDb(cfg.db, 'old');
+    const good = await backupNow(cfg, NOW);
+    makeDb(cfg.db, 'newer');
+    writeFileSync(`${cfg.db}-wal`, '');
+    const failing = (from: string, to: string): void => {
+      if (from.endsWith('.restoring')) throw new Error('EPERM: simulated'); // only the swap-in fails
+      renameSync(from, to);
+    };
+    const err = (await restoreBackup(good.tickets, { ...cfg, port: await freePort() }, { rename: failing }).catch((e: Error) => e)) as Error;
+    expect(err.message).toContain('undone');
+    expect(err.message).not.toContain('Nothing restored');
+    expect(existsSync(`${cfg.db}-wal`)).toBe(true);
+    expect(rows(cfg.db)).toEqual(['old', 'newer']);
+    expect(readdirSync(tmp.dir).filter((n) => n.includes('before-restore') || n.includes('.restoring'))).toEqual([]);
+  });
+
+  it('names where the data sits when the rollback fails too', async () => {
+    makeDb(cfg.db, 'old');
+    const good = await backupNow(cfg, NOW);
+    let swapped = false;
+    const failing = (from: string, to: string): void => {
+      if (to === cfg.db) throw new Error('EPERM: simulated');
+      if (from === cfg.db && swapped) throw new Error('EPERM: rollback');
+      if (to.includes('before-restore')) swapped = true;
+      renameSync(from, to);
+    };
+    const err = (await restoreBackup(good.tickets, { ...cfg, port: await freePort() }, { rename: failing }).catch((e: Error) => e)) as Error;
+    expect(err.message).toMatch(/tickets\.db\.before-restore-\d{8}-\d{6}/);
+    expect(err.message).toContain(`${cfg.db}.restoring`);
+    expect(existsSync(`${cfg.db}.restoring`)).toBe(true);
+    const aside = readdirSync(tmp.dir).find((n) => n.includes('before-restore')) as string;
+    expect(rows(join(tmp.dir, aside))).toEqual(['old']);
+  });
+
+  it('refuses a database of the wrong kind before moving anything', async () => {
+    makeDb(cfg.db, 'keep');
+    openImDb(cfg.invomaxDb).close();
+    const r = await backupNow(cfg, NOW);
+    const wrong = join(tmp.dir, 'tickets-2026-11-20.db'); // an invomax file named like a tickets backup
+    copyFileSync(r.invomax as string, wrong);
+    await expect(restoreBackup(wrong, { ...cfg, port: await freePort() })).rejects.toThrow('not a tickets backup');
+    const wrong2 = join(tmp.dir, 'invomax-2026-11-20.db'); // and the other way round
+    copyFileSync(r.tickets, wrong2);
+    await expect(restoreBackup(wrong2, { ...cfg, port: await freePort() })).rejects.toThrow('not a invomax backup');
+    expect(rows(cfg.db)).toEqual(['keep']);
+    expect(readdirSync(tmp.dir).filter((n) => n.includes('before-restore') || n.includes('.restoring'))).toEqual([]);
+  });
+
+  it('refuses an invomax restore while an import holds the lock', async () => {
+    makeDb(cfg.db, 'x');
+    openImDb(cfg.invomaxDb).close();
+    const r = await backupNow(cfg, NOW);
+    const lock = takeLock(cfg.importDir);
+    expect(lock).not.toBeNull();
+    try {
+      await expect(restoreBackup(r.invomax as string, { ...cfg, port: await freePort() })).rejects.toThrow(
+        'an InvoMax import is running; try again later',
+      );
+    } finally {
+      if (lock) releaseLock(lock);
+    }
+    expect(readdirSync(tmp.dir).filter((n) => n.includes('before-restore') || n.includes('.restoring'))).toEqual([]);
+    await expect(restoreBackup(r.invomax as string, { ...cfg, port: await freePort() })).resolves.toMatch(/^invomax\.db\.before-restore-/);
+  });
+
   it('rejects an unknown file name', async () => {
     writeFileSync(join(tmp.dir, 'other.db'), 'x');
     await expect(restoreBackup(join(tmp.dir, 'other.db'), { ...cfg, port: await freePort() })).rejects.toThrow(BadInput);
@@ -279,5 +387,18 @@ describe('CLI wrappers', () => {
     const out: string[] = [];
     expect(await runRestoreCommand({ ...cfg, port: await freePort() }, good.tickets, (s) => out.push(s))).toBe(0);
     expect(out.join(' ')).toContain('before-restore');
+  });
+
+  it.each(['D', '..', 'C:\\hunni', 'C:\\hunni\\files', 'E:foo', ''])('copy-backups refuses %p as a drive', (drive) => {
+    const out: string[] = [];
+    expect(runCopyBackupsCommand(cfg, drive, (s) => out.push(s))).toBe(1);
+    expect(out.join(' ')).toContain('give a drive letter, like D:');
+  });
+
+  it('copy-backups refuses the drive that holds the backups', () => {
+    const out: string[] = [];
+    const own = { ...cfg, backups: 'C:\\somewhere\\backups' };
+    expect(runCopyBackupsCommand(own, 'c:', (s) => out.push(s))).toBe(1);
+    expect(out.join(' ')).toContain('that drive holds the backups already; use the USB drive');
   });
 });
