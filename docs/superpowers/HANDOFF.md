@@ -1,6 +1,6 @@
 # Handoff — ticket-autofill
 
-**Updated:** 2026-11-20. **Branch:** `main`, pushed. The TypeScript shop server (`ts-shop-server`) passed its final two-seat review and was merged into `main` on 2026-11-20 as a fast-forward; see "TypeScript shop server" below. This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
+**Updated:** 2026-11-21 (phase 4 brainstorm, branch `claude/phase4-bill-history-2aa87d`). Before that, 2026-11-20: **Branch:** `main`, pushed. The TypeScript shop server (`ts-shop-server`) passed its final two-seat review and was merged into `main` on 2026-11-20 as a fast-forward; see "TypeScript shop server" below. This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
 
 **Live today: still `shop.py`, serving the merged pages.** Since the merge, the iPad check-in page is gone. On Python the new Delete and New customer buttons say "Not available on this server." The switch to the TypeScript server is the owner's call; follow the checklist below from step 3, since step 2 (merge) is done. `shop.py` and `shopwin.py` pick up the new `tickets.py` only when they restart.
 
@@ -10,6 +10,29 @@
 - nightly backups into `backups/` with 90 kept, plus `copy-backups <drive>`.
 
 It needs its own plan first: brainstorm, then a plan, then implementation with two reviewers per task.
+
+## New direction from the owner (2026-11-21): replace InvoMax, and start testing
+- **The owner wants to start testing.** The full-flow test on the made-up customer (see "Not yet done by the owner" below) and the switch to the TypeScript server (checklist below) are both still to do. Testing needs no new code.
+- **The InvoMax provider is raising its prices**, so the owner wants to **replace InvoMax with our own in-house web application**. This is a new project and needs its own brainstorm and design. Nothing has been decided about how it works yet.
+- **How this changes phase 4.** These are open questions for the next session; the owner has not answered them yet:
+  - If our app writes the final bill itself (prices, supplies, tax, total, invoice number), then reading InvoMax's final-bill screen is only needed until InvoMax is gone. The "after" record becomes our own bill. Decide whether the InvoMax read in `shopwin.py` is still worth building, or whether staff should just type the finals until the switch.
+  - Bill history, the `invoice_finals` table, `GET /api/invoices`, the React Bill history page and backups are still needed either way. Backups matter even more once InvoMax no longer holds a copy of the bills.
+  - **Past bills live only in InvoMax.** Moving them out (export, or a read-only import) is part of replacing it. That has not been looked into yet.
+  - What our app must do that InvoMax does today: supplies (always a multiple of $20, scaling with the job), sales tax, invoice numbers, printing, the customer and vehicle lists, and the "Vehicle Invoice History". Each needs the owner's rules, since today the app only records what InvoMax shows.
+  - The remote fill and print project (below) is about driving InvoMax. It probably changes or goes away.
+
+## Phase 4 brainstorm so far (2026-11-21, not yet written up as a design or plan)
+- **Scope (owner): option A, everything in the spec's phase 4.** That covers `invoice_finals` and "Record bill & mark filled", `GET /api/invoices` (search by tag, name, phone, VIN, from/to), `GET /api/invoices/:id` (before and after), `POST /api/invoices/:id/final` (admin correction), `GET /api/customers/:phone`, the **React Bill history page** (filter bar, results table, before/after detail), nightly backups (02:00, `backups/`, keep 90), the `restore <file>` command, `copy-backups <drive>` and its admin button, the config `targets` list, the "Last backup" line (red after 2 days without a good copy) and the "No copy off this PC yet" note. Optional: keep sign-in lockouts and create tokens across restarts (ledger M-2, M-7). The owner's 2026-11-21 direction may change this (above).
+- **Found while reading the docs and code.**
+  - Nightly backups run only in the TS server. The live server is still `shop.py`, so until the switch the safety net stays the once-a-day `tickets-backup-YYYY-MM-DD.db` that `start-shop.bat` saves.
+  - `shopwin.py` `mark_filled` (around line 300) asks yes/no, then saves `tickets.move(fresh, "filled")` with a version check. The new dialog and the `invoice_finals` write go there, in the same transaction.
+- **What the earlier InvoMax work already covers** (`probe/` in the real folder, git-ignored; it holds customer data, so never commit it):
+  - The read-only driver (`invomax.py`, `CONTROLS`) and watch mode (`probe.bat`) are ready, so no new tool is needed to map a screen.
+  - The logs (`watch-2026-10-27.log`, `watch-2026-11-03.log`, `trial-2026-11-03.log`, `map-20261027-124634.txt`) cover Customers, Customer Information, Vehicles, Parts & Labor, Parts Cost, Mileage, Vehicle Invoice History, the Yes/No pop-ups (`Tmsgs`, `Confirm`) and the `Tchoicebox` pickers. **Nothing after Done (the final-bill view) was ever logged.**
+  - **Likely snag:** on the main invoice screen the totals bar (Discount, Supplies, Sublet, Disposal, Labor, Parts, Sub Total, Sales Tax, TOTAL, BAL DUE) is a single `TPanel#1` at rel (10, 965, 1916, 60) with no child controls. It is drawn, so `WM_GETTEXT` can't read it. If the final bill is that bar, the dialog stays typed-only. A later option is reading it from a picture that is never saved.
+  - The `CONTROLS["date"]` entry (`TLMDMaskEdit#0` at (1506, 130)) may really be the Invoice Number box. The design lists "Date dropdown, START, Invoice Number" across the top, and the date is the `TDateTimePicker` at (238, 130). Check this in the mapping session.
+- **Asked the owner, not yet answered:** is "the bill just before confirm" the main invoice screen with its totals bar, or a separate window after Done? Either way, mapping it means one ~5-minute read-only `probe.bat` run while the owner takes one real job to the final bill as usual.
+- **Next steps:** settle the InvoMax-replacement questions above with the owner first, then finish the phase 4 brainstorm, write `specs/2026-11-2x-phase4-bill-history-design.md`, plan it with the writing-plans skill, then subagent-driven development (one implementer and two reviewers per task, never two writers at once) with the ledger under `.superpowers/sdd/<date>-phase4/`.
 
 Read first:
 - Design: `specs/2026-10-26-invomax-overlay-design.md`. This covers the side panel, the draft model, the step runner and every InvoMax recipe learned so far. It supersedes the overlay part of `specs/2026-10-14-invomax-autofill-design.md`.
