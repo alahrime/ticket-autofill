@@ -79,7 +79,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     web: at('web'),
     setup: at('setup_code.txt'),
     log: at('shop.log'),
-    invomaxDir: env['INVOMAX_DIR'] ? resolve(env['INVOMAX_DIR']) : set.invomaxDir,
+    invomaxDir: env['INVOMAX_DIR'] ? resolve(env['INVOMAX_DIR']) : resolve(root, set.invomaxDir),
     invomaxDb: at('invomax.db'),
     importDir: at('invomax-import'),
     backups: at('backups'),

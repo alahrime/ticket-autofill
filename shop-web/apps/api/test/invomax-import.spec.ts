@@ -1,10 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { btrieveFile, detailBytes, invoiceBytes } from '@shop/invomax/testing';
 import { runImportCommand } from '../src/cli';
 import { type Config, loadConfig } from '../src/config';
-import { importOnce, lastGoodImport, lastImport } from '../src/invomax/import';
+import { copyTable, importOnce, lastGoodImport, lastImport } from '../src/invomax/import';
 import { openImDb } from '../src/invomax/imdb';
 import { tempDir } from './py';
 
@@ -73,6 +73,7 @@ beforeEach(() => {
 afterEach(() => tmp.done());
 
 test('first import stores everything and logs counts only', async () => {
+  writeFileSync(cfg.vehicles, JSON.stringify({ Honda: { 'HR-V': [2016, 2022] } }));
   const r = await importOnce(cfg, { sleep });
   expect(r).toMatchObject({ ok: true, tries: 1, invoices: 3, lines: 5, added: 3, changed: 0, gone: 0, error: '' });
   expect(log()).toMatch(/invomax import ok 3\/5 \+3 ~0 -0/);
@@ -185,15 +186,107 @@ test('never opens InvoMax files for writing', async () => {
   files.forEach((f) => chmodSync(f, 0o666));
 });
 
-test('vehicles.json fills make and model; a broken one only blanks them', async () => {
-  const make = (): string => q<{ make: string }>('SELECT make FROM im_lines LIMIT 1')[0].make;
+test('a new vehicles.json refills unchanged lines; an unreadable one leaves them alone', async () => {
+  const makes = (): string[] => q<{ make: string }>('SELECT DISTINCT make FROM im_lines').map((r) => r.make);
+  await importOnce(cfg, { sleep }); // no vehicles.json yet
+  expect(makes()).toEqual(['']);
+  expect(log()).toMatch(/invomax import vehicles unreadable/);
   writeFileSync(cfg.vehicles, JSON.stringify({ Honda: { 'HR-V': [2016, 2022] } }));
-  await importOnce(cfg, { sleep });
-  expect(make()).toBe('Honda');
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, changed: 0, added: 0 });
+  expect(makes()).toEqual(['Honda']);
+  expect(q<{ model: string }>('SELECT DISTINCT model FROM im_lines')).toEqual([{ model: 'HR-V' }]);
   writeFileSync(cfg.vehicles, '{ not json');
   put([inv('9000004')], [line('9000004', 1)]);
-  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, changed: 0, added: 1 });
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, added: 1 });
   expect(q<{ make: string }>('SELECT make FROM im_lines WHERE invoice_no = ?', '9000004')[0].make).toBe('');
+  expect(q<{ make: string }>('SELECT make FROM im_lines WHERE invoice_no = ?', '9000001')[0].make).toBe('Honda');
+  expect(q<{ vehicles_hash: string }>('SELECT vehicles_hash FROM im_imports ORDER BY id DESC LIMIT 1')[0].vehicles_hash).toBe('');
+});
+
+test('a busy file retries like a torn one; other errors fail at once', async () => {
+  let n = 0;
+  const busy = (src: string, dest: string): void => {
+    if (n++ === 0) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    copyTable(src, dest);
+  };
+  expect(await importOnce(cfg, { sleep, copy: busy })).toMatchObject({ ok: true, tries: 2 });
+  expect(sleepCalls).toEqual([60_000]);
+  for (const code of ['EPERM', 'EACCES', 'EAGAIN']) {
+    sleepCalls = [];
+    const always = (): void => {
+      throw Object.assign(new Error(code), { code });
+    };
+    expect(await importOnce(cfg, { sleep, copy: always })).toMatchObject({ ok: false, tries: 4, error: code });
+    expect(sleepCalls).toEqual([60_000, 60_000, 60_000]);
+  }
+  sleepCalls = [];
+  const missing = (): void => {
+    throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+  };
+  expect(await importOnce(cfg, { sleep, copy: missing })).toMatchObject({ ok: false, tries: 1 });
+  expect(sleepCalls).toEqual([]);
+});
+
+test('importOnce never rejects: a blocked import folder is a logged failure', async () => {
+  writeFileSync(cfg.importDir, 'a file where the folder should be');
+  const r = await importOnce(cfg, { sleep });
+  expect(r.ok).toBe(false);
+  expect(log()).toMatch(/invomax import failed \w+/);
+  expect(await importOnce(cfg, { sleep, now: () => { throw new Error('clock'); } })).toMatchObject({ ok: false });
+  expect(count('im_imports')).toBe(2);
+});
+
+test('a short read never reaches the database', async () => {
+  const many = Array.from({ length: 100 }, (_, i) => String(9001000 + i));
+  put(many.map((n) => inv(n)), many.map((n) => line(n, 1)));
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, invoices: 100 });
+  sleepCalls = [];
+  put(many.slice(0, 80).map((n) => inv(n)), many.slice(0, 80).map((n) => line(n, 1)));
+  const r = await importOnce(cfg, { sleep });
+  expect(r).toMatchObject({ ok: false, tries: 4, error: 'too few bills (80 of 100)' });
+  expect(sleepCalls).toEqual([60_000, 60_000, 60_000]);
+  expect(q<{ n: number }>("SELECT count(*) AS n FROM im_invoices WHERE gone_at = ''")[0].n).toBe(100);
+  put(many.map((n) => inv(n)), []); // DETAIL decodes to nothing
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: false, error: 'too few bills (100 of 100)' });
+  expect(count('im_lines')).toBe(100);
+  put(many.slice(0, 91).map((n) => inv(n)), many.slice(0, 91).map((n) => line(n, 1))); // 91% is fine
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, gone: 9 });
+});
+
+test('the lock is released only if it is still ours', async () => {
+  const lock = join(cfg.importDir, '.lock');
+  const theirs = (src: string, dest: string): void => {
+    copyTable(src, dest);
+    writeFileSync(lock, 'someone else');
+  };
+  expect(await importOnce(cfg, { sleep, copy: theirs })).toMatchObject({ ok: true });
+  expect(readFileSync(lock, 'utf8')).toBe('someone else');
+  rmSync(lock);
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true });
+  expect(existsSync(lock)).toBe(false);
+});
+
+test('two takeovers of a stale lock cannot both win', async () => {
+  mkdirSync(cfg.importDir, { recursive: true });
+  const lock = join(cfg.importDir, '.lock');
+  writeFileSync(lock, 'dead');
+  const old = new Date(Date.now() - 31 * 60_000);
+  utimesSync(lock, old, old);
+  const [a, b] = await Promise.all([importOnce(cfg, { sleep }), importOnce(cfg, { sleep })]);
+  expect([a.ok, b.ok].sort()).toEqual([false, true]);
+  expect(readdirSync(cfg.importDir).filter((f) => f.includes('stale'))).toEqual([]);
+});
+
+test('an import folder inside (or around) the InvoMax folder is refused, and nothing is written there', async () => {
+  const inside = { ...cfg, importDir: join(cfg.invomaxDir, 'copies') };
+  expect(await importOnce(inside, { sleep })).toMatchObject({ ok: false, error: 'import folder is inside the InvoMax folder' });
+  expect(existsSync(inside.importDir)).toBe(false);
+  expect(await importOnce({ ...cfg, importDir: cfg.invomaxDir.toUpperCase() }, { sleep })).toMatchObject({ ok: false });
+  const around = { ...cfg, invomaxDir: join(tmp.dir, 'im'), importDir: join(tmp.dir, 'im', 'x', 'y') };
+  expect(await importOnce(around, { sleep })).toMatchObject({ ok: false });
+  expect(await importOnce({ ...cfg, invomaxDir: tmp.dir }, { sleep })).toMatchObject({ ok: false }); // importDir is under it
+  expect(readdirSync(cfg.invomaxDir).sort()).toEqual(['DETAIL.btv', 'INVOICE.btv']);
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true });
 });
 
 test('import-invomax command', async () => {

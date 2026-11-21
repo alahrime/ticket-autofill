@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS im_imports (
   bad INTEGER NOT NULL DEFAULT 0,
   duplicates INTEGER NOT NULL DEFAULT 0,
   ms INTEGER NOT NULL DEFAULT 0,
-  error TEXT NOT NULL DEFAULT ''
+  error TEXT NOT NULL DEFAULT '',
+  vehicles_hash TEXT NOT NULL DEFAULT ''
 );
 `;
 
@@ -73,5 +74,8 @@ export function openImDb(path: string): DatabaseSync {
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
+  const cols = db.prepare('PRAGMA table_info(im_imports)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'vehicles_hash'))
+    db.exec("ALTER TABLE im_imports ADD COLUMN vehicles_hash TEXT NOT NULL DEFAULT ''"); // a db made before the column
   return db;
 }
