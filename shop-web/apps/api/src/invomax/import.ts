@@ -1,8 +1,8 @@
 // Copies InvoMax's INVOICE.btv and DETAIL.btv (read-only: never written, locked or renamed there), decodes
 // them and upserts into invomax.db. Logs counts, invoice numbers and class names only (shop.log).
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { closeSync, linkSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { nowIso } from '@shop/domain';
 import { BtrieveError, type ImLine, parseVehicle, readInvoiceFiles, type Vehicles } from '@shop/invomax';
@@ -69,10 +69,14 @@ function retryable(e: unknown): boolean {
   return typeof code === 'string' && TRANSIENT.has(code);
 }
 
-type Lock = { path: string; token: string };
+export type Lock = { path: string; token: string };
 
-/** The lock taken, or null when another import holds it. A lock older than 30 minutes is renamed away (atomic) and retaken. */
-function takeLock(dir: string): Lock | null {
+/**
+ * The lock taken, or null when another import holds it. A lock older than 30 minutes is renamed away and retaken;
+ * a rename can move a fresh lock that someone took in between, so the moved file's token is checked and a fresh
+ * lock is put back (link fails if the path is taken again). `beforeStaleRename` is a test seam.
+ */
+export function takeLock(dir: string, beforeStaleRename?: () => void): Lock | null {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, '.lock');
   const token = `${process.pid}-${Date.now()}-${randomBytes(8).toString('hex')}`;
@@ -97,9 +101,18 @@ function takeLock(dir: string): Lock | null {
   if (create()) return { path, token };
   try {
     if (Date.now() - statSync(path).mtimeMs <= STALE_LOCK_MS) return null;
-    const stale = `${path}.stale-${token}`;
-    renameSync(path, stale); // only one taker can win this rename
-    rmSync(stale, { force: true });
+    const seen = readFileSync(path, 'utf8');
+    beforeStaleRename?.();
+    const moved = `${path}.stale-${token}`;
+    renameSync(path, moved);
+    try {
+      if (readFileSync(moved, 'utf8') !== seen) {
+        linkSync(moved, path); // it was someone's fresh lock: back it goes
+        return null;
+      }
+    } finally {
+      unlinkSync(moved);
+    }
     return create() ? { path, token } : null;
   } catch {
     return null;
@@ -107,7 +120,7 @@ function takeLock(dir: string): Lock | null {
 }
 
 /** Removes the lock only if it still holds our token; never throws. */
-function releaseLock(lock: Lock): void {
+export function releaseLock(lock: Lock): void {
   try {
     if (readFileSync(lock.path, 'utf8') === lock.token) rmSync(lock.path, { force: true });
   } catch {
@@ -118,7 +131,7 @@ function releaseLock(lock: Lock): void {
 const norm = (p: string): string => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
 const within = (inner: string, outer: string): boolean => {
   const rel = relative(norm(outer), norm(inner));
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 };
 
 /** Refuses when the import folder and InvoMax's folder overlap: nothing may ever be written in InvoMax's. */

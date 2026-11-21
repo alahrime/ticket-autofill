@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { btrieveFile, detailBytes, invoiceBytes } from '@shop/invomax/testing';
 import { runImportCommand } from '../src/cli';
 import { type Config, loadConfig } from '../src/config';
-import { copyTable, importOnce, lastGoodImport, lastImport } from '../src/invomax/import';
+import { copyTable, importOnce, type Lock, releaseLock, takeLock, lastGoodImport, lastImport } from '../src/invomax/import';
 import { openImDb } from '../src/invomax/imdb';
 import { tempDir } from './py';
 
@@ -275,6 +275,34 @@ test('two takeovers of a stale lock cannot both win', async () => {
   const [a, b] = await Promise.all([importOnce(cfg, { sleep }), importOnce(cfg, { sleep })]);
   expect([a.ok, b.ok].sort()).toEqual([false, true]);
   expect(readdirSync(cfg.importDir).filter((f) => f.includes('stale'))).toEqual([]);
+});
+
+test('a taker that meets a fresh lock where the stale one was puts it back and yields', () => {
+  mkdirSync(cfg.importDir, { recursive: true });
+  const lockPath = join(cfg.importDir, '.lock');
+  writeFileSync(lockPath, 'dead');
+  const old = new Date(Date.now() - 31 * 60_000);
+  utimesSync(lockPath, old, old);
+  let a: Lock | null = null;
+  // B has seen the stale lock; before B's rename, A takes the whole stale lock over
+  const b = takeLock(cfg.importDir, () => {
+    a = takeLock(cfg.importDir);
+  });
+  expect(a).not.toBeNull();
+  expect(b).toBeNull();
+  expect(readFileSync(lockPath, 'utf8')).toBe((a as unknown as Lock).token);
+  expect(readdirSync(cfg.importDir).filter((f) => f.includes('stale'))).toEqual([]);
+  releaseLock(a as unknown as Lock);
+  expect(existsSync(lockPath)).toBe(false);
+});
+
+test('folders that only share a name prefix do not overlap; one inside the other does, either way', async () => {
+  const refused = 'import folder is inside the InvoMax folder';
+  const dir = (n: string): string => join(tmp.dir, n);
+  const run = (invomaxDir: string, importDir: string) => importOnce({ ...cfg, invomaxDir, importDir }, { sleep });
+  expect((await run(dir('files'), dir('files2'))).error).not.toBe(refused);
+  expect((await run(dir('files'), join(dir('files'), '..x'))).error).toBe(refused);
+  expect((await run(join(dir('im2'), 'inner'), dir('im2'))).error).toBe(refused);
 });
 
 test('an import folder inside (or around) the InvoMax folder is refused, and nothing is written there', async () => {
