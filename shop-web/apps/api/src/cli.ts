@@ -2,7 +2,9 @@
 import { createInterface } from 'node:readline';
 import { Invalid } from '@shop/domain';
 import { Accounts, makeAdmin } from './accounts';
+import type { Config } from './config';
 import { openDb } from './db';
+import { importOnce, type ImportOpts } from './invomax/import';
 
 export type CliIo = {
   prompt(q: string, hidden: boolean): Promise<string>;
@@ -16,7 +18,7 @@ export async function runAdminCommand(
   dbPath: string,
 ): Promise<number> {
   if (args.length !== 2 || args[0] !== 'admin') {
-    io.out('usage: node shop-web/apps/api/dist/main.js [admin <name>]');
+    io.out('usage: node shop-web/apps/api/dist/main.js [admin <name> | import-invomax]');
     return 1;
   }
   const password = await io.prompt('New password (10+ characters): ', true);
@@ -37,6 +39,24 @@ export async function runAdminCommand(
   }
   io.out(
     `Admin ${name} is ready; sign in at /admin. A running server keeps its lockout until start-shop.bat restarts it.`,
+  );
+  return 0;
+}
+
+/** `import-invomax`: copies and imports InvoMax's bills now; prints the counts (or the error) -> exit code. */
+export async function runImportCommand(
+  config: Config,
+  out: (s: string) => void,
+  sleep?: ImportOpts['sleep'],
+): Promise<number> {
+  const r = await importOnce(config, sleep ? { sleep } : {});
+  if (!r.ok) {
+    out(`Import failed after ${r.tries} ${r.tries === 1 ? 'try' : 'tries'}: ${r.error}`);
+    return 1;
+  }
+  out(
+    `Imported ${r.invoices} invoices and ${r.lines} lines: ${r.added} new, ${r.changed} changed, ${r.gone} gone ` +
+      `(${r.tries} ${r.tries === 1 ? 'try' : 'tries'}).`,
   );
   return 0;
 }

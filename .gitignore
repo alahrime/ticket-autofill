@@ -24,3 +24,7 @@ shop-web/dist/
 shop-web/.nx/
 tickets-backup-*
 backups/
+invomax.db*
+invomax-import/
+shop-settings.json
+shop-web/apps/admin-app/dist/

@@ -374,6 +374,12 @@ describe('config', () => {
       web: join('C:\\shop', 'web'),
       setup: join('C:\\shop', 'setup_code.txt'),
       log: join('C:\\shop', 'shop.log'),
+      invomaxDir: String.raw`C:\hunni\files`,
+      invomaxDb: join('C:\\shop', 'invomax.db'),
+      importDir: join('C:\\shop', 'invomax-import'),
+      backups: join('C:\\shop', 'backups'),
+      backupTargets: [],
+      app: join('C:\\shop', 'shop-web', 'apps', 'admin-app', 'dist'),
     });
     expect(loadConfig({}).port).toBe(8081);
     expect(readFileSync(join(loadConfig({}).root, 'shop.py'), 'utf8')).toContain('HOST, PORT');

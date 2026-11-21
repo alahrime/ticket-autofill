@@ -1,5 +1,5 @@
 // Where the shop's files are and where the server listens (shop.py's constants).
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 export type Config = {
@@ -12,7 +12,37 @@ export type Config = {
   web: string;
   setup: string;
   log: string;
+  invomaxDir: string; // InvoMax's own folder: only ever read
+  invomaxDb: string;
+  importDir: string;
+  backups: string;
+  backupTargets: string[];
+  app: string;
 };
+
+/** Where InvoMax keeps its files on the shop PC unless shop-settings.json or INVOMAX_DIR says otherwise. */
+export const DEFAULT_INVOMAX_DIR = String.raw`C:\hunni\files`;
+
+type Settings = { invomaxDir: string; backupTargets: string[] };
+
+/** shop-settings.json: missing -> defaults; unreadable or the wrong shape -> defaults and one warning (the server still starts). */
+function settings(file: string): Settings {
+  const defaults: Settings = { invomaxDir: DEFAULT_INVOMAX_DIR, backupTargets: [] };
+  if (!existsSync(file)) return defaults;
+  try {
+    const j: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (j === null || typeof j !== 'object' || Array.isArray(j)) throw new Error('shape');
+    const o = j as Record<string, unknown>;
+    const dir = o['invomaxDir'];
+    const targets = o['backupTargets'];
+    if (dir !== undefined && (typeof dir !== 'string' || dir === '')) throw new Error('shape');
+    if (targets !== undefined && (!Array.isArray(targets) || !targets.every((t) => typeof t === 'string'))) throw new Error('shape');
+    return { invomaxDir: dir ?? defaults.invomaxDir, backupTargets: (targets as string[] | undefined) ?? [] };
+  } catch {
+    console.warn('shop-settings.json is not valid (invomaxDir: text, backupTargets: list of text); using the defaults.');
+    return defaults;
+  }
+}
 
 export const HOST = '127.0.0.1'; // this PC only: phones and the iPad come in through the Cloudflare tunnel
 export const PORT = 8081;
@@ -38,6 +68,7 @@ function port(text: string | undefined): number {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const root = shopRoot(env);
   const at = (name: string): string => join(root, name);
+  const set = settings(at('shop-settings.json'));
   return {
     host: HOST,
     port: port(env['SHOP_PORT']),
@@ -48,5 +79,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     web: at('web'),
     setup: at('setup_code.txt'),
     log: at('shop.log'),
+    invomaxDir: env['INVOMAX_DIR'] ? resolve(env['INVOMAX_DIR']) : set.invomaxDir,
+    invomaxDb: at('invomax.db'),
+    importDir: at('invomax-import'),
+    backups: at('backups'),
+    backupTargets: set.backupTargets,
+    app: join(root, 'shop-web', 'apps', 'admin-app', 'dist'),
   };
 }

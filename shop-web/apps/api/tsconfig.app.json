@@ -20,6 +20,9 @@
   ],
   "references": [
     {
+      "path": "../../libs/invomax/tsconfig.lib.json"
+    },
+    {
       "path": "../../libs/domain/tsconfig.lib.json"
     }
   ]
