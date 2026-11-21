@@ -1,10 +1,11 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { btrieveFile, detailBytes, invoiceBytes } from '@shop/invomax/testing';
 import { runImportCommand } from '../src/cli';
 import { type Config, loadConfig } from '../src/config';
-import { copyTable, importOnce, type Lock, releaseLock, takeLock, lastGoodImport, lastImport } from '../src/invomax/import';
+import { copyTable, importOnce, lastGoodImport, lastImport, releaseLock, takeLock } from '../src/invomax/import';
 import { openImDb } from '../src/invomax/imdb';
 import { tempDir } from './py';
 
@@ -163,18 +164,6 @@ test('one at a time', async () => {
   expect([a.ok, b.ok].sort()).toEqual([false, true]);
   expect([a, b].find((r) => !r.ok)?.error).toBe('already running');
   expect(count('im_imports')).toBe(1);
-  expect(existsSync(join(cfg.importDir, '.lock'))).toBe(false);
-});
-
-test('a stale lock (older than 30 minutes) is taken over; a fresh one is respected', async () => {
-  mkdirSync(cfg.importDir, { recursive: true });
-  const lock = join(cfg.importDir, '.lock');
-  writeFileSync(lock, '');
-  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: false, error: 'already running' });
-  const old = new Date(Date.now() - 31 * 60_000);
-  utimesSync(lock, old, old);
-  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true });
-  expect(existsSync(lock)).toBe(false);
 });
 
 test('never opens InvoMax files for writing', async () => {
@@ -253,47 +242,45 @@ test('a short read never reaches the database', async () => {
   expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, gone: 9 });
 });
 
-test('the lock is released only if it is still ours', async () => {
-  const lock = join(cfg.importDir, '.lock');
-  const theirs = (src: string, dest: string): void => {
-    copyTable(src, dest);
-    writeFileSync(lock, 'someone else');
-  };
-  expect(await importOnce(cfg, { sleep, copy: theirs })).toMatchObject({ ok: true });
-  expect(readFileSync(lock, 'utf8')).toBe('someone else');
-  rmSync(lock);
+test('the lock: a second taker waits for the release', () => {
+  const first = takeLock(cfg.importDir);
+  expect(first).not.toBeNull();
+  expect(takeLock(cfg.importDir)).toBeNull();
+  releaseLock(first as NonNullable<typeof first>);
+  const again = takeLock(cfg.importDir);
+  expect(again).not.toBeNull();
+  releaseLock(again as NonNullable<typeof again>);
+});
+
+test('another process holding the lock blocks the import; killing it frees the lock', async () => {
+  mkdirSync(cfg.importDir, { recursive: true });
+  const script =
+    "const { DatabaseSync } = require('node:sqlite');" +
+    'const db = new DatabaseSync(process.argv[1]);' +
+    "db.exec('BEGIN EXCLUSIVE'); console.log('held'); setInterval(() => undefined, 1000);";
+  const child = spawn(process.execPath, ['-e', script, join(cfg.importDir, 'lock.db')], { stdio: ['ignore', 'pipe', 'inherit'] });
+  try {
+    await new Promise<void>((ok, fail) => {
+      child.stdout.on('data', (b: Buffer) => b.toString().includes('held') && ok());
+      child.on('error', fail);
+      child.on('exit', () => fail(new Error('child ended early')));
+    });
+    expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: false, error: 'already running' });
+    expect(existsSync(cfg.invomaxDb)).toBe(false);
+  } finally {
+    const exited = new Promise((ok) => child.on('exit', ok));
+    child.kill();
+    await exited;
+  }
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, invoices: 3 });
+});
+
+test('the lock is released after a success and after a failure', async () => {
   expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true });
-  expect(existsSync(lock)).toBe(false);
-});
-
-test('two takeovers of a stale lock cannot both win', async () => {
-  mkdirSync(cfg.importDir, { recursive: true });
-  const lock = join(cfg.importDir, '.lock');
-  writeFileSync(lock, 'dead');
-  const old = new Date(Date.now() - 31 * 60_000);
-  utimesSync(lock, old, old);
-  const [a, b] = await Promise.all([importOnce(cfg, { sleep }), importOnce(cfg, { sleep })]);
-  expect([a.ok, b.ok].sort()).toEqual([false, true]);
-  expect(readdirSync(cfg.importDir).filter((f) => f.includes('stale'))).toEqual([]);
-});
-
-test('a taker that meets a fresh lock where the stale one was puts it back and yields', () => {
-  mkdirSync(cfg.importDir, { recursive: true });
-  const lockPath = join(cfg.importDir, '.lock');
-  writeFileSync(lockPath, 'dead');
-  const old = new Date(Date.now() - 31 * 60_000);
-  utimesSync(lockPath, old, old);
-  let a: Lock | null = null;
-  // B has seen the stale lock; before B's rename, A takes the whole stale lock over
-  const b = takeLock(cfg.importDir, () => {
-    a = takeLock(cfg.importDir);
-  });
-  expect(a).not.toBeNull();
-  expect(b).toBeNull();
-  expect(readFileSync(lockPath, 'utf8')).toBe((a as unknown as Lock).token);
-  expect(readdirSync(cfg.importDir).filter((f) => f.includes('stale'))).toEqual([]);
-  releaseLock(a as unknown as Lock);
-  expect(existsSync(lockPath)).toBe(false);
+  writeFileSync(join(cfg.invomaxDir, 'INVOICE.btv'), Buffer.from('not a btrieve file'));
+  expect(await importOnce(cfg, { sleep, copy: () => { throw new Error('boom'); } })).toMatchObject({ ok: false, error: 'boom' });
+  initial();
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true });
 });
 
 test('folders that only share a name prefix do not overlap; one inside the other does, either way', async () => {

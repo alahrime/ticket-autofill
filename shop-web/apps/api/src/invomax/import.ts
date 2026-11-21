@@ -1,9 +1,9 @@
 // Copies InvoMax's INVOICE.btv and DETAIL.btv (read-only: never written, locked or renamed there), decodes
 // them and upserts into invomax.db. Logs counts, invoice numbers and class names only (shop.log).
-import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, linkSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { nowIso } from '@shop/domain';
 import { BtrieveError, type ImLine, parseVehicle, readInvoiceFiles, type Vehicles } from '@shop/invomax';
 import type { Config } from '../config';
@@ -31,7 +31,6 @@ export type ImportOpts = {
 
 export const RETRIES = 3;
 export const RETRY_MS = 60_000;
-const STALE_LOCK_MS = 30 * 60_000;
 
 /** Copies src to dest + '.tmp' (src opened read-only, nothing written there), then renames over dest. */
 export function copyTable(src: string, dest: string): void {
@@ -69,62 +68,40 @@ function retryable(e: unknown): boolean {
   return typeof code === 'string' && TRANSIENT.has(code);
 }
 
-export type Lock = { path: string; token: string };
+/** The import lock: an open connection holding an EXCLUSIVE transaction on lock.db (the OS drops it if we die). */
+export type Lock = { db: DatabaseSync };
 
-/**
- * The lock taken, or null when another import holds it. A lock older than 30 minutes is renamed away and retaken;
- * a rename can move a fresh lock that someone took in between, so the moved file's token is checked and a fresh
- * lock is put back (link fails if the path is taken again). `beforeStaleRename` is a test seam.
- */
-export function takeLock(dir: string, beforeStaleRename?: () => void): Lock | null {
+/** The lock taken, or null when another import (any process) holds it. No stale files: a crash frees it. */
+export function takeLock(dir: string): Lock | null {
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, '.lock');
-  const token = `${process.pid}-${Date.now()}-${randomBytes(8).toString('hex')}`;
-  const create = (): boolean => {
-    let fd: number;
-    try {
-      fd = openSync(path, 'wx');
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
-      throw e;
-    }
-    try {
-      writeSync(fd, token);
-    } catch (e) {
-      closeSync(fd);
-      rmSync(path, { force: true });
-      throw e;
-    }
-    closeSync(fd);
-    return true;
-  };
-  if (create()) return { path, token };
+  const db = new DatabaseSync(join(dir, 'lock.db'));
   try {
-    if (Date.now() - statSync(path).mtimeMs <= STALE_LOCK_MS) return null;
-    const seen = readFileSync(path, 'utf8');
-    beforeStaleRename?.();
-    const moved = `${path}.stale-${token}`;
-    renameSync(path, moved);
+    db.exec('PRAGMA busy_timeout = 0');
+    db.exec('BEGIN EXCLUSIVE');
+    return { db };
+  } catch (e) {
     try {
-      if (readFileSync(moved, 'utf8') !== seen) {
-        linkSync(moved, path); // it was someone's fresh lock: back it goes
-        return null;
-      }
-    } finally {
-      unlinkSync(moved);
+      db.close();
+    } catch {
+      // nothing to free
     }
-    return create() ? { path, token } : null;
-  } catch {
-    return null;
+    const msg = String((e as Error)?.message ?? e);
+    if (/locked|busy/i.test(msg) || (e as { errcode?: number })?.errcode === 5) return null;
+    throw e;
   }
 }
 
-/** Removes the lock only if it still holds our token; never throws. */
+/** Ends the lock's transaction and closes its connection; never throws. */
 export function releaseLock(lock: Lock): void {
   try {
-    if (readFileSync(lock.path, 'utf8') === lock.token) rmSync(lock.path, { force: true });
+    lock.db.exec('ROLLBACK');
   } catch {
-    // gone already, or not ours to touch
+    // closing frees it anyway
+  }
+  try {
+    lock.db.close();
+  } catch {
+    // already closed
   }
 }
 
