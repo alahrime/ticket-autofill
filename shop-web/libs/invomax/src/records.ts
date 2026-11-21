@@ -37,11 +37,16 @@ export type ImLine = {
   vehicle: string;
 };
 
+const MAX_QTY = 10000;
 const MAX_CENTS = 1e11; // $1 billion: anything beyond is garbage
 
 /** Cents from dollars; out of range (or not a number) is 0 and counted in `bad`. */
 function money(dollars: number, bad: { n: number }): number {
-  const c = Math.round(dollars * 100);
+  return range(Math.round(dollars * 100), bad);
+}
+
+/** An integer cents value in range, else 0 (counted in `bad`); -0 becomes 0. */
+function range(c: number, bad: { n: number }): number {
   if (!Number.isSafeInteger(c) || Math.abs(c) > MAX_CENTS) {
     bad.n++;
     return 0;
@@ -149,12 +154,12 @@ function decode(rec: Buffer): Decoded {
   if (qtyN === null) bad.n++;
   if (unitN === null) bad.n++;
   let qty = qtyN ?? 0;
-  if (!(Math.abs(qty) <= MAX_CENTS)) {
+  if (!(Math.abs(qty) <= MAX_QTY)) {
     qty = 0;
     bad.n++;
   }
   const unit = money(unitN ?? 0, bad);
-  const amount = money((qty * unit) / 100, bad);
+  const amount = range(Math.round(qty * unit), bad);
   const payment = (ref !== '' && textNumber(ref) === null) || code.toUpperCase() === 'DEPOSIT';
   const kind = payment ? 'other' : kindByte === 'M' ? 'part' : kindByte === 'L' ? 'labor' : 'other';
   return {

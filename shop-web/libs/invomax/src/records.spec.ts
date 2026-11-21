@@ -179,3 +179,17 @@ test('out-of-range money and rates become 0 and are counted', () => {
   expect(r.lines[0].amount).toBe(0);
   expect(r.badNumbers).toBe(3);
 });
+
+test('amount rounds half up exactly', () => {
+  expect(decodeDetail(detailBytes({ kind: 'part', qty: 1.5, unit: 19 })).amount).toBe(29);
+  expect(decodeDetail(detailBytes({ kind: 'part', qty: 1.5, unit: 3333 })).amount).toBe(5000);
+});
+
+test('a quantity outside 0..10000 is 0 and counted', () => {
+  const r = readInvoiceFiles(
+    invFile([invoiceBytes({ invoice_no: '1' })]),
+    detFile([detailBytes({ invoice_no: '1', kind: 'part', qty: 20000, unit: 100 })]),
+  );
+  expect(r.lines[0]).toMatchObject({ qty: 0, amount: 0 });
+  expect(r.badNumbers).toBe(1);
+});
