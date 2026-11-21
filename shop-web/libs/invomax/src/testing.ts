@@ -50,6 +50,11 @@ function pack(rec: Buffer): Buffer {
   return Buffer.concat(parts);
 }
 
+/** A chain pointer: `b0 b1 b2 slot`, page = (b0 << 16) | b1 | (b2 << 8). */
+export function pointerBytes(page: number, slot: number): Buffer {
+  return Buffer.from([page >> 16, page & 0xff, (page >> 8) & 0xff, slot]);
+}
+
 type Frag = { data: Buffer; page: number; slot: number; next?: Frag };
 type Slot = Frag | null; // null is an empty (deleted) slot
 type Page = { number: number; slots: Slot[]; used: number };
@@ -60,8 +65,11 @@ export function btrieveFile(opts: {
   records: Buffer[];
   headerCount?: number;
   splitEvery?: number;
+  /** Fragments in a split record (default 2): head, middle ones, tail. */
+  fragments?: number;
 }): Buffer {
   const { pageSize, recordLength, records, splitEvery } = opts;
+  const parts = opts.fragments ?? 2;
   const header = Buffer.alloc(pageSize);
   header.writeUInt16LE(pageSize, 0x08);
   header.writeUInt16LE(10, 0x14);
@@ -99,11 +107,16 @@ export function btrieveFile(opts: {
 
   records.forEach((rec, i) => {
     const packed = pack(rec);
-    if (splitEvery && (i + 1) % splitEvery === 0 && packed.length >= 2) {
-      const cut = Math.floor(packed.length / 2);
-      const head = place(packed.subarray(0, cut), true);
-      open(); // the tail lands on a later page
-      head.next = place(packed.subarray(cut), false);
+    if (splitEvery && (i + 1) % splitEvery === 0 && packed.length >= parts) {
+      let prev: Frag | null = null;
+      for (let k = 0; k < parts; k++) {
+        const from = Math.floor((packed.length * k) / parts);
+        const to = Math.floor((packed.length * (k + 1)) / parts);
+        if (k > 0) open(); // each later fragment lands on a later page
+        const f = place(packed.subarray(from, to), k < parts - 1);
+        if (prev) prev.next = f;
+        prev = f;
+      }
     } else {
       place(packed, false);
     }
@@ -123,7 +136,7 @@ export function btrieveFile(opts: {
           v = at | (f.next ? 0x8000 : 0);
           if (f.next) {
             const n = f.next.page;
-            page.set([n >> 16, n & 0xff, (n >> 8) & 0xff, f.next.slot], at);
+            pointerBytes(n, f.next.slot).copy(page, at);
             at += 4;
           }
           f.data.copy(page, at);

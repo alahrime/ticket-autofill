@@ -50,6 +50,8 @@ function fragmentsOf(file: Buffer, pageSize: number, index: number): (Fragment |
     slots.push({ offset, chained: (v & CHAINED) !== 0 });
   }
   if (smallest !== 12) return null;
+  // Every live fragment must start in the data area, before the free space.
+  for (const s of slots) if (s.offset >= free) return null;
 
   const sorted = [...offsets].sort((a, b) => a - b);
   return slots.map((s) => {
