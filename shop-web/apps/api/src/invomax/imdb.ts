@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS im_invoices (
   lines_hash TEXT NOT NULL,
   first_seen TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  gone_at TEXT NOT NULL DEFAULT ''
+  gone_at TEXT NOT NULL DEFAULT '',
+  plate_norm TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS im_invoices_date ON im_invoices ("date");
 CREATE INDEX IF NOT EXISTS im_invoices_plate ON im_invoices (plate);
@@ -74,6 +75,11 @@ export function openImDb(path: string): DatabaseSync {
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
+  const inv = db.prepare('PRAGMA table_info(im_invoices)').all() as { name: string }[];
+  if (!inv.some((c) => c.name === 'plate_norm'))
+    db.exec("ALTER TABLE im_invoices ADD COLUMN plate_norm TEXT NOT NULL DEFAULT ''"); // a db made before the column; the import fills it
+  db.exec('CREATE INDEX IF NOT EXISTS im_invoices_plate_norm ON im_invoices (plate_norm, "date")');
+  db.exec('CREATE INDEX IF NOT EXISTS im_invoices_phone_date ON im_invoices (phone, "date")');
   const cols = db.prepare('PRAGMA table_info(im_imports)').all() as { name: string }[];
   if (!cols.some((c) => c.name === 'vehicles_hash'))
     db.exec("ALTER TABLE im_imports ADD COLUMN vehicles_hash TEXT NOT NULL DEFAULT ''"); // a db made before the column

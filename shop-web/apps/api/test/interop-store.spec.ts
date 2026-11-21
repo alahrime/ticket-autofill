@@ -162,10 +162,10 @@ describe('tickets.db shared with python', () => {
     );
     im.prepare(
       `INSERT INTO im_invoices VALUES ('9000001', ?, '', 'JANE DOE', '', '', '5550100000', 'XKS-4827', '',
-        0, 0, 0, 0, 0, 0, 20000, 0, 0, '', '', '', '', '')`,
+        0, 0, 0, 0, 0, 0, 20000, 0, 0, '', '', '', '', '', 'XKS4827')`,
     ).run(today());
     expect(links.autoLink(new Date())).toBe(1);
-    links.markNone(a.id, 'admin#1'); // a second write after Python's
+    links.markNone(a.id, 1, 'admin#1'); // a second write after Python's
     py(
       [
         'import os, tickets',

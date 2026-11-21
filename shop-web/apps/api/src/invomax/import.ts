@@ -5,7 +5,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmS
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { nowIso } from '@shop/domain';
-import { BtrieveError, type ImLine, parseVehicle, readInvoiceFiles, type Vehicles } from '@shop/invomax';
+import { BtrieveError, type ImLine, normalPlate, parseVehicle, readInvoiceFiles, type Vehicles } from '@shop/invomax';
 import type { Config } from '../config';
 import { className, logLine } from '../http/log';
 import { openImDb } from './imdb';
@@ -166,13 +166,13 @@ function upsert(db: DatabaseSync, d: Decoded, vehicles: Vehicles | null, vhash: 
 
   const insInvoice = db.prepare(
     `INSERT INTO im_invoices (invoice_no, "date", "key", name, "first", "last", phone, plate, address, parts, labor, supplies,
-       discount, deposit, tax, total, balance, tax_rate, hash, lines_hash, first_seen, updated_at, gone_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
+       discount, deposit, tax, total, balance, tax_rate, hash, lines_hash, first_seen, updated_at, gone_at, plate_norm)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
   );
   const updInvoice = db.prepare(
     `UPDATE im_invoices SET "date" = ?, "key" = ?, name = ?, "first" = ?, "last" = ?, phone = ?, plate = ?, address = ?,
        parts = ?, labor = ?, supplies = ?, discount = ?, deposit = ?, tax = ?, total = ?, balance = ?, tax_rate = ?,
-       hash = ?, lines_hash = ?, updated_at = ?, gone_at = '' WHERE invoice_no = ?`,
+       hash = ?, lines_hash = ?, updated_at = ?, gone_at = '', plate_norm = ? WHERE invoice_no = ?`,
   );
   const comeBack = db.prepare("UPDATE im_invoices SET gone_at = '' WHERE invoice_no = ?");
   const delLines = db.prepare('DELETE FROM im_lines WHERE invoice_no = ?');
@@ -204,17 +204,24 @@ function upsert(db: DatabaseSync, d: Decoded, vehicles: Vehicles | null, vhash: 
       ] as const;
       const old = existing.get(i.invoice_no);
       if (!old) {
-        insInvoice.run(i.invoice_no, ...fields, now, now);
+        insInvoice.run(i.invoice_no, ...fields, now, now, normalPlate(i.plate));
         putLines(i.invoice_no, mine);
         added++;
       } else if (old.hash !== i.hash || old.lines_hash !== linesHash) {
-        updInvoice.run(...fields, now, i.invoice_no);
+        updInvoice.run(...fields, now, normalPlate(i.plate), i.invoice_no);
         putLines(i.invoice_no, mine);
         changed++;
       } else if (old.gone_at !== '') {
         comeBack.run(i.invoice_no);
       }
     }
+    // Rows stored before plate_norm existed (unchanged bills are not rewritten above) get theirs now.
+    const setNorm = db.prepare('UPDATE im_invoices SET plate_norm = ? WHERE invoice_no = ?');
+    for (const r of db.prepare("SELECT invoice_no, plate FROM im_invoices WHERE plate_norm = '' AND plate <> ''").all() as {
+      invoice_no: string;
+      plate: string;
+    }[])
+      setNorm.run(normalPlate(r.plate), r.invoice_no);
     // Lines of no invoice (orphans) are stored too, replaced each time (a few dozen rows).
     for (const [no, list] of byInvoice) if (!seen.has(no) && !existing.has(no)) putLines(no, list);
 

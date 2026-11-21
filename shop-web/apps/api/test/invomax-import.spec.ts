@@ -97,6 +97,18 @@ test('an unchanged second import changes nothing', async () => {
   expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, added: 0, changed: 0, gone: 0 });
 });
 
+test('plate_norm is written, and backfilled on unchanged bills without rewriting them', async () => {
+  await importOnce(cfg, { sleep, now: () => new Date(2026, 10, 20, 9, 0, 0) });
+  expect(q<{ plate_norm: string }>('SELECT DISTINCT plate_norm FROM im_invoices')).toEqual([{ plate_norm: 'XKS4827' }]);
+  const db = new DatabaseSync(cfg.invomaxDb);
+  db.exec("UPDATE im_invoices SET plate_norm = ''"); // as a db made before the column
+  db.close();
+  const r = await importOnce(cfg, { sleep, now: () => new Date(2026, 10, 21, 9, 0, 0) });
+  expect(r).toMatchObject({ ok: true, added: 0, changed: 0, gone: 0 });
+  expect(q<{ plate_norm: string }>('SELECT DISTINCT plate_norm FROM im_invoices')).toEqual([{ plate_norm: 'XKS4827' }]);
+  expect(q<{ u: string }>('SELECT DISTINCT updated_at AS u FROM im_invoices')).toEqual([{ u: '2026-11-20T09:00:00' }]);
+});
+
 test('an edited bill wins, a vanished bill is kept as gone, and comes back', async () => {
   await importOnce(cfg, { sleep, now: () => new Date(2026, 10, 20, 9, 0, 0) });
   put([inv('9000001', { total: 99999 }), inv('9000002')], [line('9000001', 7), line('9000002', 1)]);
