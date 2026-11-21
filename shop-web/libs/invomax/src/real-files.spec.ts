@@ -36,10 +36,10 @@ real('real InvoMax bills', () => {
     }).length;
     const undated = r.invoices.filter((i) => !i.date).length;
     console.log(
-      `invoices ${r.invoices.length}, lines ${r.lines.length}, orphans ${orphans}, undated ${undated}, bad numbers ${r.badNumbers}, odd invoice numbers ${r.oddNumbers}, ` +
+      `invoices ${r.invoices.length}, lines ${r.lines.length}, orphans ${orphans}, undated ${undated}, bad numbers ${r.badNumbers}, odd invoice numbers ${r.oddNumbers}, duplicates ${r.duplicates}, ` +
         `2020+ ${recent.length}, sums match ${ok} (${((100 * ok) / recent.length).toFixed(1)}%)`,
     );
-    expect(r.headerCounts).toEqual({ invoice: r.invoices.length, detail: r.lines.length });
+    expect(r.headerCounts).toEqual({ invoice: r.invoices.length + r.duplicates, detail: r.lines.length });
     expect(orphans / r.lines.length).toBeLessThanOrEqual(0.005);
     expect(ok / recent.length).toBeGreaterThanOrEqual(0.98);
   });

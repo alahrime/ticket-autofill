@@ -1,6 +1,6 @@
 import { BtrieveError } from './btrieve.js';
 import { decodeDetail, decodeInvoice, readInvoiceFiles } from './records.js';
-import { btrieveFile, detailBytes, invoiceBytes } from './testing.js';
+import { btrieveFile, detailBytes, invoiceBytes, real48Bytes } from './testing.js';
 
 const invFile = (records: Buffer[]): Buffer => btrieveFile({ pageSize: 1536, recordLength: 498, records });
 const detFile = (records: Buffer[]): Buffer => btrieveFile({ pageSize: 1024, recordLength: 265, records });
@@ -117,7 +117,65 @@ test('mostly-bad invoice numbers mean the walk is wrong: throws', () => {
 test('a few odd invoice numbers are kept as typed and counted', () => {
   const inv = Array.from({ length: 200 }, (_, i) => invoiceBytes({ invoice_no: String(9000001 + i) }));
   inv.push(invoiceBytes({ invoice_no: '123456A' }));
-  const r = readInvoiceFiles(invFile(inv), detFile([detailBytes({ invoice_no: '123456A' })]));
+  const det = Array.from({ length: 200 }, (_, i) => detailBytes({ invoice_no: String(9000001 + i) }));
+  det.push(detailBytes({ invoice_no: '123456A' }));
+  const r = readInvoiceFiles(invFile(inv), detFile(det));
   expect(r.oddNumbers).toBe(2);
+  expect(r.oddSamples).toEqual(['123456A', '123456A']);
   expect(r.invoices[200].invoice_no).toBe('123456A');
+});
+
+test('the odd-number check is per file', () => {
+  const inv = [invoiceBytes({ invoice_no: 'AB' }), invoiceBytes({ invoice_no: 'CD' }), invoiceBytes({ invoice_no: '1' })];
+  const det = Array.from({ length: 500 }, () => detailBytes({ invoice_no: '1' }));
+  expect(() => readInvoiceFiles(invFile(inv), detFile(det))).toThrow(BtrieveError);
+});
+
+test('files with the wrong record length are refused; short buffers throw BtrieveError', () => {
+  const i = invFile([invoiceBytes({ invoice_no: '1' })]);
+  const d = detFile([detailBytes({ invoice_no: '1' })]);
+  expect(() => readInvoiceFiles(d, i)).toThrow(BtrieveError);
+  expect(() => readInvoiceFiles(i, i)).toThrow(BtrieveError);
+  expect(() => decodeInvoice(Buffer.alloc(265))).toThrow(BtrieveError);
+  expect(() => decodeDetail(Buffer.alloc(100))).toThrow(BtrieveError);
+});
+
+test('control bytes become spaces; prose runs collapse', () => {
+  const NUL = String.fromCharCode(0);
+  const LF = String.fromCharCode(10);
+  const ESC = String.fromCharCode(27);
+  const inv = decodeInvoice(invoiceBytes({ invoice_no: `12${NUL}34`, name: `JANE${LF}${ESC} DOE`, address: `A${NUL}${NUL}B` }));
+  expect(inv).toMatchObject({ invoice_no: '12 34', name: 'JANE DOE', first: 'JANE', last: 'DOE', address: 'A B' });
+  expect(decodeDetail(detailBytes({ code: `A${ESC}B`, description: `X${LF}${LF}Y`, vehicle: `V${NUL}W` }))).toMatchObject({
+    code: 'A B',
+    description: 'X Y',
+    vehicle: 'V W',
+  });
+});
+
+test('duplicate invoice numbers: the last record wins and is counted', () => {
+  const r = readInvoiceFiles(
+    invFile([
+      invoiceBytes({ invoice_no: '5', total: 100 }),
+      invoiceBytes({ invoice_no: '6' }),
+      invoiceBytes({ invoice_no: '5', total: 200 }),
+    ]),
+    detFile([detailBytes({ invoice_no: '5' })]),
+  );
+  expect(r.duplicates).toBe(1);
+  expect(r.invoices.map((x) => [x.invoice_no, x.total])).toEqual([['6', 0], ['5', 200]]);
+});
+
+test('out-of-range money and rates become 0 and are counted', () => {
+  const rec = invoiceBytes({ invoice_no: '1' });
+  real48Bytes(1e12).copy(rec, 415); // parts: far past $1 billion
+  real48Bytes(-0.001).copy(rec, 136); // total: rounds to -0
+  real48Bytes(5).copy(rec, 372); // tax rate outside 0-1
+  const line = detailBytes({ invoice_no: '1', kind: 'part', qty: 99999999, unit: 99999999 }); // amount too big
+  const r = readInvoiceFiles(invFile([rec]), detFile([line]));
+  expect(r.invoices[0].parts).toBe(0);
+  expect(Object.is(r.invoices[0].total, 0)).toBe(true);
+  expect(r.invoices[0].tax_rate).toBe(0);
+  expect(r.lines[0].amount).toBe(0);
+  expect(r.badNumbers).toBe(3);
 });

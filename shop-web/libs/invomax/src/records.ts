@@ -37,7 +37,33 @@ export type ImLine = {
   vehicle: string;
 };
 
-const cents = (b: Buffer, at: number): number => Math.round(real48(b, at) * 100);
+const MAX_CENTS = 1e11; // $1 billion: anything beyond is garbage
+
+/** Cents from dollars; out of range (or not a number) is 0 and counted in `bad`. */
+function money(dollars: number, bad: { n: number }): number {
+  const c = Math.round(dollars * 100);
+  if (!Number.isSafeInteger(c) || Math.abs(c) > MAX_CENTS) {
+    bad.n++;
+    return 0;
+  }
+  return c === 0 ? 0 : c;
+}
+
+/** Control characters become spaces; prose fields also collapse runs of spaces. */
+function clean(s: string, prose = false): string {
+  // eslint-disable-next-line no-control-regex
+  const t = s.replace(/[\x00-\x1f\x7f]/g, ' ');
+  return (prose ? t.replace(/ {2,}/g, ' ') : t).trim();
+}
+
+const text = (b: Buffer, at: number, max: number, prose = false): string => clean(shortString(b, at, max), prose);
+
+const INVOICE_LENGTH = 498;
+const DETAIL_LENGTH = 265;
+
+function needLength(rec: Buffer, n: number, what: string): void {
+  if (rec.length < n) throw new BtrieveError(`${what} record is ${rec.length} bytes, expected ${n}`);
+}
 
 /** MMDDYYYY -> ISO, or '' when it is not a real date. */
 function invoiceDate(s: string): string {
@@ -66,63 +92,86 @@ function textNumber(s: string): number | null {
   return /^-?(\d+\.?\d*|\.\d+)$/.test(t) ? Number(t) : null;
 }
 
-export function decodeInvoice(rec: Buffer): ImInvoice {
-  const name = shortString(rec, 78, 28).trim();
-  const words = name.split(/\s+/).filter(Boolean);
+function decodeInvoiceCounted(rec: Buffer): { inv: ImInvoice; bad: number } {
+  needLength(rec, INVOICE_LENGTH, 'INVOICE');
+  const bad = { n: 0 };
+  const name = text(rec, 78, 28, true);
+  const words = name.split(' ').filter(Boolean);
   const last = words.length > 0 ? words[words.length - 1] : '';
   const first = words.slice(0, -1).join(' ');
-  const a1 = shortString(rec, 284, 28).trim();
-  const a2 = shortString(rec, 313, 28).trim();
-  return {
-    invoice_no: shortString(rec, 5, 8).trim(),
-    date: invoiceDate(shortString(rec, 23, 8).trim()),
-    key: shortString(rec, 14, 8).trim(),
+  const a1 = text(rec, 284, 28, true);
+  const a2 = text(rec, 313, 28, true);
+  const m = (at: number): number => money(real48(rec, at), bad);
+  const rate = real48(rec, 372);
+  let tax_rate = Math.round(rate * 1e6) / 1e6;
+  if (!(tax_rate >= 0 && tax_rate <= 1)) {
+    tax_rate = 0;
+    bad.n++;
+  }
+  const inv: ImInvoice = {
+    invoice_no: text(rec, 5, 8),
+    date: invoiceDate(text(rec, 23, 8)),
+    key: text(rec, 14, 8),
     name,
     first,
     last,
-    phone: phoneDigits(shortString(rec, 107, 14)),
-    plate: normalPlate(shortString(rec, 60, 8)),
+    phone: phoneDigits(text(rec, 107, 14)),
+    plate: normalPlate(text(rec, 60, 8)),
     address: a2 ? `${a1}, ${a2}` : a1,
-    parts: cents(rec, 415),
-    labor: cents(rec, 403),
-    supplies: cents(rec, 445),
-    discount: cents(rec, 204),
-    deposit: cents(rec, 409),
-    tax: cents(rec, 172),
-    total: cents(rec, 136),
-    balance: cents(rec, 142),
-    tax_rate: Math.round(real48(rec, 372) * 1e6) / 1e6,
+    parts: m(415),
+    labor: m(403),
+    supplies: m(445),
+    discount: m(204),
+    deposit: m(409),
+    tax: m(172),
+    total: m(136),
+    balance: m(142),
+    tax_rate,
     hash: createHash('sha256').update(rec).digest('hex'),
   };
+  return { inv, bad: bad.n };
+}
+
+export function decodeInvoice(rec: Buffer): ImInvoice {
+  return decodeInvoiceCounted(rec).inv;
 }
 
 type Decoded = { line: ImLine & { date: string }; order: number; badNumbers: number };
 
 function decode(rec: Buffer): Decoded {
-  const code = shortString(rec, 13, 8).trim();
-  const ref = shortString(rec, 96, 12).trim();
+  needLength(rec, DETAIL_LENGTH, 'DETAIL');
+  const bad = { n: 0 };
+  const code = text(rec, 13, 8);
+  const ref = text(rec, 96, 12);
   const kindByte = String.fromCharCode(rec[111]);
-  const qtyN = textNumber(shortString(rec, 63, 8));
-  const unitN = textNumber(shortString(rec, 127, 13));
-  const qty = qtyN ?? 0;
-  const unit = Math.round((unitN ?? 0) * 100);
+  const qtyN = textNumber(text(rec, 63, 8));
+  const unitN = textNumber(text(rec, 127, 13));
+  if (qtyN === null) bad.n++;
+  if (unitN === null) bad.n++;
+  let qty = qtyN ?? 0;
+  if (!(Math.abs(qty) <= MAX_CENTS)) {
+    qty = 0;
+    bad.n++;
+  }
+  const unit = money(unitN ?? 0, bad);
+  const amount = money((qty * unit) / 100, bad);
   const payment = (ref !== '' && textNumber(ref) === null) || code.toUpperCase() === 'DEPOSIT';
   const kind = payment ? 'other' : kindByte === 'M' ? 'part' : kindByte === 'L' ? 'labor' : 'other';
   return {
     line: {
-      invoice_no: shortString(rec, 4, 8).trim(),
+      invoice_no: text(rec, 4, 8),
       line_no: 0,
       code,
-      description: shortString(rec, 162, 50).trim(),
+      description: text(rec, 162, 50, true),
       kind,
       qty,
       unit,
-      amount: Math.round(qty * unit),
-      vehicle: shortString(rec, 22, 30).trim(),
-      date: lineDate(shortString(rec, 256, 8).trim()),
+      amount,
+      vehicle: text(rec, 22, 30, true),
+      date: lineDate(text(rec, 256, 8)),
     },
     order: rec[81],
-    badNumbers: (qtyN === null ? 1 : 0) + (unitN === null ? 1 : 0),
+    badNumbers: bad.n,
   };
 }
 
@@ -133,39 +182,73 @@ export function decodeDetail(rec: Buffer): ImLine & { date: string } {
 /** The importer treats anything else as odd (LAYOUT.md: 1-7 digits). */
 const INVOICE_NO = /^\d{1,7}$/;
 
-export function readInvoiceFiles(
-  invoiceFile: Buffer,
-  detailFile: Buffer,
-): {
+export type InvoiceFiles = {
   invoices: ImInvoice[];
   lines: ImLine[];
   headerCounts: { invoice: number; detail: number };
-  /** Text numbers in DETAIL that would not parse (read as 0). */
+  /** Numbers in the records that were out of range or would not parse (read as 0). */
   badNumbers: number;
   /** Records (INVOICE + DETAIL) whose invoice number is not 1-7 digits; kept as typed. */
   oddNumbers: number;
-} {
+  /** The first 20 odd invoice numbers. */
+  oddSamples: string[];
+  /** INVOICE records whose number was already seen; the last record wins. */
+  duplicates: number;
+};
+
+export function readInvoiceFiles(invoiceFile: Buffer, detailFile: Buffer): InvoiceFiles {
   const inv = readBtrieve(invoiceFile);
   const det = readBtrieve(detailFile);
-  const invoices = inv.records.map((r) => decodeInvoice(r));
-  let oddNumbers = invoices.filter((x) => !INVOICE_NO.test(x.invoice_no)).length;
+  if (inv.recordLength !== INVOICE_LENGTH || det.recordLength !== DETAIL_LENGTH) {
+    throw new BtrieveError(
+      `record lengths are ${inv.recordLength} and ${det.recordLength}, expected ${INVOICE_LENGTH} and ${DETAIL_LENGTH}`,
+    );
+  }
 
   let badNumbers = 0;
+  let oddInvoice = 0;
+  let oddDetail = 0;
+  let duplicates = 0;
+  const oddSamples: string[] = [];
+  const odd = (no: string): void => {
+    if (oddSamples.length < 20) oddSamples.push(no);
+  };
+
+  const byNumber = new Map<string, ImInvoice>();
+  for (const r of inv.records) {
+    const { inv: x, bad } = decodeInvoiceCounted(r);
+    badNumbers += bad;
+    if (!INVOICE_NO.test(x.invoice_no)) {
+      oddInvoice++;
+      odd(x.invoice_no);
+    }
+    if (byNumber.has(x.invoice_no)) {
+      duplicates++;
+      byNumber.delete(x.invoice_no); // the later record wins, and takes the later position
+    }
+    byNumber.set(x.invoice_no, x);
+  }
+  const invoices = [...byNumber.values()];
+
   const groups = new Map<string, { d: Decoded; seq: number }[]>();
   det.records.forEach((r, seq) => {
     const d = decode(r);
-    if (!INVOICE_NO.test(d.line.invoice_no)) oddNumbers++;
+    if (!INVOICE_NO.test(d.line.invoice_no)) {
+      oddDetail++;
+      odd(d.line.invoice_no);
+    }
     badNumbers += d.badNumbers;
     const g = groups.get(d.line.invoice_no);
     if (g) g.push({ d, seq });
     else groups.set(d.line.invoice_no, [{ d, seq }]);
   });
 
-  // A handful of odd numbers is how the shop's data is (a letter suffix, a minus sign). When many are,
-  // the record walk is wrong, so stop.
-  const total = invoices.length + det.records.length;
-  if (oddNumbers > 0 && oddNumbers / total > 0.01) {
-    throw new BtrieveError(`${oddNumbers} of ${total} records have an invoice number that is not 1-7 digits`);
+  // A handful of odd numbers is how the shop's data is (a letter suffix, a minus sign). When many are
+  // in one file, the record walk is wrong, so stop.
+  if (oddInvoice > inv.records.length * 0.01 || oddDetail > det.records.length * 0.01) {
+    throw new BtrieveError(
+      `${oddInvoice} of ${inv.records.length} INVOICE and ${oddDetail} of ${det.records.length} DETAIL records have an invoice number that is not 1-7 digits`,
+    );
   }
 
   const lines: ImLine[] = [];
@@ -181,5 +264,13 @@ export function readInvoiceFiles(
   }
   for (const x of invoices) if (!x.date) x.date = firstDate.get(x.invoice_no) ?? '';
 
-  return { invoices, lines, headerCounts: { invoice: inv.headerCount, detail: det.headerCount }, badNumbers, oddNumbers };
+  return {
+    invoices,
+    lines,
+    headerCounts: { invoice: inv.headerCount, detail: det.headerCount },
+    badNumbers,
+    oddNumbers: oddInvoice + oddDetail,
+    oddSamples,
+    duplicates,
+  };
 }
