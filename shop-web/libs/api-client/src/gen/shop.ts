@@ -64,6 +64,8 @@ import type {
   PutJobRule200,
   SignInResponse,
   StartImport202,
+  SuggestPrices200,
+  SuggestPricesParams,
   Ticket,
   Upkeep,
   User,
@@ -3835,3 +3837,139 @@ export const useDeleteJobRule = <TError = ErrorType<BadRequestResponse | SignInR
       > => {
       return useMutation(getDeleteJobRuleMutationOptions(options), queryClient);
     }
+
+export type suggestPricesResponse200 = {
+  data: SuggestPrices200
+  status: 200
+}
+
+export type suggestPricesResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type suggestPricesResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type suggestPricesResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type suggestPricesResponseSuccess = (suggestPricesResponse200) & {
+  headers: Headers;
+};
+export type suggestPricesResponseError = (suggestPricesResponse400 | suggestPricesResponse401 | suggestPricesResponse403) & {
+  headers: Headers;
+};
+
+export type suggestPricesResponse = (suggestPricesResponseSuccess | suggestPricesResponseError)
+
+export const getSuggestPricesUrl = (params: SuggestPricesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/price-suggestions?${stringifiedParams}` : `/api/price-suggestions`
+}
+
+/**
+ * From the shop's own history: InvoMax lines mapped to the job plus our filled tickets (those tied to an
+ * InvoMax bill count once). The closest group of 3 or more, over the last 24 months and then all time:
+ * same model within 2 years, same model, same make, any car. With fewer than 3 samples anywhere, all of
+ * them answer. No history: the parts.csv price (`count` 0, basis `catalog`), or null. Dollars; `part` is
+ * per unit, `labor` is multiplied by `qty`. The price can always be changed.
+ * @summary Suggested part and labor prices for a job code and car (admin)
+ */
+export const suggestPrices = async (params: SuggestPricesParams, options?: Parameters<typeof shopFetch>[1]): Promise<suggestPricesResponse> => {
+
+  return shopFetch<suggestPricesResponse>(getSuggestPricesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getSuggestPricesQueryKey = (params?: SuggestPricesParams,) => {
+    return [
+    `/api/price-suggestions`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getSuggestPricesQueryOptions = <TData = Awaited<ReturnType<typeof suggestPrices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(params: SuggestPricesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestPrices>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSuggestPricesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof suggestPrices>>> = ({ signal }) => suggestPrices(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof suggestPrices>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SuggestPricesQueryResult = NonNullable<Awaited<ReturnType<typeof suggestPrices>>>
+export type SuggestPricesQueryError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>
+
+
+export function useSuggestPrices<TData = Awaited<ReturnType<typeof suggestPrices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params: SuggestPricesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestPrices>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof suggestPrices>>,
+          TError,
+          Awaited<ReturnType<typeof suggestPrices>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSuggestPrices<TData = Awaited<ReturnType<typeof suggestPrices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params: SuggestPricesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestPrices>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof suggestPrices>>,
+          TError,
+          Awaited<ReturnType<typeof suggestPrices>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSuggestPrices<TData = Awaited<ReturnType<typeof suggestPrices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params: SuggestPricesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestPrices>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Suggested part and labor prices for a job code and car (admin)
+ */
+
+export function useSuggestPrices<TData = Awaited<ReturnType<typeof suggestPrices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params: SuggestPricesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestPrices>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSuggestPricesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}

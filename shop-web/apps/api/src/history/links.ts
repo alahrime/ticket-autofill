@@ -217,6 +217,12 @@ export class LinkStore {
     return this.unlinkedFilled().length;
   }
 
+  /** Ids of the tickets tied to an InvoMax bill: one query, for callers that scan many tickets. */
+  invomaxLinked(): Set<number> {
+    const rows = this.db.prepare("SELECT ticket_id FROM invoice_finals WHERE source = 'invomax'").all();
+    return new Set((rows as { ticket_id: number }[]).map((r) => r.ticket_id));
+  }
+
   /** The ticket's final as stored (its version is what link, unlink, markNone and typedFinal expect), or null. */
   final(ticketId: number): Final | null {
     return (

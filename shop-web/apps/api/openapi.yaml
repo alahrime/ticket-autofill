@@ -825,6 +825,61 @@ paths:
         '401': { $ref: '#/components/responses/SignIn' }
         '403': { $ref: '#/components/responses/NotAllowed' }
 
+  /api/price-suggestions:
+    get:
+      operationId: suggestPrices
+      tags: [jobs]
+      summary: Suggested part and labor prices for a job code and car (admin)
+      description: |
+        From the shop's own history: InvoMax lines mapped to the job plus our filled tickets (those tied to an
+        InvoMax bill count once). The closest group of 3 or more, over the last 24 months and then all time:
+        same model within 2 years, same model, same make, any car. With fewer than 3 samples anywhere, all of
+        them answer. No history: the parts.csv price (`count` 0, basis `catalog`), or null. Dollars; `part` is
+        per unit, `labor` is multiplied by `qty`. The price can always be changed.
+      parameters:
+        - name: code
+          in: query
+          required: true
+          description: A parts.csv job code (1 to 20 characters).
+          schema: { type: string, minLength: 1, maxLength: 20, x-error: code must be 1 to 20 characters }
+          example: FBP
+        - name: year
+          in: query
+          description: The car's year, 1900 to 2100; leave out when unknown.
+          schema: { type: string, pattern: '^[0-9]{1,4}$', x-error: year must be a whole number from 1900 to 2100 }
+          example: '2019'
+        - name: make
+          in: query
+          description: At most 40 characters.
+          schema: { type: string, maxLength: 40, x-error: make must be at most 40 characters }
+          example: Cadillac
+        - name: model
+          in: query
+          description: At most 40 characters.
+          schema: { type: string, maxLength: 40, x-error: model must be at most 40 characters }
+          example: XT5
+        - name: qty
+          in: query
+          description: More than 0 and at most 10000; 1 when left out.
+          schema: { type: string, pattern: '^[0-9]+([.][0-9]+)?$', x-error: qty must be more than 0 and at most 10000 }
+          example: '2'
+      responses:
+        '200':
+          description: A suggestion for each of part and labor, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [part, labor]
+                properties:
+                  part:
+                    oneOf: [{ $ref: '#/components/schemas/PriceSuggestion' }, { type: 'null' }]
+                  labor:
+                    oneOf: [{ $ref: '#/components/schemas/PriceSuggestion' }, { type: 'null' }]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
 components:
   securitySchemes:
     session:
@@ -1494,6 +1549,38 @@ components:
         job: { type: string }
         made_by: { type: string, examples: ['admin#1'] }
         made_at: { type: string, description: 'Local time, YYYY-MM-DDTHH:MM:SS.' }
+
+    PriceSuggestion:
+      type: object
+      required: [price, count, low, high, basis]
+      properties:
+        price: { type: number, description: 'Dollars, to the cent.' }
+        count: { type: integer, description: 'How many past lines it rests on; 0 for the catalog price.' }
+        low: { type: number, description: 'The 25th percentile, dollars.' }
+        high: { type: number, description: 'The 75th percentile, dollars.' }
+        basis:
+          oneOf:
+            - $ref: '#/components/schemas/PriceBasis'
+            - type: object
+              required: [level]
+              properties:
+                level: { type: string, enum: [catalog] }
+
+    PriceBasis:
+      type: object
+      required: [level, years, make, model, recent]
+      properties:
+        level: { type: string, enum: [model_years, model, make, all] }
+        years:
+          oneOf:
+            - type: array
+              items: { type: integer }
+              minItems: 2
+              maxItems: 2
+            - type: 'null'
+        make: { type: string }
+        model: { type: string }
+        recent: { type: boolean, description: 'Over the last 24 months; false is all time.' }
 
     JobRuleListed:
       type: object
