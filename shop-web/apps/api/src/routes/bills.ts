@@ -9,7 +9,8 @@ import { jsonBody } from '../http/security';
 import type { TypedFinal } from '../history/links';
 import { queryValues, sessionIn, signedIn } from '../view';
 
-export const BILL_KEY = /^(im\d{1,7}|t\d{1,9})$/;
+/** After Express decodes it: im<an InvoMax bill number as stored, odd ones too (1-40 characters)> or t<1-9 digits>. */
+export const BILL_KEY = /^(im[^]{1,40}|t\d{1,9})$/;
 const TICKET_KEY = /^t(\d{1,9})$/;
 export const INVOICE_NO = /^\d{1,7}$/;
 export const MAX_CENTS = 100_000_000; // $1,000,000
@@ -17,7 +18,7 @@ const MONEY = ['parts', 'labor', 'supplies', 'tax', 'total'] as const;
 
 type Body = Record<string, unknown>;
 
-/** On to the next route (in the end, the 404) unless :key is im<1-7 digits> or t<1-9 digits>. */
+/** On to the next route (in the end, the 404) unless :key is im<invoice number> or t<1-9 digits>. */
 const validKey: RequestHandler = (req, _res, next) => {
   const key = req.params['key'];
   next(typeof key === 'string' && BILL_KEY.test(key) ? undefined : 'route');

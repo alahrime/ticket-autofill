@@ -899,8 +899,10 @@ components:
       name: key
       in: path
       required: true
-      description: im<1 to 7 digits> (an InvoMax bill) or t<1 to 9 digits> (a ticket); anything else is 404.
-      schema: { type: string, pattern: '^(im[0-9]{1,7}|t[0-9]{1,9})$' }
+      description: |
+        im<the InvoMax bill number, URI-encoded> (an InvoMax bill, odd numbers like 9000001A too; 1 to 40
+        characters once decoded) or t<1 to 9 digits> (a ticket), as a row's `key` gives it; anything else is 404.
+      schema: { type: string, pattern: '^(im.{1,120}|t[0-9]{1,9})$' }
       example: im9000001
     TicketKey:
       name: key
@@ -1319,7 +1321,7 @@ components:
       type: object
       required: [key, date, invoice_no, ticket_id, name, phone, vehicle, plate, total]
       properties:
-        key: { type: string, examples: [im9000001, t2] }
+        key: { type: string, examples: [im9000001, im9000001A, t2], description: 'im + the bill number URI-encoded, or t + the ticket id.' }
         date: { type: string, description: "The bill's date, else the day the ticket was filled (YYYY-MM-DD)." }
         invoice_no: { type: [string, 'null'] }
         ticket_id: { type: [integer, 'null'] }

@@ -10,6 +10,7 @@
  * One row of Bill history. Money in dollars.
  */
 export interface BillRow {
+  /** im + the bill number URI-encoded, or t + the ticket id. */
   key: string;
   /** The bill's date, else the day the ticket was filled (YYYY-MM-DD). */
   date: string;

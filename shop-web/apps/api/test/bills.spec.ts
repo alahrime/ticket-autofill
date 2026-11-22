@@ -188,6 +188,23 @@ describe('Bill history', () => {
     expect((await get('/api/invoices/im9000003'))[1].after.gone).toBe(true);
   });
 
+  it('a bill with an odd number (as InvoMax has a few) is listed by a URL-safe key that opens it', async () => {
+    for (const [no, key] of [
+      ['9000001A', 'im9000001A'],
+      ['-9000004', 'im-9000004'],
+      ['90000050', 'im90000050'],
+      ['9000 06', 'im9000%2006'],
+    ]) {
+      bill(no, '2026-08-01', { first: 'ODD', last: 'NUMBER' });
+      imLine(no, 1);
+      expect(await keys(`?name=odd&from=2026-08-01&to=2026-08-01`)).toContain(key);
+      const [code, b] = await get(`/api/invoices/${key}`);
+      expect([no, code, b.key, b.after?.invoice_no, b.after?.lines.length]).toEqual([no, 200, key, no, 1]);
+    }
+    expect((await get('/api/invoices/im9000001B'))[0]).toBe(404); // only the exact number
+    expect((await post(`/api/invoices/im9000001A/link`, { invoice_no: '9000001', version: null }))[0]).toBe(404);
+  });
+
   it('a bad or unknown key is 404', async () => {
     for (const k of ['x1', 'im', 'im12345678', 't', 't0', 't1234567890', 'IM9000001', 'im9000009', 't999', 'im9000001%20'])
       expect([k, (await get(`/api/invoices/${k}`))[0]]).toEqual([k, 404]);

@@ -160,6 +160,9 @@ function conditions(q: Search & { phoneIs?: string }): Where {
   return w;
 }
 
+/** A bill's key: im + its number URI-encoded, so an odd one (9000001A, -12, one with a space) is a safe URL part. */
+const imKey = (no: string): string => `im${encodeURIComponent(no)}`;
+
 const and = (list: string[]): string => (list.length ? ` AND ${list.join(' AND ')}` : '');
 
 /** Every matching row (bill or bill-less filled ticket), as one query: WITH t, r. */
@@ -235,7 +238,7 @@ export class History {
 
   private static out(r: Row): BillRow {
     return {
-      key: r.key,
+      key: r.im_no === null ? r.key : imKey(r.im_no),
       date: r.date,
       invoice_no: r.invoice_no,
       ticket_id: r.ticket_id,
@@ -324,7 +327,7 @@ export class History {
       let inv: ImInvoice | null = null;
       let fin: Final | null = null;
       let ticket: Ticket | null = null;
-      const im = /^im(\d{1,7})$/.exec(key);
+      const im = /^im([^]{1,40})$/.exec(key);
       const t = /^t(\d{1,9})$/.exec(key);
       if (im) {
         inv = this.invoice(im[1] as string);
@@ -377,7 +380,7 @@ export class History {
             vehicle: inv ? this.firstVehicle(inv.invoice_no) : '',
             plate: inv?.plate ?? '',
           };
-      return { key: inv ? `im${inv.invoice_no}` : `t${ticket?.id ?? ''}`, customer, before, after, link, difference };
+      return { key: inv ? imKey(inv.invoice_no) : `t${ticket?.id ?? ''}`, customer, before, after, link, difference };
     });
   }
 
