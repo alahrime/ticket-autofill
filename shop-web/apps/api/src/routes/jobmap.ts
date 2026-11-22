@@ -46,6 +46,14 @@ export function jobMapRoutes(): Router {
     res.json({ groups, coverage: jobs.coverage(), page: n });
   });
 
+  r.get('/api/job-map/rules', admin, validRequest, (req, res) => {
+    const rules = depsOf(req)
+      .jobs.map.rules()
+      .map(({ im_code, words, job, made_by, made_at }) => ({ im_code, words, job, made_by, made_at }))
+      .sort((a, b) => (a.im_code < b.im_code ? -1 : a.im_code > b.im_code ? 1 : a.words.join(' ').localeCompare(b.words.join(' '), 'en')));
+    res.json({ rules });
+  });
+
   r.post('/api/job-map', admin, jsonBody, validRequest, (req, res) => {
     const d = req.body as Body;
     const code = imCode(d['im_code']);

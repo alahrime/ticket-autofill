@@ -4,7 +4,16 @@
 // The toggle and the page live in the URL query. After any change the list and the coverage are fetched again.
 import { keepPreviousData } from '@tanstack/react-query';
 import { type FormEvent, useId, useMemo, useState } from 'react';
-import { type JobCoverage, type JobGroup, type ListJobMap200, type ListJobMapParams, useListJobMap } from '@shop/api-client';
+import {
+  type JobCoverage,
+  type JobGroup,
+  type JobRuleListed,
+  type ListJobMap200,
+  type ListJobMapParams,
+  type ListJobRules200,
+  useListJobMap,
+  useListJobRules,
+} from '@shop/api-client';
 import { errorText, money } from '../lib/format';
 import { useQueryState } from '../lib/useQueryState';
 import { IGNORE, JobPicker } from './JobPicker';
@@ -39,7 +48,7 @@ function ChangeForm({ group, changes, onDone }: { group: JobGroup; changes: JobR
   const [missing, setMissing] = useState(false);
   const key = groupKey(group.im_code, group.words);
   const name = nameOf(group.im_code, group.words);
-  const busy = changes.busy === key;
+  const busy = changes.isBusy(key);
 
   const submit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault();
@@ -48,7 +57,7 @@ function ChangeForm({ group, changes, onDone }: { group: JobGroup; changes: JobR
       return;
     }
     setMissing(false);
-    if (await changes.save(group.im_code, parseWords(words), job)) onDone();
+    if (await changes.save(key, group.im_code, parseWords(words), job)) onDone();
   };
 
   return (
@@ -104,7 +113,7 @@ function UnmappedCard({ g, changes }: { g: JobGroup; changes: JobRuleChanges }) 
   const id = useId();
   const [editing, setEditing] = useState(false);
   const key = groupKey(g.im_code, g.words);
-  const busy = changes.busy === key;
+  const busy = changes.isBusy(key);
   const p = g.proposed;
 
   return (
@@ -124,9 +133,9 @@ function UnmappedCard({ g, changes }: { g: JobGroup; changes: JobRuleChanges }) 
             'No proposal: change it to pick a job, or ignore it.'
           )}
         </p>
-        {changes.errorKey === key && changes.error && (
+        {changes.errorOf(key) && (
           <p className="error" role="alert">
-            {changes.error}
+            {changes.errorOf(key)}
           </p>
         )}
         {editing ? (
@@ -137,14 +146,14 @@ function UnmappedCard({ g, changes }: { g: JobGroup; changes: JobRuleChanges }) 
               type="button"
               className="primary"
               disabled={busy || !p}
-              onClick={() => p && void changes.save(g.im_code, p.words, p.job)}
+              onClick={() => p && void changes.save(key, g.im_code, p.words, p.job)}
             >
               Accept
             </button>
             <button type="button" disabled={busy} onClick={() => setEditing(true)}>
               Change
             </button>
-            <button type="button" disabled={busy} onClick={() => void changes.save(g.im_code, g.words, IGNORE)}>
+            <button type="button" disabled={busy} onClick={() => void changes.save(key, g.im_code, g.words, IGNORE)}>
               Ignore
             </button>
           </div>
@@ -154,34 +163,67 @@ function UnmappedCard({ g, changes }: { g: JobGroup; changes: JobRuleChanges }) 
   );
 }
 
-function MappedCard({ g, changes }: { g: JobGroup; changes: JobRuleChanges }) {
-  const id = useId();
-  const rule = g.rule;
-  if (!rule) return null;
-  const key = groupKey(g.im_code, rule.words);
+const ruleKey = (r: Pick<JobRuleListed, 'im_code' | 'words'>): string => `rule:${groupKey(r.im_code, r.words)}`;
+
+function RuleRow({ r, changes }: { r: JobRuleListed; changes: JobRuleChanges }) {
+  const key = ruleKey(r);
+  const name = nameOf(r.im_code, r.words);
   return (
     <li>
-      <div className="card" role="group" aria-labelledby={id}>
-        <h3 id={id}>
-          {g.im_code} — {wordsText(g.words)}
+      <div className="card" role="group" aria-label={`Rule ${name}`}>
+        <h3>
+          {r.im_code} — {wordsText(r.words)}
         </h3>
-        <GroupFacts g={g} />
         <p className="proposal">
-          Job: <strong>{rule.job}</strong>
-          {rule.words.length > 0 && <> (rule words {rule.words.join(' ')})</>}
+          Job: <strong>{r.job}</strong>
         </p>
-        {changes.errorKey === key && changes.error && (
+        <p className="meta">
+          Made by {r.made_by} on {r.made_at.replace('T', ' ')}
+        </p>
+        {changes.errorOf(key) && (
           <p className="error" role="alert">
-            {changes.error}
+            {changes.errorOf(key)}
           </p>
         )}
         <div className="card-actions">
-          <button type="button" disabled={changes.busy === key} onClick={() => void changes.remove(g.im_code, rule.words)}>
-            Remove
+          <button type="button" disabled={changes.isBusy(key)} onClick={() => void changes.remove(key, r.im_code, r.words)}>
+            Remove<span className="sr-only"> rule {name}</span>
           </button>
         </div>
       </div>
     </li>
+  );
+}
+
+/** Every stored rule (the server keeps at most 2000), by code then words; a text filter narrows it. */
+function Rules({ changes }: { changes: JobRuleChanges }) {
+  const filterId = useId();
+  const [filter, setFilter] = useState('');
+  const q = useListJobRules();
+  const rules = q.isError ? undefined : (q.data?.data as ListJobRules200 | undefined)?.rules;
+  const f = filter.trim().toUpperCase();
+  const shown = rules ? (f ? rules.filter((r) => `${r.im_code} ${r.job}`.toUpperCase().includes(f)) : rules) : [];
+  return (
+    <>
+      <div className="field">
+        <label htmlFor={filterId}>Filter by code or job</label>
+        <input id={filterId} type="search" autoComplete="off" spellCheck={false} value={filter} onChange={(e) => setFilter(e.target.value)} />
+      </div>
+      {q.isPending && <p>Loading…</p>}
+      {q.isError && (
+        <p className="error" role="alert">
+          {errorText(q.error)}
+        </p>
+      )}
+      {rules && !shown.length && <p className="empty">{rules.length ? 'No rule matches.' : 'No rule is made yet.'}</p>}
+      {shown.length > 0 && (
+        <ul className="cards">
+          {shown.map((r) => (
+            <RuleRow key={ruleKey(r)} r={r} changes={changes} />
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 
@@ -190,16 +232,13 @@ export function JobMapping() {
   const [query, setQuery] = useQueryState();
   const mapped = query.get('mapped') === '1';
   const pageText = query.get('page');
-  const page = pageText && /^[1-9]\d{0,5}$/.test(pageText) ? Number(pageText) : 1;
-  const params = useMemo<ListJobMapParams>(
-    () => ({ unmapped: mapped ? '0' : '1', ...(page > 1 ? { page: String(page) } : {}) }),
-    [mapped, page],
-  );
+  const page = !mapped && pageText && /^[1-9]\d{0,5}$/.test(pageText) ? Number(pageText) : 1;
+  const params = useMemo<ListJobMapParams>(() => ({ unmapped: '1', ...(page > 1 ? { page: String(page) } : {}) }), [page]);
+  // the unmapped groups, and (for both views) the coverage that comes with them
   const q = useListJobMap(params, { query: { placeholderData: keepPreviousData } });
   const changes = useJobRuleChanges();
   const data = q.isError ? undefined : (q.data?.data as ListJobMap200 | undefined);
-  // a page of all groups: the ones a rule maps are the mapped ones
-  const shown = data ? (mapped ? data.groups.filter((g) => g.rule !== null) : data.groups) : [];
+  const groups = data?.groups ?? [];
   const last = data ? data.groups.length < PER_PAGE : true;
 
   const goTo = (n: number): void => setQuery({ page: n > 1 ? String(n) : null }, { push: true });
@@ -209,7 +248,7 @@ export function JobMapping() {
       {data && <Coverage c={data.coverage} />}
       <section className="list" aria-labelledby={listId}>
         <div className="list-head">
-          <h2 id={listId}>{mapped ? 'Mapped groups' : 'Unmapped groups'}</h2>
+          <h2 id={listId}>{mapped ? 'Rules' : 'Unmapped groups'}</h2>
           <label className="check">
             <input
               type="checkbox"
@@ -219,44 +258,36 @@ export function JobMapping() {
             Show mapped
           </label>
         </div>
-        {q.isPending && <p>Loading…</p>}
-        {q.isError && (
-          <p className="error" role="alert">
-            {errorText(q.error)}
-          </p>
-        )}
-        {data && !shown.length && (
-          <p className="empty">
-            {mapped
-              ? page > 1
-                ? 'No mapped groups on this page.'
-                : 'No group is mapped yet.'
-              : page > 1
-                ? 'No groups on this page.'
-                : 'Every group is mapped.'}
-          </p>
-        )}
-        {shown.length > 0 && (
-          <ul className="cards">
-            {shown.map((g) =>
-              mapped ? (
-                <MappedCard key={groupKey(g.im_code, g.words)} g={g} changes={changes} />
-              ) : (
-                <UnmappedCard key={groupKey(g.im_code, g.words)} g={g} changes={changes} />
-              ),
+        {mapped ? (
+          <Rules changes={changes} />
+        ) : (
+          <>
+            {q.isPending && <p>Loading…</p>}
+            {q.isError && (
+              <p className="error" role="alert">
+                {errorText(q.error)}
+              </p>
             )}
-          </ul>
-        )}
-        {data && (page > 1 || !last) && (
-          <nav className="pager" aria-label="Pages">
-            <button type="button" disabled={page <= 1} onClick={() => goTo(page - 1)}>
-              Previous
-            </button>
-            <span>Page {page}</span>
-            <button type="button" disabled={last} onClick={() => goTo(page + 1)}>
-              Next
-            </button>
-          </nav>
+            {data && !groups.length && <p className="empty">{page > 1 ? 'No groups on this page.' : 'Every group is mapped.'}</p>}
+            {groups.length > 0 && (
+              <ul className="cards">
+                {groups.map((g) => (
+                  <UnmappedCard key={groupKey(g.im_code, g.words)} g={g} changes={changes} />
+                ))}
+              </ul>
+            )}
+            {data && (page > 1 || !last) && (
+              <nav className="pager" aria-label="Pages">
+                <button type="button" disabled={page <= 1} onClick={() => goTo(page - 1)}>
+                  Previous
+                </button>
+                <span>Page {page}</span>
+                <button type="button" disabled={last} onClick={() => goTo(page + 1)}>
+                  Next
+                </button>
+              </nav>
+            )}
+          </>
         )}
       </section>
     </>

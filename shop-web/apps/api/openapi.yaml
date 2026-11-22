@@ -779,6 +779,27 @@ paths:
         '401': { $ref: '#/components/responses/SignIn' }
         '403': { $ref: '#/components/responses/NotAllowed' }
 
+  /api/job-map/rules:
+    get:
+      operationId: listJobRules
+      tags: [jobs]
+      summary: Every stored job mapping rule (admin)
+      description: Read-only. Each rule once, by code then words, with who made it and when.
+      responses:
+        '200':
+          description: All rules (at most 2000).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: '#/components/schemas/JobRuleListed' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
   /api/job-map/delete:
     post:
       operationId: deleteJobRule
@@ -1465,6 +1486,19 @@ components:
       required: [id, im_code, words, job, made_by, made_at]
       properties:
         id: { type: integer }
+        im_code: { type: string }
+        words:
+          type: array
+          items: { type: string }
+          description: Each once, sorted.
+        job: { type: string }
+        made_by: { type: string, examples: ['admin#1'] }
+        made_at: { type: string, description: 'Local time, YYYY-MM-DDTHH:MM:SS.' }
+
+    JobRuleListed:
+      type: object
+      required: [im_code, words, job, made_by, made_at]
+      properties:
         im_code: { type: string }
         words:
           type: array

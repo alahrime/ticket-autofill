@@ -25,38 +25,62 @@ const OIL: JobGroup = {
 };
 const NOPE: JobGroup = { ...OIL, im_code: 'ZZZ', proposed: null, samples: [] };
 
+const GEN: JobGroup = {
+  im_code: 'LABOR',
+  words: ['BRAKE', 'PADS', 'REAR', 'REPLACE'],
+  lines: 4,
+  dollars: 100,
+  samples: ['REPLACE REAR BRAKE PADS'],
+  proposed: { job: 'RBP', words: ['REAR'] }, // fewer words than the group's own
+  rule: null,
+};
+
+type Stored = { im_code: string; words: string[]; job: string; made_by: string; made_at: string };
+type Held = { body: { im_code: string; words: string[]; job?: string }; release(): void };
+
 let calls: Call[];
 let groups: JobGroup[];
+let rules: Stored[];
 let putAnswer: [number, unknown] | null;
+let held: Held[]; // POSTs held until a test releases them
+let hold: boolean;
 
-/** A group's rule, as the list sends it: the job and the words, no code. */
-const rule = (words: string[], job: string): NonNullable<JobGroup['rule']> => ({ job, words });
+const sameWords = (a: string[], b: string[]): boolean => a.length === b.length && a.every((w) => b.includes(w));
+const stored = (im_code: string, words: string[], job: string): Stored => ({
+  im_code,
+  words,
+  job,
+  made_by: 'admin#1',
+  made_at: '2026-11-21T10:00:00',
+});
+/** A rule maps a group when it has the group's code and each of the rule's words is in the group's. */
+const mapsGroup = (r: Stored, g: JobGroup): boolean => r.im_code === g.im_code && r.words.every((w) => g.words.includes(w));
+const mappedLines = (): number => groups.filter((g) => rules.some((r) => mapsGroup(r, g))).reduce((n, g) => n + g.lines, 0);
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/jobs');
-  groups = [PADS, OIL, NOPE];
+  groups = [PADS, OIL, NOPE, GEN];
+  rules = [];
   putAnswer = null;
+  held = [];
+  hold = false;
   calls = mockFetch((method, url, body) => {
     const path = url.split('?')[0];
     if (method === 'GET' && path === '/api/job-map') {
-      const unmapped = new URL(url, 'http://x').searchParams.get('unmapped') === '1';
-      const mapped = groups.filter((g) => g.rule);
+      const open = groups.filter((g) => !rules.some((r) => mapsGroup(r, g)));
       const lines = groups.reduce((n, g) => n + g.lines, 0);
       const dollars = groups.reduce((n, g) => n + g.dollars, 0);
+      const done = groups.filter((g) => rules.some((r) => mapsGroup(r, g)));
       return [
         200,
         {
-          groups: unmapped ? groups.filter((g) => !g.rule) : groups,
-          coverage: {
-            lines,
-            mapped_lines: mapped.reduce((n, g) => n + g.lines, 0),
-            dollars,
-            mapped_dollars: mapped.reduce((n, g) => n + g.dollars, 0),
-          },
+          groups: open,
+          coverage: { lines, mapped_lines: mappedLines(), dollars, mapped_dollars: done.reduce((n, g) => n + g.dollars, 0) },
           page: 1,
         },
       ];
     }
+    if (method === 'GET' && path === '/api/job-map/rules') return [200, { rules }];
     if (method === 'GET' && path === '/api/catalog') {
       const q = new URL(url, 'http://x').searchParams.get('q') ?? '';
       const all = [
@@ -68,15 +92,25 @@ beforeEach(() => {
     if (method === 'POST' && path === '/api/job-map') {
       if (putAnswer) return putAnswer;
       const b = body as { im_code: string; words: string[]; job: string };
-      groups = groups.map((g) => (g.im_code === b.im_code ? { ...g, rule: rule(b.words, b.job) } : g));
-      return [200, { rule: { id: 1, im_code: b.im_code, words: b.words, job: b.job, made_by: 'admin#1', made_at: '2026-11-21T10:00:00' } }];
+      rules = [...rules.filter((r) => !(r.im_code === b.im_code && sameWords(r.words, b.words))), stored(b.im_code, b.words, b.job)];
+      return [200, { rule: { id: 1, ...stored(b.im_code, b.words, b.job) } }];
     }
     if (method === 'POST' && path === '/api/job-map/delete') {
-      const b = body as { im_code: string };
-      groups = groups.map((g) => (g.im_code === b.im_code ? { ...g, rule: null } : g));
-      return [200, { deleted: true }];
+      const b = body as { im_code: string; words: string[] };
+      const had = rules.length;
+      rules = rules.filter((r) => !(r.im_code === b.im_code && sameWords(r.words, b.words)));
+      return [200, { deleted: rules.length < had }];
     }
     return undefined;
+  });
+  // POSTs wait here while `hold` is on, so a test sees the page mid-request
+  const inner = fetch;
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+    if (!hold || init?.method !== 'POST') return inner(input, init);
+    return new Promise<Response>((done) => {
+      const body = JSON.parse(String(init.body)) as Held['body'];
+      held.push({ body, release: () => done(inner(input, init)) });
+    });
   });
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -116,8 +150,8 @@ describe('JobMapping', () => {
     await user.click(within(await card(/LABOR — FRONT PADS/)).getByRole('button', { name: 'Accept' }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     expect(puts()[0]?.body).toEqual({ im_code: 'LABOR', words: ['FRONT', 'PADS'], job: 'FBP' });
-    await waitFor(() => expect(screen.queryByRole('group', { name: /LABOR/ })).not.toBeInTheDocument());
-    expect(await screen.findByText('Mapped: 55% of lines, 73% of dollars')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('group', { name: /LABOR — FRONT PADS/ })).not.toBeInTheDocument());
+    expect(await screen.findByText('Mapped: 46% of lines, 68% of dollars')).toBeInTheDocument();
   });
 
   it('a group with no proposal cannot be accepted', async () => {
@@ -174,19 +208,95 @@ describe('JobMapping', () => {
     expect(within(c).getByRole('button', { name: 'Save' })).toBeInTheDocument();
   });
 
-  it('Show mapped lists the rules, and Remove drops one', async () => {
+  it('Accept on a group whose proposal has fewer words: that card is busy mid-request, and a refusal shows on it', async () => {
     const user = userEvent.setup();
-    groups = [{ ...PADS, rule: rule(['FRONT', 'PADS'], 'FBP') }, OIL];
+    hold = true;
+    renderWithClient(<JobMapping />);
+    const c = await card(/LABOR — BRAKE PADS REAR REPLACE/);
+    await user.click(within(c).getByRole('button', { name: 'Accept' }));
+    await waitFor(() => expect(held).toHaveLength(1));
+    expect(held[0]?.body).toEqual({ im_code: 'LABOR', words: ['REAR'], job: 'RBP' }); // not the group's own words
+    for (const name of ['Accept', 'Change', 'Ignore']) expect(within(c).getByRole('button', { name })).toBeDisabled();
+    // another card is not held up by it
+    expect(within(await card(/OIL/)).getByRole('button', { name: 'Accept' })).toBeEnabled();
+    putAnswer = [400, { error: 'too many rules' }];
+    held[0]?.release();
+    expect(await within(c).findByRole('alert')).toHaveTextContent('too many rules');
+    expect(within(c).getByRole('button', { name: 'Accept' })).toBeEnabled();
+  });
+
+  it('Change on a generic group with edited words: busy mid-request, and a refusal shows on the card', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<JobMapping />);
+    const c = await card(/LABOR — BRAKE PADS REAR REPLACE/);
+    await user.click(within(c).getByRole('button', { name: 'Change' }));
+    const words = within(c).getByLabelText(/^Words/);
+    await user.clear(words);
+    await user.type(words, 'rear, pads');
+    hold = true;
+    await user.click(within(c).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(held).toHaveLength(1));
+    expect(held[0]?.body).toEqual({ im_code: 'LABOR', words: ['REAR', 'PADS'], job: 'RBP' });
+    expect(within(c).getByRole('button', { name: 'Save' })).toBeDisabled();
+    putAnswer = [400, { error: 'words must be up to 10 upper-case letters-and-digits words, each with a letter' }];
+    held[0]?.release();
+    expect(await within(c).findByRole('alert')).toHaveTextContent('words must be up to 10');
+    expect(within(c).getByRole('button', { name: 'Save' })).toBeEnabled(); // the form stays open
+  });
+
+  it('two cards can be in flight at once: one finishing does not re-enable the other', async () => {
+    const user = userEvent.setup();
+    hold = true;
+    renderWithClient(<JobMapping />);
+    const gen = await card(/LABOR — BRAKE PADS REAR REPLACE/);
+    const oil = await card(/OIL/);
+    await user.click(within(gen).getByRole('button', { name: 'Accept' }));
+    await user.click(within(oil).getByRole('button', { name: 'Ignore' }));
+    await waitFor(() => expect(held).toHaveLength(2));
+    expect(within(gen).getByRole('button', { name: 'Accept' })).toBeDisabled();
+    expect(within(oil).getByRole('button', { name: 'Accept' })).toBeDisabled();
+    held.find((h) => h.body.im_code === 'OIL')?.release();
+    await waitFor(() => expect(screen.queryByRole('group', { name: /OIL/ })).not.toBeInTheDocument());
+    expect(within(gen).getByRole('button', { name: 'Accept' })).toBeDisabled(); // still running
+    held.find((h) => h.body.im_code === 'LABOR')?.release();
+    await waitFor(() => expect(screen.queryByRole('group', { name: /BRAKE PADS REAR REPLACE/ })).not.toBeInTheDocument());
+  });
+
+  it('Show mapped lists every rule, even with no live group or on an ordinary code, and Remove posts that rule', async () => {
+    const user = userEvent.setup();
+    rules = [
+      stored('OLD', ['GONE'], 'FBP'), // no line has it any more
+      stored('OIL', ['SYNTHETIC'], 'ignore'), // a word rule on an ordinary code
+      stored('LABOR', ['FRONT', 'PADS'], 'FBP'),
+    ];
     renderWithClient(<JobMapping />);
     await user.click(await screen.findByRole('checkbox', { name: 'Show mapped' }));
-    const c = await card(/LABOR — FRONT PADS/);
-    expect(c).toHaveTextContent('Job: FBP');
-    expect(screen.queryByRole('group', { name: /OIL/ })).not.toBeInTheDocument();
     expect(window.location.search).toBe('?mapped=1');
-    await user.click(within(c).getByRole('button', { name: 'Remove' }));
+    const old = await card(/Rule OLD GONE/);
+    expect(old).toHaveTextContent('Job: FBP');
+    expect(old).toHaveTextContent('admin#1');
+    expect(old).toHaveTextContent('2026-11-21 10:00:00');
+    const oil = await card(/Rule OIL SYNTHETIC/);
+    expect(oil).toHaveTextContent('Job: ignore');
+    expect(screen.getAllByRole('group')).toHaveLength(3);
+    await user.click(within(oil).getByRole('button', { name: /Remove/ }));
     await waitFor(() => expect(callsTo(calls, 'POST', '/api/job-map/delete')).toHaveLength(1));
-    expect(callsTo(calls, 'POST', '/api/job-map/delete')[0]?.body).toEqual({ im_code: 'LABOR', words: ['FRONT', 'PADS'] });
-    await waitFor(() => expect(screen.queryByRole('group', { name: /LABOR/ })).not.toBeInTheDocument());
+    expect(callsTo(calls, 'POST', '/api/job-map/delete')[0]?.body).toEqual({ im_code: 'OIL', words: ['SYNTHETIC'] });
+    await waitFor(() => expect(screen.queryByRole('group', { name: /Rule OIL/ })).not.toBeInTheDocument());
+    expect(screen.getAllByRole('group')).toHaveLength(2);
+    // the rules, the groups and the coverage were fetched again
+    expect(callsTo(calls, 'GET', '/api/job-map/rules').length).toBeGreaterThan(1);
+    expect(callsTo(calls, 'GET', '/api/job-map').length).toBeGreaterThan(1);
+  });
+
+  it('the rule filter narrows by code or job', async () => {
+    const user = userEvent.setup();
+    rules = [stored('OLD', ['GONE'], 'FBP'), stored('OIL', [], 'ignore')];
+    window.history.replaceState(null, '', '/jobs?mapped=1');
+    renderWithClient(<JobMapping />);
+    await user.type(await screen.findByLabelText('Filter by code or job'), 'fbp');
+    expect(screen.getAllByRole('group')).toHaveLength(1);
+    expect(screen.getByRole('group', { name: /Rule OLD/ })).toBeInTheDocument();
   });
 
   it('pages with Previous and Next when a page is full', async () => {

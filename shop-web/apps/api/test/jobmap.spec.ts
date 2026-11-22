@@ -339,8 +339,31 @@ describe('job-map routes', () => {
     expect((await s.call('/api/job-map', { im_code: 'LABOR', words: ['W0'], job: 'RBP' }, a)).status).toBe(200);
   });
 
+  it('lists every rule by code then words, including ones no line matches', async () => {
+    const a = await s.admin();
+    for (const [im_code, words, job] of [
+      ['ZZZ', [], 'ignore'],
+      ['LABOR', ['PADS', 'REAR'], 'RBP'],
+      ['LABOR', ['FRONT', 'PADS'], 'FBP'],
+      ['OIL', ['SYNTHETIC'], 'ignore'],
+    ] as const)
+      expect((await s.call('/api/job-map', { im_code, words, job }, a)).status).toBe(200);
+    const r = await s.call('/api/job-map/rules', undefined, a);
+    expect(r.status).toBe(200);
+    const rules = (r.body as { rules: { im_code: string; words: string[]; job: string; made_by: string; made_at: string }[] }).rules;
+    expect(rules.map((x) => `${x.im_code} ${x.words.join(' ')} ${x.job}`)).toEqual([
+      'LABOR FRONT PADS FBP',
+      'LABOR PADS REAR RBP',
+      'OIL SYNTHETIC ignore',
+      'ZZZ  ignore',
+    ]);
+    expect(rules[0]).toEqual({ im_code: 'LABOR', words: ['FRONT', 'PADS'], job: 'FBP', made_by: `admin#${s.ids['Owner Test']}`, made_at: expect.any(String) });
+  });
+
   it('mechanics get 403, no session 401', async () => {
     const t = await s.tech('Al Fixit');
+    expect((await s.call('/api/job-map/rules', undefined, t)).status).toBe(403);
+    expect((await s.call('/api/job-map/rules')).status).toBe(401);
     expect((await s.call('/api/job-map', undefined, t)).status).toBe(403);
     expect((await s.call('/api/job-map', { im_code: 'LABOR', words: ['PADS'], job: 'FBP' }, t)).status).toBe(403);
     expect((await s.call('/api/job-map/delete', { im_code: 'LABOR', words: ['PADS'] }, t)).status).toBe(403);

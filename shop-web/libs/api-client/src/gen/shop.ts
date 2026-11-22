@@ -48,6 +48,7 @@ import type {
   ListInvoicesParams,
   ListJobMap200,
   ListJobMapParams,
+  ListJobRules200,
   ListMechanics200,
   ListNeedsBill200,
   ListTickets200,
@@ -3591,6 +3592,132 @@ export const usePutJobRule = <TError = ErrorType<BadRequestResponse | SignInResp
       > => {
       return useMutation(getPutJobRuleMutationOptions(options), queryClient);
     }
+
+export type listJobRulesResponse200 = {
+  data: ListJobRules200
+  status: 200
+}
+
+export type listJobRulesResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type listJobRulesResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type listJobRulesResponseSuccess = (listJobRulesResponse200) & {
+  headers: Headers;
+};
+export type listJobRulesResponseError = (listJobRulesResponse401 | listJobRulesResponse403) & {
+  headers: Headers;
+};
+
+export type listJobRulesResponse = (listJobRulesResponseSuccess | listJobRulesResponseError)
+
+export const getListJobRulesUrl = () => {
+
+
+
+
+  return `/api/job-map/rules`
+}
+
+/**
+ * Read-only. Each rule once, by code then words, with who made it and when.
+ * @summary Every stored job mapping rule (admin)
+ */
+export const listJobRules = async ( options?: Parameters<typeof shopFetch>[1]): Promise<listJobRulesResponse> => {
+
+  return shopFetch<listJobRulesResponse>(getListJobRulesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListJobRulesQueryKey = () => {
+    return [
+    `/api/job-map/rules`
+    ] as const;
+    }
+
+
+export const getListJobRulesQueryOptions = <TData = Awaited<ReturnType<typeof listJobRules>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobRules>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListJobRulesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listJobRules>>> = ({ signal }) => listJobRules({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listJobRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListJobRulesQueryResult = NonNullable<Awaited<ReturnType<typeof listJobRules>>>
+export type ListJobRulesQueryError = ErrorType<SignInResponse | NotAllowedResponse>
+
+
+export function useListJobRules<TData = Awaited<ReturnType<typeof listJobRules>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobRules>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listJobRules>>,
+          TError,
+          Awaited<ReturnType<typeof listJobRules>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListJobRules<TData = Awaited<ReturnType<typeof listJobRules>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobRules>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listJobRules>>,
+          TError,
+          Awaited<ReturnType<typeof listJobRules>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListJobRules<TData = Awaited<ReturnType<typeof listJobRules>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobRules>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Every stored job mapping rule (admin)
+ */
+
+export function useListJobRules<TData = Awaited<ReturnType<typeof listJobRules>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobRules>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListJobRulesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type deleteJobRuleResponse200 = {
   data: DeleteJobRule200
