@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { Refused } from '@shop/domain';
 import { btrieveFile, detailBytes, invoiceBytes } from '@shop/invomax/testing';
 import { backupFolder } from '../src/backup';
 import { type Config, loadConfig } from '../src/config';
@@ -234,9 +235,23 @@ describe('startNightly', () => {
     now = new Date(2026, 10, 21, 14, 0);
     start();
     await n?.settled();
-    expect(() => n?.copyNow()).toThrow(new BadInput('no USB drive set up'));
+    await expect(n?.copyNow()).rejects.toThrow(new BadInput('no USB drive set up'));
     cfg.backupTargets = [missingRoot()];
-    expect(() => n?.copyNow()).toThrow(new BadInput('drive not found'));
+    await expect(n?.copyNow()).rejects.toThrow(new BadInput('drive not found'));
+  });
+
+  it('copyNow runs one copy at a time: a second while one runs is refused (409)', async () => {
+    ranAt(new Date(2026, 10, 21, 2, 10));
+    now = new Date(2026, 10, 21, 14, 0);
+    start();
+    await n?.settled();
+    cfg.backupTargets = [join(tmp.dir, 'usb')]; // the backups' own drive: the copy itself fails, after the guard
+    const first = n?.copyNow() as Promise<unknown>;
+    const second = n?.copyNow() as Promise<unknown>; // while the first is still running
+    await expect(second).rejects.toThrow(new Refused('a copy is already running'));
+    await expect(first).rejects.toThrow('that drive holds the backups already');
+    await n?.settled();
+    await expect(n?.copyNow()).rejects.toThrow('that drive holds the backups already'); // free again
   });
 
   it('stop() ends the timer', async () => {

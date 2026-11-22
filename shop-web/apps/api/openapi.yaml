@@ -469,7 +469,7 @@ paths:
       description: |
         Copies the dated backups to each of shop-settings.json's `backupTargets` whose drive is in (a bare drive
         letter means `<drive>\shop-backups`), skipping files already there. 400 `no USB drive set up` with no
-        target, `drive not found` when none of them is in.
+        target, `drive not found` when none of them is in; 409 while a copy is running.
       requestBody:
         required: true
         content:
@@ -491,6 +491,12 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/SignIn' }
         '403': { $ref: '#/components/responses/NotAllowed' }
+        '409':
+          description: A copy is already running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: a copy is already running }
 
   /api/invoices:
     get:

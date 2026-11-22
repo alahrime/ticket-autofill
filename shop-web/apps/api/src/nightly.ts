@@ -4,6 +4,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, parse, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { Refused } from '@shop/domain';
 import { backupFolder, backupNow, copyBackups, pruneBackups } from './backup';
 import type { Config } from './config';
 import { BadInput } from './errors';
@@ -26,7 +27,8 @@ export const due = (now: Date, lastGood: Date | null): boolean => lastGood === n
 export type Nightly = {
   stop(): void;
   importNow(): 'started' | 'running';
-  copyNow(): { copied: number; skipped: number; target: string }[];
+  /** Copies the backups to the USB drive now; rejects BadInput (no target / drive not found) or Refused (one is running). */
+  copyNow(): Promise<{ copied: number; skipped: number; target: string }[]>;
   running(): boolean;
   /** Resolves once no check and no import is in progress (the server's close and tests wait on it). */
   settled(): Promise<void>;
@@ -74,6 +76,7 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
   const log = (what: string): void => logLine(config.log, what);
   let checking: Promise<void> | null = null;
   let importing: Promise<void> | null = null;
+  let copying: Promise<void> | null = null; // a copy to the USB drive under way (one at a time)
   let lastBackup: Date | null = null; // this process's last good backup (the file's mtime counts too)
 
   const autoLink = (): void => {
@@ -99,6 +102,21 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
     return run;
   };
 
+  /** Runs one copy to the USB drive at a time; a second while one runs is Refused (409). */
+  const oneCopy = <T>(f: () => Promise<T>): Promise<T> => {
+    if (copying) return Promise.reject(new Refused('a copy is already running'));
+    const run = f();
+    copying = run
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        copying = null;
+      });
+    return run;
+  };
+
   const backup = async (now: Date): Promise<void> => {
     try {
       await backupNow(config, now);
@@ -112,15 +130,18 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
     } catch (e) {
       log(`backup prune failed ${className(e)}`);
     }
-    for (const entry of config.backupTargets) {
-      const target = backupFolder(entry);
-      if (!driveThere(target)) continue; // the USB drive isn't in: nothing to say at night
-      try {
-        copyBackups(config.backups, target, now);
-      } catch (e) {
-        log(`backup copy failed ${className(e)}`);
+    if (copying) return; // a copy from the button is under way: it has these too
+    await oneCopy(async () => {
+      for (const entry of config.backupTargets) {
+        const target = backupFolder(entry);
+        if (!driveThere(target)) continue; // the USB drive isn't in: nothing to say at night
+        try {
+          await copyBackups(config.backups, target, now);
+        } catch (e) {
+          log(`backup copy failed ${className(e)}`);
+        }
       }
-    }
+    });
   };
 
   const check = (): void => {
@@ -148,22 +169,23 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
       void runImport();
       return 'started';
     },
-    copyNow: () => {
-      if (!config.backupTargets.length) throw new BadInput('no USB drive set up');
-      const now = clock();
-      const out: { copied: number; skipped: number; target: string }[] = [];
-      for (const entry of config.backupTargets) {
-        const target = backupFolder(entry);
-        if (!driveThere(target)) continue;
-        const r = copyBackups(config.backups, target, now);
-        out.push({ copied: r.copied, skipped: r.skipped, target });
-      }
-      if (!out.length) throw new BadInput('drive not found');
-      return out;
-    },
+    copyNow: () =>
+      oneCopy(async () => {
+        if (!config.backupTargets.length) throw new BadInput('no USB drive set up');
+        const now = clock();
+        const out: { copied: number; skipped: number; target: string }[] = [];
+        for (const entry of config.backupTargets) {
+          const target = backupFolder(entry);
+          if (!driveThere(target)) continue;
+          const r = await copyBackups(config.backups, target, now);
+          out.push({ copied: r.copied, skipped: r.skipped, target });
+        }
+        if (!out.length) throw new BadInput('drive not found');
+        return out;
+      }),
     running: () => importing !== null,
     settled: async () => {
-      while (checking || importing) await Promise.allSettled([checking, importing]);
+      while (checking || importing || copying) await Promise.allSettled([checking, importing, copying]);
     },
   };
 }

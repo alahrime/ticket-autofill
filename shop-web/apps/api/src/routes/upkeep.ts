@@ -26,8 +26,9 @@ export function upkeepRoutes(): Router {
     res.status(202).json({ started: true });
   });
 
-  r.post('/api/upkeep/copy-backups', admin, jsonBody, validRequest, (req, res) => {
-    res.json({ copies: depsOf(req).nightly.copyNow() }); // BadInput: 400 'no USB drive set up' / 'drive not found'
+  // BadInput: 400 'no USB drive set up' / 'drive not found'; Refused: 409 'a copy is already running'
+  r.post('/api/upkeep/copy-backups', admin, jsonBody, validRequest, async (req, res) => {
+    res.json({ copies: await depsOf(req).nightly.copyNow() });
   });
   return r;
 }

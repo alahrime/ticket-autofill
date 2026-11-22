@@ -2,19 +2,15 @@
 // Only files named exactly tickets-YYYY-MM-DD.db or invomax-YYYY-MM-DD.db are ever pruned or copied.
 import {
   copyFileSync,
-  closeSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
-  openSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
-  utimesSync,
-  writeFileSync,
+  type Stats,
 } from 'node:fs';
+import { copyFile, mkdir, open, rename, stat, utimes, writeFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { basename, dirname, join, parse, resolve } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
@@ -170,47 +166,63 @@ export function backupFolder(target: string): string {
 export type CopyOpts = {
   /** Tests only: allow a target on the backups' own drive. */
   allowSameDrive?: boolean;
-  /** Tests only: runs on each fresh copy (still named .tmp) before its check. */
-  afterCopy?: (tmpPath: string) => void;
+  /** Tests only: runs on each fresh copy (still named .tmp) before its check; may hold the copy (a promise). */
+  afterCopy?: (tmpPath: string) => void | Promise<void>;
 };
 
-/** Copies the dated backups to target (made if missing), skipping a file already there with the same size and mtime. */
-export function copyBackups(dir: string, target: string, now: Date, opts: CopyOpts = {}): { copied: number; skipped: number } {
+/** stat, or null when the file isn't there. */
+const statOrNull = async (p: string): Promise<Stats | null> => {
+  try {
+    return await stat(p);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
+  }
+};
+
+/**
+ * Copies the dated backups to target (made if missing), skipping a file already there with the same size and
+ * mtime. Asynchronous (fs.promises) so a long copy to the USB drive never holds up the server's requests.
+ */
+export async function copyBackups(
+  dir: string,
+  target: string,
+  now: Date,
+  opts: CopyOpts = {},
+): Promise<{ copied: number; skipped: number }> {
   const where = resolve(target);
   if (!existsSync(parse(where).root)) throw new BadInput('drive not found');
   if (!opts.allowSameDrive && sameRoot(where, dir)) throw new BadInput('that drive holds the backups already; use the USB drive');
-  mkdirSync(where, { recursive: true });
+  await mkdir(where, { recursive: true });
   const names = [...dated(dir, 'tickets'), ...dated(dir, 'invomax')];
   let copied = 0;
   let skipped = 0;
   for (const n of names) {
     const from = join(dir, n);
     const to = join(where, n);
-    const src = statSync(from);
-    if (existsSync(to)) {
-      const have = statSync(to);
-      if (have.size === src.size && Math.abs(have.mtimeMs - src.mtimeMs) <= MTIME_SLACK_MS) {
-        skipped++;
-        continue;
-      }
+    const src = await stat(from);
+    const have = await statOrNull(to);
+    if (have && have.size === src.size && Math.abs(have.mtimeMs - src.mtimeMs) <= MTIME_SLACK_MS) {
+      skipped++;
+      continue;
     }
     const tmp = `${to}.tmp`;
     try {
-      copyFileSync(from, tmp);
-      const fd = openSync(tmp, 'r+');
+      await copyFile(from, tmp);
+      const fh = await open(tmp, 'r+');
       try {
-        fsyncSync(fd);
+        await fh.sync();
       } finally {
-        closeSync(fd);
+        await fh.close();
       }
-      utimesSync(tmp, src.atime, src.mtime);
-      opts.afterCopy?.(tmp);
+      await utimes(tmp, src.atime, src.mtime);
+      await opts.afterCopy?.(tmp);
       try {
-        quickCheck(tmp, true);
+        quickCheck(tmp, true); // one small read-only check: synchronous is fine
       } finally {
         removeFiles(`${tmp}-wal`, `${tmp}-shm`);
       }
-      renameSync(tmp, to);
+      await rename(tmp, to);
     } catch (e) {
       removeFiles(tmp, `${tmp}-wal`, `${tmp}-shm`);
       throw e;
@@ -218,7 +230,7 @@ export function copyBackups(dir: string, target: string, now: Date, opts: CopyOp
     copied++;
   }
   if (names.length && names.every((n) => existsSync(join(where, n)))) {
-    writeFileSync(join(dir, 'offsite.json'), JSON.stringify({ at: now.toISOString(), target: where }));
+    await writeFile(join(dir, 'offsite.json'), JSON.stringify({ at: now.toISOString(), target: where }));
   }
   return { copied, skipped };
 }

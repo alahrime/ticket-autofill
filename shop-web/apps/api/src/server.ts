@@ -134,7 +134,7 @@ export async function startServer(
 const NOT_STARTED: Nightly = {
   stop: () => undefined,
   importNow: () => 'running',
-  copyNow: () => [],
+  copyNow: () => Promise.resolve([]),
   running: () => false,
   settled: () => Promise.resolve(),
 };

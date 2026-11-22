@@ -48,11 +48,32 @@ export function noteActor(res: Response, s: Session | null): void {
   if (s) res.locals['actor'] = `${s.role}#${s.user_id}`;
 }
 
+/**
+ * Path segments that hold customer data, written as the route's pattern instead: /api/customers/<phone> is
+ * logged as /api/customers/:phone. Matched on the raw path (any case, any segment, anything after it), so a
+ * path no route serves (a 401 / 404) can't leak the phone either. Ticket ids and invoice keys stay: they say
+ * which record changed and are no one's personal data.
+ */
+const PRIVATE_PATHS: Array<[RegExp, string]> = [[/\/customers\/.*$/i, '/customers/:phone']];
+
+/** The path as logged: no query or fragment, customer data replaced by the route's pattern. */
+export function logPath(url: string): string {
+  const p = url.split(/[?#]/)[0] ?? '';
+  let decoded = p;
+  try {
+    decoded = decodeURIComponent(p); // %2F or %35 can't hide a phone from the check
+  } catch {
+    // not valid percent-encoding: checked as it came
+  }
+  for (const [re, as] of PRIVATE_PATHS) if (re.test(decoded)) return decoded.replace(re, as);
+  return p;
+}
+
 /** Appends one line; a log that can't be written never fails the request. */
 export function writeLog(path: string, req: Request, res: Response, what: string): void {
   const started = (res.locals['started'] as number | undefined) ?? Date.now();
   const actor = res.locals['actor'] as string | undefined;
-  const url = (req.originalUrl || req.url).split(/[?#]/)[0];
+  const url = logPath(req.originalUrl || req.url);
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   try {
     appendFileSync(path, `${stamp()} ${req.method} ${url} ${what}${actor ? ` ${actor}` : ''} ${secs}s\n`, 'utf8');

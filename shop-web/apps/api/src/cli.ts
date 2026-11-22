@@ -76,11 +76,16 @@ export async function runRestoreCommand(config: Config, file: string, out: (s: s
 }
 
 /** `copy-backups <drive>`: copies the backups to <drive>\shop-backups -> exit code. */
-export function runCopyBackupsCommand(config: Config, drive: string, out: (s: string) => void, now = new Date()): number {
+export async function runCopyBackupsCommand(
+  config: Config,
+  drive: string,
+  out: (s: string) => void,
+  now = new Date(),
+): Promise<number> {
   try {
     if (!isDrive(drive)) throw new BadInput('give a drive letter, like D:');
     const target = backupFolder(drive);
-    const r = copyBackups(config.backups, target, now);
+    const r = await copyBackups(config.backups, target, now);
     out(`Copied ${r.copied} backup${r.copied === 1 ? '' : 's'} to ${target} (${r.skipped} already there).`);
     return 0;
   } catch (e) {

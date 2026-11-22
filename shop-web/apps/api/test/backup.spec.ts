@@ -186,32 +186,32 @@ describe('lastGoodBackup and backupHealth', () => {
 });
 
 describe('copyBackups', () => {
-  it('copies, is idempotent, and writes offsite.json', () => {
+  it('copies, is idempotent, and writes offsite.json', async () => {
     real(['tickets-2026-11-20.db', 'invomax-2026-11-20.db']);
     touch(cfg.backups, ['notes.txt']);
     const target = join(tmp.dir, 'usb', 'shop-backups');
-    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 2, skipped: 0 });
+    expect(await copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 2, skipped: 0 });
     expect(readdirSync(target).sort()).toEqual(['invomax-2026-11-20.db', 'tickets-2026-11-20.db']);
-    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 0, skipped: 2 });
+    expect(await copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 0, skipped: 2 });
     const o = JSON.parse(readFileSync(join(cfg.backups, 'offsite.json'), 'utf8')) as { at: string; target: string };
     expect(o).toEqual({ at: NOW.toISOString(), target });
   });
 
-  it('recopies a same-size file whose mtime differs, and keeps the source mtime on the copy', () => {
+  it('recopies a same-size file whose mtime differs, and keeps the source mtime on the copy', async () => {
     real(['tickets-2026-11-20.db']);
     const target = join(tmp.dir, 'usb');
     const src = join(cfg.backups, 'tickets-2026-11-20.db');
     const when = new Date(2026, 10, 20, 2, 0, 0);
     utimesSync(src, when, when);
-    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
+    expect(await copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
     expect(Math.abs(statSync(join(target, 'tickets-2026-11-20.db')).mtimeMs - when.getTime())).toBeLessThan(2000);
-    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 0, skipped: 1 });
+    expect(await copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 0, skipped: 1 });
     const later = new Date(2026, 10, 20, 5, 0, 0); // same name and size, different time
     utimesSync(src, later, later);
-    expect(copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
+    expect(await copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
   });
 
-  it('fails a corrupt copy, deletes it and writes no offsite.json', () => {
+  it('fails a corrupt copy, deletes it and writes no offsite.json', async () => {
     real(['tickets-2026-11-20.db']);
     const target = join(tmp.dir, 'usb');
     const corrupt = (tmpPath: string): void => {
@@ -219,24 +219,39 @@ describe('copyBackups', () => {
       for (let i = 0; i < b.length; i += 5) b[i] = 0xff;
       writeFileSync(tmpPath, b);
     };
-    expect(() => copyBackups(cfg.backups, target, NOW, { ...SAME, afterCopy: corrupt })).toThrow('failed its check');
+    await expect(copyBackups(cfg.backups, target, NOW, { ...SAME, afterCopy: corrupt })).rejects.toThrow('failed its check');
     expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false);
     expect(readdirSync(target)).toEqual([]);
   });
 
-  it('refuses a target on the same drive as the backups', () => {
+  it('copies off the event loop: requests are answered while a copy waits', async () => {
+    real(['tickets-2026-11-20.db', 'invomax-2026-11-20.db']);
+    let release!: () => void;
+    const hold = new Promise<void>((ok) => (release = ok));
+    let held = 0;
+    const copy = copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW, { ...SAME, afterCopy: () => (held++, hold) });
+    let ticked = false;
+    await new Promise<void>((ok) => setTimeout(() => ((ticked = true), ok()), 10)); // a timer still runs
+    expect([ticked, held]).toEqual([true, 1]);
+    expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false); // not complete yet
+    release();
+    expect(await copy).toEqual({ copied: 2, skipped: 0 });
+    expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(true);
+  });
+
+  it('refuses a target on the same drive as the backups', async () => {
     real(['tickets-2026-11-20.db']);
-    expect(() => copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW)).toThrow(BadInput);
-    expect(() => copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW)).toThrow('that drive holds the backups already');
+    await expect(copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW)).rejects.toThrow(BadInput);
+    await expect(copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW)).rejects.toThrow('that drive holds the backups already');
     expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false);
   });
 
-  it('throws BadInput for a missing drive and writes no offsite.json', () => {
+  it('throws BadInput for a missing drive and writes no offsite.json', async () => {
     real(['tickets-2026-11-20.db']);
     const root = missingRoot();
     expect(existsSync(root)).toBe(false);
-    expect(() => copyBackups(cfg.backups, join(root, 'shop-backups'), NOW, SAME)).toThrow(BadInput);
-    expect(() => copyBackups(cfg.backups, join(root, 'shop-backups'), NOW, SAME)).toThrow('drive not found');
+    await expect(copyBackups(cfg.backups, join(root, 'shop-backups'), NOW, SAME)).rejects.toThrow(BadInput);
+    await expect(copyBackups(cfg.backups, join(root, 'shop-backups'), NOW, SAME)).rejects.toThrow('drive not found');
     expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false);
   });
 });
@@ -374,10 +389,10 @@ describe('restoreBackup', () => {
 });
 
 describe('CLI wrappers', () => {
-  it('copy-backups says drive not found for a missing drive and returns 1', () => {
+  it('copy-backups says drive not found for a missing drive and returns 1', async () => {
     const out: string[] = [];
     const drive = missingRoot().slice(0, 2);
-    expect(runCopyBackupsCommand(cfg, drive, (s) => out.push(s))).toBe(1);
+    expect(await runCopyBackupsCommand(cfg, drive, (s) => out.push(s))).toBe(1);
     expect(out.join(' ')).toContain('drive not found');
   });
 
@@ -389,16 +404,16 @@ describe('CLI wrappers', () => {
     expect(out.join(' ')).toContain('before-restore');
   });
 
-  it.each(['D', '..', 'C:\\hunni', 'C:\\hunni\\files', 'E:foo', ''])('copy-backups refuses %p as a drive', (drive) => {
+  it.each(['D', '..', 'C:\\hunni', 'C:\\hunni\\files', 'E:foo', ''])('copy-backups refuses %p as a drive', async (drive) => {
     const out: string[] = [];
-    expect(runCopyBackupsCommand(cfg, drive, (s) => out.push(s))).toBe(1);
+    expect(await runCopyBackupsCommand(cfg, drive, (s) => out.push(s))).toBe(1);
     expect(out.join(' ')).toContain('give a drive letter, like D:');
   });
 
-  it('copy-backups refuses the drive that holds the backups', () => {
+  it('copy-backups refuses the drive that holds the backups', async () => {
     const out: string[] = [];
     const own = { ...cfg, backups: 'C:\\somewhere\\backups' };
-    expect(runCopyBackupsCommand(own, 'c:', (s) => out.push(s))).toBe(1);
+    expect(await runCopyBackupsCommand(own, 'c:', (s) => out.push(s))).toBe(1);
     expect(out.join(' ')).toContain('that drive holds the backups already; use the USB drive');
   });
 });

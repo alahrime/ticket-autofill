@@ -2,6 +2,7 @@
 // API, over a real server with a temp InvoMax folder. Every name, phone and plate here is made up.
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Refused } from '@shop/domain';
 import { normalPlate } from '@shop/invomax';
 import { makeServer, type TestServer } from './helpers';
 
@@ -205,6 +206,19 @@ describe('Bill history', () => {
     expect((await get('/api/customers/555-010'))[0]).toBe(404);
   });
 
+  it('never writes a customer phone in the log', async () => {
+    expect((await get('/api/customers/5550100000'))[0]).toBe(200);
+    expect((await get('/api/customers/5550109999'))[0]).toBe(404);
+    expect((await get('/api/customers/5550100000/x'))[0]).toBe(404); // no route
+    expect((await get('/API/customers/5550100000'))[0]).toBe(404);
+    expect((await get('/api/customers/%35%35%350100000'))[0]).toBe(200); // the same phone, percent-encoded
+    expect((await get('/api/customers/5550100000', ''))[0]).toBe(401);
+    const lines = s.log().split('\n').filter((l) => /customers/i.test(l));
+    expect(lines).toHaveLength(6);
+    for (const l of lines) expect(l.slice(20)).toMatch(/^GET \/api\/customers\/:phone \d{3} (admin#\d+ )?\d+\.\ds$/i);
+    expect(s.log()).not.toMatch(/0100000|0109999|%35/);
+  });
+
   it('links by typing any bill number, checking the version; unlink, none and a typed final', async () => {
     const t3 = filled('2026-11-18', { plate: 'zzz-999', phone: '5550100009' });
     // 9000002 is far from t3's day and plate: never a candidate, but the admin can type it
@@ -307,6 +321,26 @@ describe('upkeep', () => {
     for (const l of 'ZYXWVUTSRQ') if (!free && !existsSync(`${l}:\\`)) free = `${l}:`;
     s.config.backupTargets = [free];
     expect(await post('/api/upkeep/copy-backups', {})).toEqual([400, { error: 'drive not found' }]);
+  });
+
+  it('copy-backups: 409 while a copy is running, and the server answers meanwhile', async () => {
+    // the one-at-a-time guard itself is nightly.spec's; here a copy held open stands in for a long USB copy
+    let release!: () => void;
+    const hold = new Promise<void>((ok) => (release = ok));
+    let running = false;
+    s.nightly.copyNow = async () => {
+      if (running) throw new Refused('a copy is already running');
+      running = true;
+      await hold;
+      running = false;
+      return [{ copied: 1, skipped: 0, target: 'D:\\shop-backups' }];
+    };
+    const first = post('/api/upkeep/copy-backups', {});
+    await new Promise((ok) => setTimeout(ok, 50));
+    expect(await post('/api/upkeep/copy-backups', {})).toEqual([409, { error: 'a copy is already running' }]);
+    expect((await get('/api/upkeep/status'))[0]).toBe(200); // not frozen while it copies
+    release();
+    expect(await first).toEqual([200, { copies: [{ copied: 1, skipped: 0, target: 'D:\\shop-backups' }] }]);
   });
 });
 

@@ -2174,10 +2174,15 @@ export type copyBackupsResponse403 = {
   status: 403
 }
 
+export type copyBackupsResponse409 = {
+  data: Error
+  status: 409
+}
+
 export type copyBackupsResponseSuccess = (copyBackupsResponse200) & {
   headers: Headers;
 };
-export type copyBackupsResponseError = (copyBackupsResponse400 | copyBackupsResponse401 | copyBackupsResponse403) & {
+export type copyBackupsResponseError = (copyBackupsResponse400 | copyBackupsResponse401 | copyBackupsResponse403 | copyBackupsResponse409) & {
   headers: Headers;
 };
 
@@ -2194,7 +2199,7 @@ export const getCopyBackupsUrl = () => {
 /**
  * Copies the dated backups to each of shop-settings.json's `backupTargets` whose drive is in (a bare drive
  * letter means `<drive>\shop-backups`), skipping files already there. 400 `no USB drive set up` with no
- * target, `drive not found` when none of them is in.
+ * target, `drive not found` when none of them is in; 409 while a copy is running.
  * @summary Copy the backups to the USB drive (admin)
  */
 export const copyBackups = async (nothing: Nothing, options?: Parameters<typeof shopFetch>[1]): Promise<copyBackupsResponse> => {
@@ -2228,7 +2233,7 @@ return shopFetch<copyBackupsResponse>(getCopyBackupsUrl(),
 
 export const getCopyBackupsMutationKey = () => ['copyBackups'] as const;
 
-export const getCopyBackupsMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+export const getCopyBackupsMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | Error>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof copyBackups>>, TError,CopyBackupsMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof copyBackups>>, TError,CopyBackupsMutationVariables, TContext> => {
 
@@ -2257,13 +2262,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CopyBackupsMutationResult = NonNullable<Awaited<ReturnType<typeof copyBackups>>>
     export type CopyBackupsMutationBody = BodyType<Nothing>
-    export type CopyBackupsMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>
+    export type CopyBackupsMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | Error>
     export type CopyBackupsMutationVariables = {data: BodyType<Nothing>}
 
     /**
  * @summary Copy the backups to the USB drive (admin)
  */
-export const useCopyBackups = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+export const useCopyBackups = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | Error>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof copyBackups>>, TError,CopyBackupsMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof copyBackups>>,
