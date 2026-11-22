@@ -840,7 +840,7 @@ paths:
         InvoMax bill count once). The closest group of 3 or more, over the last 24 months and then all time:
         same model within 2 years, same model, same make, any car. With fewer than 3 samples anywhere, all of
         them answer. No history: the parts.csv price (`count` 0, basis `catalog`), or null. Dollars; `part` is
-        per unit, `labor` is multiplied by `qty`. The price can always be changed.
+        per unit, `labor` is multiplied by `qty` (a qty below 1 counts as 1). The price can always be changed.
       parameters:
         - name: code
           in: query

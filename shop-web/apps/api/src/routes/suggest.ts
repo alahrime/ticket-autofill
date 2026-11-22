@@ -91,7 +91,7 @@ export function suggestRoutes(): Router {
       suggest([...d.jobs.samples(code, kind), ...ourSamples(d.store, d.links, code, kind)], car, now);
     res.json({
       part: answer(pick('part'), row.part_price, 1),
-      labor: answer(pick('labor'), row.labor_price, qty),
+      labor: answer(pick('labor'), row.labor_price, Math.max(qty, 1)), // as the samples count it: never below 1
     });
   });
   return r;

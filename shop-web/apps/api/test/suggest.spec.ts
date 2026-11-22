@@ -155,6 +155,13 @@ describe('ourSamples and the route', () => {
     expect(r.body).toMatchObject({ part: { price: 50, basis: { level: 'all' } }, labor: { price: 100 } });
   });
 
+  it('API: a qty below 1 never scales labor down (samples count it as 1 too)', async () => {
+    const a = await srv.admin();
+    const r = await srv.call('/api/price-suggestions?code=FBP&year=2019&make=Cadillac&model=XT5&qty=0.5', undefined, a);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ part: { price: 100 }, labor: { price: 100 } }); // parts.csv: 100 part, 100 labor
+  });
+
   const Q = '/api/price-suggestions?code=FBP&year=2019&make=Cadillac&model=XT5&qty=1';
   const fillNew = (price: number): number => {
     const id = make([{ desc: 'PADS', code: 'FBP', qty: 1, price, labor: price }]);
