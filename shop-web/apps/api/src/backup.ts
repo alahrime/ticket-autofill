@@ -19,13 +19,17 @@ import { basename, dirname, join, parse, resolve } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import type { Config } from './config';
 import { BadInput } from './errors';
+import { className } from './http/log';
 import { releaseLock, takeLock } from './invomax/import';
 
 const DATED = /^(tickets|invomax)-(\d{4})-(\d{2})-(\d{2})\.db$/;
 const TICKETS_KEPT = 90;
 const INVOMAX_DAILY = 14;
 const INVOMAX_MONTHS = 24;
-const STALE_MS = 2 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STALE_MS = 2 * DAY_MS;
+const OFFSITE_STALE_MS = 7 * DAY_MS;
+const ATTEMPT = 'offsite-attempt.json'; // the last copy to the USB drive: { at, ok, error: its error class or null }
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 /** The local date of d as YYYY-MM-DD (file names use the local date). */
@@ -48,7 +52,7 @@ function removeFiles(...paths: string[]): void {
 async function backupOne(src: string, dest: string): Promise<void> {
   const tmp = `${dest}.tmp`;
   removeFiles(tmp, `${tmp}-wal`, `${tmp}-shm`);
-  const source = new DatabaseSync(src);
+  const source = new DatabaseSync(src, { readOnly: true }); // a missing file is an error, never a new empty db
   try {
     source.exec('PRAGMA busy_timeout = 5000');
     await backup(source, tmp);
@@ -86,18 +90,22 @@ function quickCheck(file: string, readOnly = false, tables: string[] = [], what 
   }
 }
 
+export type BackupKind = 'tickets' | 'invomax';
+
+/** Writes backups/<kind>-<local date>.db -> its path; null for invomax when there is no invomax.db. */
+export async function backupFile(config: Config, kind: BackupKind, now: Date): Promise<string | null> {
+  const src = kind === 'tickets' ? config.db : config.invomaxDb;
+  if (kind === 'invomax' && !existsSync(src)) return null;
+  mkdirSync(config.backups, { recursive: true });
+  const dest = join(config.backups, `${kind}-${ymd(now)}.db`);
+  await backupOne(src, dest);
+  return dest;
+}
+
 /** Writes backups/tickets-<local date>.db and, if invomax.db exists, backups/invomax-<local date>.db. */
 export async function backupNow(config: Config, now: Date): Promise<{ tickets: string; invomax: string | null }> {
-  mkdirSync(config.backups, { recursive: true });
-  const day = ymd(now);
-  const tickets = join(config.backups, `tickets-${day}.db`);
-  await backupOne(config.db, tickets);
-  let invomax: string | null = null;
-  if (existsSync(config.invomaxDb)) {
-    invomax = join(config.backups, `invomax-${day}.db`);
-    await backupOne(config.invomaxDb, invomax);
-  }
-  return { tickets, invomax };
+  const tickets = (await backupFile(config, 'tickets', now)) as string;
+  return { tickets, invomax: await backupFile(config, 'invomax', now) };
 }
 
 /** Deletes old backups (tickets: newest 90; invomax: newest 14 plus the first file of each of the newest 24 months) -> removed names. */
@@ -123,29 +131,62 @@ export function pruneBackups(dir: string, now: Date): string[] {
   return doomed;
 }
 
-/** The date in the newest tickets-*.db name (local midnight), or null. */
-export function lastGoodBackup(dir: string): Date | null {
-  const newest = dated(dir, 'tickets')[0];
+/** The date in the newest <kind>-*.db name (local midnight), or null. */
+export function lastGoodBackup(dir: string, kind: BackupKind = 'tickets'): Date | null {
+  const newest = dated(dir, kind)[0];
   const m = newest ? DATED.exec(newest) : null;
   return m ? new Date(Number(m[2]), Number(m[3]) - 1, Number(m[4])) : null;
 }
 
-/** last: newest tickets backup date; stale: none in the last 2 days; offsite: when it was last copied off the PC. */
-export function backupHealth(dir: string, now: Date): { last: string | null; stale: boolean; offsite: string | null } {
-  const last = lastGoodBackup(dir);
-  let offsite: string | null = null;
+/** A small JSON file's object, or null when it is missing or not an object. */
+function readJson(file: string): Record<string, unknown> | null {
   try {
-    const j: unknown = JSON.parse(readFileSync(join(dir, 'offsite.json'), 'utf8'));
-    const at = (j as { at?: unknown } | null)?.at;
-    if (typeof at === 'string') offsite = at;
+    const j: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    return j !== null && typeof j === 'object' && !Array.isArray(j) ? (j as Record<string, unknown>) : null;
   } catch {
-    offsite = null;
+    return null;
   }
+}
+
+export type BackupHealth = {
+  /** The newest tickets backup's date. */
+  last: string | null;
+  /** No tickets backup in the last 2 days, or (when there is an invomax.db) no invomax one. */
+  stale: boolean;
+  /** The newest invomax backup's date. */
+  invomax: string | null;
+  /** When the backups were last all copied off this PC. */
+  offsite: string | null;
+  /** That copy is more than 7 days old, or the last copy failed. */
+  offsite_stale: boolean;
+  /** The last copy's error class when it failed, else null. */
+  offsite_failed: string | null;
+};
+
+/** How the backups stand; invomaxDb given and there: its backups count toward stale too. */
+export function backupHealth(dir: string, now: Date, invomaxDb?: string): BackupHealth {
+  const old = (d: Date | null): boolean => d === null || now.getTime() - d.getTime() > STALE_MS;
+  const last = lastGoodBackup(dir, 'tickets');
+  const im = lastGoodBackup(dir, 'invomax');
+  const at = readJson(join(dir, 'offsite.json'))?.['at'];
+  const offsite = typeof at === 'string' ? at : null;
+  const attempt = readJson(join(dir, ATTEMPT));
+  const failed = attempt && attempt['ok'] === false ? String(attempt['error'] ?? 'unknown').slice(0, 80) : null;
+  const copied = offsite === null ? NaN : Date.parse(offsite);
   return {
     last: last ? ymd(last) : null,
-    stale: last === null || now.getTime() - last.getTime() > STALE_MS,
+    stale: old(last) || (invomaxDb !== undefined && existsSync(invomaxDb) && old(im)),
+    invomax: im ? ymd(im) : null,
     offsite,
+    offsite_stale: failed !== null || (offsite !== null && !(now.getTime() - copied <= OFFSITE_STALE_MS)),
+    offsite_failed: failed,
   };
+}
+
+/** An error's class, with its errno code when it has one (Error ENOSPC): never its message. */
+function errorClass(e: unknown): string {
+  const code = (e as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && /^E[A-Z]{2,15}$/.test(code) ? `${className(e)} ${code}` : className(e);
 }
 
 const sameRoot = (a: string, b: string): boolean =>
@@ -192,7 +233,9 @@ const statOrNull = async (p: string): Promise<Stats | null> => {
 
 /**
  * Copies the dated backups to target (made if missing), skipping a file already there with the same size and
- * mtime. Asynchronous (fs.promises) so a long copy to the USB drive never holds up the server's requests.
+ * mtime, then prunes the target by pruneBackups' rule. Asynchronous (fs.promises) so a long copy to the USB drive
+ * never holds up the server's requests. Each attempt, good or failed (by its error class), is noted in
+ * offsite-attempt.json beside offsite.json.
  */
 export async function copyBackups(
   dir: string,
@@ -200,17 +243,41 @@ export async function copyBackups(
   now: Date,
   opts: CopyOpts = {},
 ): Promise<{ copied: number; skipped: number }> {
+  const note = async (ok: boolean, error: string | null): Promise<void> => {
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, ATTEMPT), JSON.stringify({ at: now.toISOString(), ok, error }));
+    } catch {
+      // the copy's own outcome is what the caller hears
+    }
+  };
+  try {
+    const r = await copyOnce(dir, target, now, opts);
+    await note(true, null);
+    return r;
+  } catch (e) {
+    await note(false, errorClass(e));
+    throw e;
+  }
+}
+
+async function copyOnce(dir: string, target: string, now: Date, opts: CopyOpts): Promise<{ copied: number; skipped: number }> {
   const where = resolve(target);
   if (!existsSync(parse(where).root)) throw new BadInput('drive not found');
   if (!opts.allowSameDrive && sameRoot(where, dir)) throw new BadInput('that drive holds the backups already; use the USB drive');
   await mkdir(where, { recursive: true });
   const names = [...dated(dir, 'tickets'), ...dated(dir, 'invomax')];
+  const vanished = new Set<string>(); // pruned on this PC while the copy ran: nothing to copy
   let copied = 0;
   let skipped = 0;
   for (const n of names) {
     const from = join(dir, n);
     const to = join(where, n);
-    const src = await stat(from);
+    const src = await statOrNull(from);
+    if (!src) {
+      vanished.add(n);
+      continue;
+    }
     const have = await statOrNull(to);
     if (have && have.size === src.size && Math.abs(have.mtimeMs - src.mtimeMs) <= MTIME_SLACK_MS) {
       skipped++;
@@ -218,7 +285,16 @@ export async function copyBackups(
     }
     const tmp = `${to}.tmp`;
     try {
-      await copyFile(from, tmp);
+      try {
+        await copyFile(from, tmp);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT' && !existsSync(from)) {
+          removeFiles(tmp);
+          vanished.add(n); // pruned on this PC between the stat and the copy
+          continue;
+        }
+        throw e;
+      }
       const fh = await open(tmp, 'r+');
       try {
         await fh.sync();
@@ -238,9 +314,11 @@ export async function copyBackups(
     }
     copied++;
   }
-  if (names.length && names.every((n) => existsSync(join(where, n)))) {
+  const kept = names.filter((n) => !vanished.has(n));
+  if (kept.length && kept.every((n) => existsSync(join(where, n)))) {
     await writeFile(join(dir, 'offsite.json'), JSON.stringify({ at: now.toISOString(), target: where }));
   }
+  pruneBackups(where, now); // the drive keeps what this PC keeps, so it never fills up
   return { copied, skipped };
 }
 

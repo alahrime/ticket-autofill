@@ -1,8 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { backupHealth, backupNow, copyBackups, lastGoodBackup, pruneBackups, restoreBackup } from '../src/backup';
+import { backupFile, backupHealth, backupNow, copyBackups, lastGoodBackup, pruneBackups, restoreBackup } from '../src/backup';
 import { runCopyBackupsCommand, runRestoreCommand } from '../src/cli';
 import { type Config, loadConfig } from '../src/config';
 import { BadInput } from '../src/errors';
@@ -100,6 +100,23 @@ describe('backupNow', () => {
     }
   });
 
+  it('never makes a tickets.db that is not there (the source is opened read-only)', async () => {
+    expect(existsSync(cfg.db)).toBe(false);
+    await expect(backupNow(cfg, NOW)).rejects.toThrow();
+    expect(existsSync(cfg.db)).toBe(false);
+    expect(existsSync(cfg.backups) ? readdirSync(cfg.backups) : []).toEqual([]);
+  });
+
+  it('backupFile backs up one of the two on its own', async () => {
+    makeDb(cfg.db, 'a');
+    writeFileSync(cfg.invomaxDb, 'not a database: a damaged invomax.db'.repeat(50));
+    await expect(backupFile(cfg, 'invomax', NOW)).rejects.toThrow();
+    expect(await backupFile(cfg, 'tickets', NOW)).toBe(join(cfg.backups, 'tickets-2026-11-21.db'));
+    expect(readdirSync(cfg.backups)).toEqual(['tickets-2026-11-21.db']);
+    rmSync(cfg.invomaxDb);
+    expect(await backupFile(cfg, 'invomax', NOW)).toBeNull(); // no invomax.db: nothing to back up
+  });
+
   it('throws and leaves no .tmp when the source is not a database', async () => {
     writeFileSync(cfg.db, 'this is not a database file at all, just text'.repeat(50));
     await expect(backupNow(cfg, NOW)).rejects.toThrow();
@@ -174,14 +191,41 @@ describe('lastGoodBackup and backupHealth', () => {
   });
 
   it('flags stale after 2 days and reports offsite', () => {
-    expect(backupHealth(cfg.backups, NOW)).toEqual({ last: null, stale: true, offsite: null });
+    const none = { invomax: null, offsite: null, offsite_stale: false, offsite_failed: null };
+    expect(backupHealth(cfg.backups, NOW)).toEqual({ last: null, stale: true, ...none });
     touch(cfg.backups, ['tickets-2026-11-20.db']);
-    expect(backupHealth(cfg.backups, NOW)).toEqual({ last: '2026-11-20', stale: false, offsite: null });
+    expect(backupHealth(cfg.backups, NOW)).toEqual({ last: '2026-11-20', stale: false, ...none });
     expect(backupHealth(cfg.backups, new Date(2026, 10, 23, 3)).stale).toBe(true);
     writeFileSync(join(cfg.backups, 'offsite.json'), JSON.stringify({ at: '2026-11-20T10:00:00.000Z', target: 'E:\\shop-backups' }));
     expect(backupHealth(cfg.backups, NOW).offsite).toBe('2026-11-20T10:00:00.000Z');
     writeFileSync(join(cfg.backups, 'offsite.json'), '{not json');
     expect(backupHealth(cfg.backups, NOW).offsite).toBeNull();
+  });
+
+  it('is stale when the invomax backup is old, though the tickets one is new (when there is an invomax.db)', () => {
+    touch(cfg.backups, ['tickets-2026-11-21.db', 'invomax-2026-11-17.db']);
+    expect(backupHealth(cfg.backups, NOW, cfg.invomaxDb)).toMatchObject({ last: '2026-11-21', invomax: '2026-11-17', stale: false });
+    writeFileSync(cfg.invomaxDb, '');
+    expect(backupHealth(cfg.backups, NOW, cfg.invomaxDb)).toMatchObject({ last: '2026-11-21', invomax: '2026-11-17', stale: true });
+    touch(cfg.backups, ['invomax-2026-11-20.db']);
+    expect(backupHealth(cfg.backups, NOW, cfg.invomaxDb)).toMatchObject({ invomax: '2026-11-20', stale: false });
+    rmSync(join(cfg.backups, 'invomax-2026-11-20.db'));
+    rmSync(join(cfg.backups, 'invomax-2026-11-17.db'));
+    expect(backupHealth(cfg.backups, NOW, cfg.invomaxDb)).toMatchObject({ invomax: null, stale: true });
+  });
+
+  it('the copy off this PC goes stale after 7 days, or at once when the last copy failed', () => {
+    touch(cfg.backups, ['tickets-2026-11-21.db']);
+    const at = (iso: string): void => writeFileSync(join(cfg.backups, 'offsite.json'), JSON.stringify({ at: iso, target: 'E:\\shop-backups' }));
+    at(new Date(2026, 10, 14, 3).toISOString());
+    expect(backupHealth(cfg.backups, NOW)).toMatchObject({ offsite_stale: false, offsite_failed: null });
+    at(new Date(2026, 10, 13, 23).toISOString());
+    expect(backupHealth(cfg.backups, NOW)).toMatchObject({ offsite_stale: true, offsite_failed: null });
+    at(new Date(2026, 10, 20, 3).toISOString());
+    writeFileSync(join(cfg.backups, 'offsite-attempt.json'), JSON.stringify({ at: NOW.toISOString(), ok: false, error: 'Error ENOSPC' }));
+    expect(backupHealth(cfg.backups, NOW)).toMatchObject({ offsite_stale: true, offsite_failed: 'Error ENOSPC' });
+    writeFileSync(join(cfg.backups, 'offsite-attempt.json'), JSON.stringify({ at: NOW.toISOString(), ok: true, error: null }));
+    expect(backupHealth(cfg.backups, NOW)).toMatchObject({ offsite_stale: false, offsite_failed: null });
   });
 });
 
@@ -209,6 +253,55 @@ describe('copyBackups', () => {
     const later = new Date(2026, 10, 20, 5, 0, 0); // same name and size, different time
     utimesSync(src, later, later);
     expect(await copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
+  });
+
+  it('records each attempt beside offsite.json: a failed one by its error class, then a good one', async () => {
+    real(['tickets-2026-11-20.db']);
+    const target = join(tmp.dir, 'usb');
+    const corrupt = (p: string): void => writeFileSync(p, 'not the same bytes');
+    await expect(copyBackups(cfg.backups, target, NOW, { ...SAME, afterCopy: corrupt })).rejects.toThrow('copy did not match');
+    const attempt = (): unknown => JSON.parse(readFileSync(join(cfg.backups, 'offsite-attempt.json'), 'utf8'));
+    expect(attempt()).toEqual({ at: NOW.toISOString(), ok: false, error: 'Error' });
+    expect(backupHealth(cfg.backups, NOW)).toMatchObject({ offsite: null, offsite_stale: true, offsite_failed: 'Error' });
+    await copyBackups(cfg.backups, target, NOW, SAME);
+    expect(attempt()).toEqual({ at: NOW.toISOString(), ok: true, error: null });
+    expect(backupHealth(cfg.backups, NOW)).toMatchObject({ offsite: NOW.toISOString(), offsite_stale: false, offsite_failed: null });
+  });
+
+  it('prunes the target after a good copy by the same rule, dated names only', async () => {
+    real(['tickets-2026-11-20.db']);
+    const target = join(tmp.dir, 'usb');
+    const start = new Date(2026, 0, 1);
+    const old = Array.from({ length: 100 }, (_, i) => `tickets-${day(start, i)}.db`); // 2026-01-01 .. 2026-04-10
+    touch(target, [...old, 'notes.txt', 'tickets-2026-01-01.db.tmp']);
+    expect(await copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
+    const left = readdirSync(target);
+    expect(left.filter((n) => /^tickets-\d{4}-\d{2}-\d{2}\.db$/.test(n))).toHaveLength(90);
+    expect(left).toContain('tickets-2026-11-20.db');
+    expect(left).not.toContain(old[10]); // the oldest 11 went: 89 old ones plus the new copy are kept
+    expect(left).toContain(old[11]);
+    expect(left).toContain('notes.txt');
+    expect(left).toContain('tickets-2026-01-01.db.tmp');
+  });
+
+  it('does not prune the target when the copy fails', async () => {
+    real(['tickets-2026-11-20.db']);
+    const target = join(tmp.dir, 'usb');
+    const start = new Date(2026, 0, 1);
+    touch(target, Array.from({ length: 100 }, (_, i) => `tickets-${day(start, i)}.db`));
+    const corrupt = (p: string): void => writeFileSync(p, 'not the same bytes');
+    await expect(copyBackups(cfg.backups, target, NOW, { ...SAME, afterCopy: corrupt })).rejects.toThrow();
+    expect(readdirSync(target)).toHaveLength(100);
+  });
+
+  it('skips a backup the prune deleted while the copy ran (no ENOENT), and still writes offsite.json', async () => {
+    real(['tickets-2026-11-20.db', 'invomax-2026-11-20.db']);
+    const target = join(tmp.dir, 'usb');
+    const gone = join(cfg.backups, 'invomax-2026-11-20.db');
+    const r = await copyBackups(cfg.backups, target, NOW, { ...SAME, afterCopy: () => rmSync(gone, { force: true }) });
+    expect(r).toEqual({ copied: 1, skipped: 0 });
+    expect(readdirSync(target)).toEqual(['tickets-2026-11-20.db']);
+    expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(true);
   });
 
   it('fails a copy that differs from its source by one byte, deletes it and writes no offsite.json', async () => {
