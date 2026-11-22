@@ -3511,7 +3511,8 @@ export const getPutJobRuleUrl = () => {
 /**
  * Lines with this code whose description has every one of `words` (empty: every line with the code) are
  * `job`. The rule with the most words wins, a tie the newer. Adds the rule or replaces the one with the same
- * code and words (as a set). `job` must be a parts.csv code or `ignore`, else 400.
+ * code and words (as a set). `job` must be a parts.csv code or `ignore`, else 400. A new rule past 2000 in
+ * all, or 300 for its code, is 400 `too many rules`; changing a stored one is always allowed.
  * @summary Accept a job mapping rule (admin)
  */
 export const putJobRule = async (jobRuleIn: JobRuleIn, options?: Parameters<typeof shopFetch>[1]): Promise<putJobRuleResponse> => {

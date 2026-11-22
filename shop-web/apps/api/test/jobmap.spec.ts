@@ -44,11 +44,11 @@ function putLine(im: DatabaseSync, l: L): void {
   ).run(l.inv, l.no, l.code, l.desc, l.kind ?? 'labor', qty, unit, Math.round(qty * unit));
 }
 
-function putImport(im: DatabaseSync): void {
+function putImport(im: DatabaseSync, ok = 1): void {
   im.prepare(
     `INSERT INTO im_imports (started, finished, ok, tries, invoices, lines, added, changed, gone)
-     VALUES ('2026-11-21T01:00:00', '2026-11-21T01:00:05', 1, 1, 0, 0, 0, 0, 0)`,
-  ).run();
+     VALUES ('2026-11-21T01:00:00', '2026-11-21T01:00:05', ?, 1, 0, 0, 0, 0, 0)`,
+  ).run(ok);
 }
 
 describe('normalDesc', () => {
@@ -222,6 +222,30 @@ describe('JobIndex', () => {
     expect(jobs.job('9000002', 5)).toBe('FBP');
   });
 
+  it('a failed import (ok = 0) does not read the lines again; a good one does', () => {
+    jobs.coverage();
+    const built = jobs.builds;
+    putImport(im, 0);
+    jobs.coverage();
+    expect(jobs.builds).toBe(built);
+    putImport(im, 1);
+    jobs.coverage();
+    expect(jobs.builds).toBe(built + 1);
+  });
+
+  it('caps rules at 300 per code and 2000 in all; changing a stored rule is always allowed', () => {
+    const word = (i: number): string => `W${i}`;
+    for (let i = 0; i < 300; i++) map.put({ im_code: 'LABOR', words: [word(i)], job: 'FBP' }, 'admin#1');
+    expect(() => map.put({ im_code: 'LABOR', words: ['W300'], job: 'FBP' }, 'admin#1')).toThrow('too many rules');
+    expect(map.put({ im_code: 'LABOR', words: ['W7'], job: 'RBP' }, 'admin#1').job).toBe('RBP');
+    for (let c = 0; c < 6; c++)
+      for (let i = 0; i < 300 && map.rules().length < 2000; i++) map.put({ im_code: `C${c}`, words: [word(i)], job: 'FBP' }, 'admin#1');
+    expect(map.rules()).toHaveLength(2000);
+    expect(() => map.put({ im_code: 'NEW', words: [], job: 'FBP' }, 'admin#1')).toThrow('too many rules');
+    expect(map.put({ im_code: 'C0', words: ['W1'], job: 'RBP' }, 'admin#1').job).toBe('RBP');
+    expect(map.rules()).toHaveLength(2000);
+  });
+
   it('a second JobMap on the same tickets.db changing rules is seen by the version key', () => {
     expect(jobs.coverage().mapped_lines).toBe(0);
     new JobMap(db).put({ im_code: 'FBP', words: [], job: 'FBP' }, 'admin#2');
@@ -276,24 +300,50 @@ describe('job-map routes', () => {
       const r = await s.call('/api/job-map', body, a);
       return [r.status, r.body];
     };
-    expect(await post({ im_code: 'LABOR', words: [], job: 'NOPE' })).toEqual([400, { error: 'job must be a parts.csv code or ignore' }]);
+    expect(await post({ im_code: 'LABOR', words: ['MISC'], job: 'NOPE' })).toEqual([400, { error: 'job must be a parts.csv code or ignore' }]);
     expect((await post({ im_code: 'LABOR', words: ['MISC'], job: 'ignore' }))[0]).toBe(200);
     expect((await post({ im_code: '', words: [], job: 'FBP' }))[0]).toBe(400);
     expect((await post({ im_code: 'TOOLONGCODE', words: [], job: 'FBP' }))[0]).toBe(400);
     expect((await post({ im_code: 'LABOR', words: ['front'], job: 'FBP' }))[0]).toBe(400);
     expect((await post({ im_code: 'LABOR', words: ['A B'], job: 'FBP' }))[0]).toBe(400);
     expect((await post({ im_code: 'LABOR', words: Array(11).fill('PADS'), job: 'FBP' }))[0]).toBe(400);
+    // a digit-only word would be dropped and leave a catch-all rule: refused, as is an empty LABOR / INSTALL- rule
+    expect((await post({ im_code: 'LABOR', words: ['12'], job: 'FBP' }))[0]).toBe(400);
+    expect((await post({ im_code: 'FBP', words: ['12'], job: 'FBP' }))[0]).toBe(400);
+    expect(await post({ im_code: 'LABOR', words: [], job: 'FBP' })).toEqual([400, { error: 'a LABOR or INSTALL- rule needs words' }]);
+    expect(await post({ im_code: 'INSTALL-', words: [], job: 'FBP' })).toEqual([400, { error: 'a LABOR or INSTALL- rule needs words' }]);
+    expect((await post({ im_code: 'FBP', words: [], job: 'FBP' }))[0]).toBe(200); // a specific code may have none
+    expect((await post({ im_code: 'LABOR', words: ['5W30'], job: 'OIL' }))[0]).toBe(200);
+    const del = async (body: unknown): Promise<[number, unknown]> => {
+      const r = await s.call('/api/job-map/delete', body, a);
+      return [r.status, r.body];
+    };
+    expect((await del({ im_code: 'LABOR', words: ['12'] }))[0]).toBe(400);
+    expect(await del({ im_code: 'LABOR', words: [] })).toEqual([400, { error: 'a LABOR or INSTALL- rule needs words' }]);
+    expect(await del({ im_code: 'LABOR', words: ['5W30'] })).toEqual([200, { deleted: true }]);
+    expect(s.deps.jobs.map.rules().map((x) => [x.im_code, x.words])).toEqual([
+      ['LABOR', ['MISC']],
+      ['FBP', []],
+    ]);
     expect((await post({ im_code: 'LABOR', job: 'FBP' }))[0]).toBe(400);
     expect((await s.call('/api/job-map?page=0', undefined, a)).status).toBe(400);
     expect((await s.call('/api/job-map?unmapped=yes', undefined, a)).status).toBe(400);
     expect(s.log()).not.toMatch(/MISC|BRAKE/);
   });
 
+  it('too many rules is 400 for a new one, a stored one still changes', async () => {
+    const a = await s.admin();
+    for (let i = 0; i < 300; i++) s.deps.jobs.map.put({ im_code: 'LABOR', words: [`W${i}`], job: 'FBP' }, 'admin#1');
+    const r = await s.call('/api/job-map', { im_code: 'LABOR', words: ['PADS'], job: 'FBP' }, a);
+    expect([r.status, r.body]).toEqual([400, { error: 'too many rules' }]);
+    expect((await s.call('/api/job-map', { im_code: 'LABOR', words: ['W0'], job: 'RBP' }, a)).status).toBe(200);
+  });
+
   it('mechanics get 403, no session 401', async () => {
     const t = await s.tech('Al Fixit');
     expect((await s.call('/api/job-map', undefined, t)).status).toBe(403);
-    expect((await s.call('/api/job-map', { im_code: 'LABOR', words: [], job: 'FBP' }, t)).status).toBe(403);
-    expect((await s.call('/api/job-map/delete', { im_code: 'LABOR', words: [] }, t)).status).toBe(403);
+    expect((await s.call('/api/job-map', { im_code: 'LABOR', words: ['PADS'], job: 'FBP' }, t)).status).toBe(403);
+    expect((await s.call('/api/job-map/delete', { im_code: 'LABOR', words: ['PADS'] }, t)).status).toBe(403);
     expect((await s.call('/api/job-map')).status).toBe(401);
   });
 });

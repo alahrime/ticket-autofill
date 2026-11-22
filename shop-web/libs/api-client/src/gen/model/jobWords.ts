@@ -7,8 +7,10 @@
  */
 
 /**
- * Description words, upper-case letters and digits (as normalised); compared as a set.
+ * Description words, upper-case letters and digits, each with a letter (as normalised); compared as a set.
+ * A LABOR or INSTALL- rule needs at least one (the route says so); another code's rule may have none.
  * @maxItems 10
- * @items.pattern ^[A-Z0-9]{1,40}$
+ * @items.maxLength 40
+ * @items.pattern ^[A-Z0-9]*[A-Z][A-Z0-9]*$
  */
 export type JobWords = string[];

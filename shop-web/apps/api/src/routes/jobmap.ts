@@ -5,14 +5,14 @@ import { BadInput } from '../errors';
 import { validRequest } from '../http/contract';
 import { depsOf } from '../http/deps';
 import { jsonBody } from '../http/security';
-import { IGNORE } from '../jobs/jobmap';
+import { checkWords, IGNORE } from '../jobs/jobmap';
 import { queryValues, sessionIn, signedIn } from '../view';
 import { loadParts } from './catalog';
 
 export const GROUPS_PER_PAGE = 100;
 export const MAX_CODE = 8;
 export const MAX_WORDS = 10;
-const WORD = /^[A-Z0-9]{1,40}$/;
+const WORD = /^[A-Z0-9]{1,40}$/; // checkWords then wants a letter in each
 
 type Body = Record<string, unknown>;
 
@@ -23,8 +23,10 @@ function imCode(v: unknown): string {
   throw new BadInput(`im_code must be 1 to ${MAX_CODE} characters`);
 }
 
-function words(v: unknown): string[] {
-  if (Array.isArray(v) && v.length <= MAX_WORDS && v.every((w) => typeof w === 'string' && WORD.test(w))) return v as string[];
+/** Up to MAX_WORDS words that checkWords keeps as sent (so delete finds exactly what put stored). */
+function words(code: string, v: unknown): string[] {
+  if (Array.isArray(v) && v.length <= MAX_WORDS && v.every((w) => typeof w === 'string' && WORD.test(w)))
+    return checkWords(code, v as string[]);
   throw new BadInput(`words must be up to ${MAX_WORDS} upper-case letters-and-digits words`);
 }
 
@@ -47,7 +49,7 @@ export function jobMapRoutes(): Router {
   r.post('/api/job-map', admin, jsonBody, validRequest, (req, res) => {
     const d = req.body as Body;
     const code = imCode(d['im_code']);
-    const w = words(d['words']);
+    const w = words(code, d['words']);
     const job = d['job'];
     let codes: string[];
     try {
@@ -62,7 +64,8 @@ export function jobMapRoutes(): Router {
 
   r.post('/api/job-map/delete', admin, jsonBody, validRequest, (req, res) => {
     const d = req.body as Body;
-    res.json({ deleted: depsOf(req).jobs.map.remove(imCode(d['im_code']), words(d['words'])) });
+    const code = imCode(d['im_code']);
+    res.json({ deleted: depsOf(req).jobs.map.remove(code, words(code, d['words'])) });
   });
   return r;
 }

@@ -7,7 +7,7 @@ import { statSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { GENERIC_CODES } from '@shop/invomax';
 import { loadParts, type Part } from '../routes/catalog';
-import { IGNORE, type JobMap, matchRule, normalDesc, type Rule } from './jobmap';
+import { IGNORE, type JobMap, matchPrepared, normalDesc, type Prepared, prepareRules } from './jobmap';
 import { propose, type Proposal } from './propose';
 
 export type Sample = { unit: number; date: string; year: number | null; make: string; model: string };
@@ -67,7 +67,7 @@ type Lines = {
 /** The rules applied to the lines. */
 type Mapped = {
   key: string;
-  byCode: Map<string, Rule[]>;
+  byCode: Map<string, Prepared[]>;
   pairJob: (string | null)[];
   groupMapped: Int32Array;
   coverage: Coverage;
@@ -98,7 +98,7 @@ export class JobIndex {
   }
 
   private current(): { l: Lines; m: Mapped } {
-    const r = this.im.prepare('SELECT MAX(id) AS id FROM im_imports').get() as { id: number | null };
+    const r = this.im.prepare('SELECT MAX(id) AS id FROM im_imports WHERE ok = 1').get() as { id: number | null };
     const linesKey = String(r.id ?? 0);
     if (this.lines?.key !== linesKey) {
       this.lines = this.readLines(linesKey);
@@ -236,12 +236,10 @@ export class JobIndex {
   }
 
   private apply(l: Lines, key: string): Mapped {
-    const rules = this.map.rules();
-    const byCode = new Map<string, Rule[]>();
-    for (const r of rules) byCode.set(r.im_code, [...(byCode.get(r.im_code) ?? []), r]);
+    const byCode = prepareRules(this.map.rules()); // each rule's word set once
     const pairJob = l.pairs.map((p) => {
       const codeRules = byCode.get(p.code);
-      return codeRules ? (matchRule(p, codeRules)?.job ?? null) : null;
+      return codeRules ? (matchPrepared(new Set(p.words), codeRules)?.job ?? null) : null;
     });
     const groupMapped = new Int32Array(l.groups.length);
     const coverage: Coverage = { lines: 0, mapped_lines: 0, dollars: 0, mapped_dollars: 0 };
@@ -321,7 +319,8 @@ export class JobIndex {
     const out: Group[] = [];
     l.groups.forEach((g, i) => {
       if (opts.unmappedOnly && (m.groupMapped[i] as number) >= g.lines) return;
-      const rule = matchRule({ code: g.im_code, words: g.words }, m.byCode.get(g.im_code) ?? []);
+      const codeRules = m.byCode.get(g.im_code);
+      const rule = codeRules ? matchPrepared(new Set(g.words), codeRules) : null;
       out.push({
         im_code: g.im_code,
         words: [...g.words],

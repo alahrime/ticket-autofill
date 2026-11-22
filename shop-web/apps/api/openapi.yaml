@@ -757,7 +757,8 @@ paths:
       description: |
         Lines with this code whose description has every one of `words` (empty: every line with the code) are
         `job`. The rule with the most words wins, a tie the newer. Adds the rule or replaces the one with the same
-        code and words (as a set). `job` must be a parts.csv code or `ignore`, else 400.
+        code and words (as a set). `job` must be a parts.csv code or `ignore`, else 400. A new rule past 2000 in
+        all, or 300 for its code, is 400 `too many rules`; changing a stored one is always allowed.
       requestBody:
         required: true
         content:
@@ -1436,11 +1437,13 @@ components:
       maxLength: 8
 
     JobWords:
-      description: Description words, upper-case letters and digits (as normalised); compared as a set.
-      x-error: words must be up to 10 upper-case letters-and-digits words
+      description: |
+        Description words, upper-case letters and digits, each with a letter (as normalised); compared as a set.
+        A LABOR or INSTALL- rule needs at least one (the route says so); another code's rule may have none.
+      x-error: words must be up to 10 upper-case letters-and-digits words, each with a letter
       type: array
       maxItems: 10
-      items: { type: string, pattern: '^[A-Z0-9]{1,40}$' }
+      items: { type: string, maxLength: 40, pattern: '^[A-Z0-9]*[A-Z][A-Z0-9]*$' }
 
     JobRuleKey:
       type: object
