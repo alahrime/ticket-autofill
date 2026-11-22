@@ -793,6 +793,8 @@ async function suggest(tr) {
   if (f("make")) params.set("make", f("make"));
   if (f("model")) params.set("model", f("model"));
   params.set("qty", String(qty));
+  const key = () => [tr.querySelector(".q").value.trim(), f("year"), f("make"), f("model")].join("|");
+  const sent = key();  // what this request was built from; a change before the reply must still offer Update
   const code = tr.dataset.code, seq = (tr.suggSeq = (tr.suggSeq || 0) + 1);
   if (tr.suggCtl) tr.suggCtl.abort();  // one request per line: the newer one wins
   const ctl = tr.suggCtl = new AbortController();
@@ -815,7 +817,7 @@ async function suggest(tr) {
   if (tr.suggBox) tr.suggBox.remove();
   tr.suggBox = el("div", {class: "sugg"}, got.map(([label, s]) => el("div", {text: suggText(label, s)})), tr.suggLink);
   tr.firstElementChild.append(tr.suggBox);
-  tr.suggHas = true; tr.suggStaleNow = false;
+  tr.suggHas = true; tr.suggStaleNow = key() !== sent;
   tr.querySelector(".p").dispatchEvent(new Event("input", {bubbles: true}));  // totals, and the unsaved mark
 }
 

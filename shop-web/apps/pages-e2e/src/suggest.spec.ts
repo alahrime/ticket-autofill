@@ -167,3 +167,22 @@ test('removing a line drops its suggestion and a late reply', async ({ page }) =
   await expect(page.locator('.sugg')).toHaveCount(0);
   await expect(page.locator('#flash')).toBeHidden();
 });
+
+for (const [what, change] of [
+  ['qty', (page: Page) => row(page).locator('.q').fill('2')],
+  ['make', (page: Page) => page.locator('#t-make').fill('Honda')],
+] as const) {
+  test(`a ${what} change while the request is out still offers Update suggested prices`, async ({ page }) => {
+    const seen = await stub(page, { part: PART, labor: LABOR }, { delay: 1000 });
+    await openTicket(page);
+    await pick(page);
+    await change(page);
+    const link = page.getByRole('button', { name: /Update suggested prices/ });
+    await expect(row(page).locator('.sugg')).toContainText('Part:', { timeout: 5000 });
+    await expect(link).toBeVisible();
+    await link.click();
+    await expect.poll(() => seen.length).toBe(2);
+    if (what === 'qty') expect(seen[1].searchParams.get('qty')).toBe('2');
+    else expect(seen[1].searchParams.get('make')).toBe('Honda');
+  });
+}
