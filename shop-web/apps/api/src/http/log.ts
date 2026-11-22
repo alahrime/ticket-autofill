@@ -49,24 +49,35 @@ export function noteActor(res: Response, s: Session | null): void {
 }
 
 /**
- * Path segments that hold customer data, written as the route's pattern instead: /api/customers/<phone> is
- * logged as /api/customers/:phone. Matched on the raw path (any case, any segment, anything after it), so a
- * path no route serves (a 401 / 404) can't leak the phone either. Ticket ids and invoice keys stay: they say
- * which record changed and are no one's personal data.
+ * /api/customers/<phone> holds customer data: it is logged as /api/customers/:phone. Whether to redact is
+ * decided on the percent-decoded path (any case, any segment, anything after it), so a 401 / 404 or %35 for
+ * "5" can't leak the phone either; what is written is always the raw, still-encoded path (a decoded %0A would
+ * forge a log line). Ticket ids and invoice keys stay: they say which record changed and are no one's data.
  */
-const PRIVATE_PATHS: Array<[RegExp, string]> = [[/\/customers\/.*$/i, '/customers/:phone']];
+const CUSTOMERS_DECODED = /\/customers\//i;
+const CUSTOMERS_RAW = /\/customers(?:\/|%2f)/i;
+const REDACTED = '/api/customers/:phone';
 
-/** The path as logged: no query or fragment, customer data replaced by the route's pattern. */
+/** Control characters (a newline would start a forged line): never written, whatever the path. */
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/** The path as logged: raw, no query or fragment, customer data replaced by the route's pattern. */
 export function logPath(url: string): string {
-  const p = url.split(/[?#]/)[0] ?? '';
-  let decoded = p;
+  const raw = url.split(/[?#]/)[0] ?? '';
+  let decoded = raw;
   try {
-    decoded = decodeURIComponent(p); // %2F or %35 can't hide a phone from the check
+    decoded = decodeURIComponent(raw);
   } catch {
     // not valid percent-encoding: checked as it came
   }
-  for (const [re, as] of PRIVATE_PATHS) if (re.test(decoded)) return decoded.replace(re, as);
-  return p;
+  let out = raw;
+  if (CUSTOMERS_DECODED.test(decoded) || CUSTOMERS_RAW.test(raw)) {
+    const at = raw.search(CUSTOMERS_RAW);
+    // the raw prefix when it can be cut cleanly there, else the fixed pattern
+    out = at >= 0 ? `${raw.slice(0, at)}/customers/:phone` : REDACTED;
+  }
+  return out.replace(CONTROL, '');
 }
 
 /** Appends one line; a log that can't be written never fails the request. */

@@ -219,6 +219,33 @@ describe('Bill history', () => {
     expect(s.log()).not.toMatch(/0100000|0109999|%35/);
   });
 
+  it('logs the raw path: %0A never starts a line; slashes and encodings still hide the phone', async () => {
+    const paths = [
+      '/api%0Afake/customers/5550100000',
+      '/api/tickets%0A2026-11-21%2000:00:00%20GET%20/forged%20200',
+      '/api/customers/5550100000/',
+      '/api//customers/5550100000',
+      '/api/customers//5550100000',
+      '/api/customers%2F5550100000',
+      '/api/cust%6Fmers/5550100000',
+    ];
+    const before = s.log().split('\n').filter(Boolean).length;
+    for (const p of paths) await get(p);
+    const lines = s.log().split('\n').filter(Boolean).slice(before);
+    expect(lines).toHaveLength(paths.length); // one line per request: nothing forged
+    for (const l of lines) expect(l).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d GET \S+ \d{3} (admin#\d+ )?\d+\.\ds$/);
+    expect(lines.map((l) => l.split(' ')[3])).toEqual([
+      '/api%0Afake/customers/:phone', // raw, still encoded
+      '/api/tickets%0A2026-11-21%2000:00:00%20GET%20/forged%20200',
+      '/api/customers/:phone',
+      '/api//customers/:phone',
+      '/api/customers/:phone',
+      '/api/customers/:phone',
+      '/api/customers/:phone', // can't be cut cleanly in the raw path: the fixed pattern
+    ]);
+    expect(s.log()).not.toMatch(/0100000/);
+  });
+
   it('links by typing any bill number, checking the version; unlink, none and a typed final', async () => {
     const t3 = filled('2026-11-18', { plate: 'zzz-999', phone: '5550100009' });
     // 9000002 is far from t3's day and plate: never a candidate, but the admin can type it

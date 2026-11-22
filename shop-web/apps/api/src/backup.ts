@@ -1,7 +1,9 @@
 // Backups of tickets.db and invomax.db (SQLite online backup), pruning, copy to a USB drive, and restore.
 // Only files named exactly tickets-YYYY-MM-DD.db or invomax-YYYY-MM-DD.db are ever pruned or copied.
+import { createHash } from 'node:crypto';
 import {
   copyFileSync,
+  createReadStream,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -12,6 +14,7 @@ import {
 } from 'node:fs';
 import { copyFile, mkdir, open, rename, stat, utimes, writeFile } from 'node:fs/promises';
 import { connect } from 'node:net';
+import { pipeline } from 'node:stream/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import type { Config } from './config';
@@ -170,6 +173,13 @@ export type CopyOpts = {
   afterCopy?: (tmpPath: string) => void | Promise<void>;
 };
 
+/** The file's SHA-256 (hex), read as a stream. */
+async function sha256(file: string): Promise<string> {
+  const hash = createHash('sha256');
+  await pipeline(createReadStream(file), hash);
+  return hash.digest('hex');
+}
+
 /** stat, or null when the file isn't there. */
 const statOrNull = async (p: string): Promise<Stats | null> => {
   try {
@@ -217,11 +227,10 @@ export async function copyBackups(
       }
       await utimes(tmp, src.atime, src.mtime);
       await opts.afterCopy?.(tmp);
-      try {
-        quickCheck(tmp, true); // one small read-only check: synchronous is fine
-      } finally {
-        removeFiles(`${tmp}-wal`, `${tmp}-shm`);
-      }
+      // the copy, read back from the drive, must be the source byte for byte (streamed: a 58 MB invomax
+      // backup on a slow USB stick never holds up requests). The source was quick_checked when it was made.
+      const [want, got] = await Promise.all([sha256(from), sha256(tmp)]);
+      if (want !== got) throw new Error('copy did not match');
       await rename(tmp, to);
     } catch (e) {
       removeFiles(tmp, `${tmp}-wal`, `${tmp}-shm`);

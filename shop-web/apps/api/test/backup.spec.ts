@@ -211,15 +211,16 @@ describe('copyBackups', () => {
     expect(await copyBackups(cfg.backups, target, NOW, SAME)).toEqual({ copied: 1, skipped: 0 });
   });
 
-  it('fails a corrupt copy, deletes it and writes no offsite.json', async () => {
+  it('fails a copy that differs from its source by one byte, deletes it and writes no offsite.json', async () => {
     real(['tickets-2026-11-20.db']);
     const target = join(tmp.dir, 'usb');
     const corrupt = (tmpPath: string): void => {
       const b = readFileSync(tmpPath);
-      for (let i = 0; i < b.length; i += 5) b[i] = 0xff;
+      const at = b.length - 1; // the file's last byte: a quick_check could well pass it
+      b[at] = (b[at] ?? 0) ^ 0x01;
       writeFileSync(tmpPath, b);
     };
-    await expect(copyBackups(cfg.backups, target, NOW, { ...SAME, afterCopy: corrupt })).rejects.toThrow('failed its check');
+    await expect(copyBackups(cfg.backups, target, NOW, { ...SAME, afterCopy: corrupt })).rejects.toThrow('copy did not match');
     expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false);
     expect(readdirSync(target)).toEqual([]);
   });
@@ -229,10 +230,23 @@ describe('copyBackups', () => {
     let release!: () => void;
     const hold = new Promise<void>((ok) => (release = ok));
     let held = 0;
-    const copy = copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW, { ...SAME, afterCopy: () => (held++, hold) });
-    let ticked = false;
-    await new Promise<void>((ok) => setTimeout(() => ((ticked = true), ok()), 10)); // a timer still runs
-    expect([ticked, held]).toEqual([true, 1]);
+    let reached!: () => void;
+    const atCheck = new Promise<void>((ok) => (reached = ok));
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 1); // counts while the copy runs: the event loop is free
+    const copy = copyBackups(cfg.backups, join(tmp.dir, 'usb'), NOW, {
+      ...SAME,
+      afterCopy: () => {
+        held++;
+        reached();
+        return hold;
+      },
+    });
+    await atCheck;
+    const at = ticks;
+    await new Promise<void>((ok) => setTimeout(ok, 20)); // a timer still runs while the copy is held
+    clearInterval(timer);
+    expect([ticks > at, held]).toEqual([true, 1]);
     expect(existsSync(join(cfg.backups, 'offsite.json'))).toBe(false); // not complete yet
     release();
     expect(await copy).toEqual({ copied: 2, skipped: 0 });
