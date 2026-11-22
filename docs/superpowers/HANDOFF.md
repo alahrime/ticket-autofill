@@ -1,6 +1,6 @@
 # Handoff — ticket-autofill
 
-**Updated:** 2026-11-21 (phase 4 brainstorm, branch `claude/phase4-bill-history-2aa87d`). Before that, 2026-11-20: **Branch:** `main`, pushed. The TypeScript shop server (`ts-shop-server`) passed its final two-seat review and was merged into `main` on 2026-11-20 as a fast-forward; see "TypeScript shop server" below. This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
+**Updated:** 2026-11-22 (phase 4 built and reviewed on branch `phase4-bill-history`; not merged, not pushed — see "Phase 4 build"). Before that, 2026-11-20: **Branch:** `main`, pushed. The TypeScript shop server (`ts-shop-server`) passed its final two-seat review and was merged into `main` on 2026-11-20 as a fast-forward; see "TypeScript shop server" below. This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
 
 **Live today: still `shop.py`, serving the merged pages.** Since the merge, the iPad check-in page is gone. On Python the new Delete and New customer buttons say "Not available on this server." The switch to the TypeScript server is the owner's call; follow the checklist below from step 3, since step 2 (merge) is done. `shop.py` and `shopwin.py` pick up the new `tickets.py` only when they restart.
 
@@ -38,7 +38,7 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
     - Everything else goes to the "needs a bill" list, which offers Link, Link by bill number, None of these, and Type the final bill.
     - Each change is checked against a version number, so a stale screen can't overwrite it.
   - **Nightly run (TS server only):** at 02:00 local time it backs up, prunes and copies to each `backupTargets` drive that is present. It then imports InvoMax and auto-links. It catches up after the PC was off.
-  - **Admin page:** an upkeep line shows the last backup (red after 2 days), "No copy off this PC yet", "InvoMax checked …", and "N tickets need a bill". It has **Check InvoMax now** and **Copy backups to USB** buttons, and a Bill history link. All of this is hidden under `shop.py`.
+  - **Admin page:** an upkeep line shows the last tickets and bills backups (red after 2 days), "Copied off this PC: <date>" (red after 7 days or a failed copy), "InvoMax checked …", and "N tickets need a bill". It has **Check InvoMax now** and **Copy backups to USB** buttons, and a Bill history link. All of this is hidden under `shop.py`.
   - **Bill history** (`/bills`, the React app `shop-web/apps/admin-app`, admin only):
     - Search by tag, name, phone, VIN (our tickets only; InvoMax keeps no VIN) and date.
     - Our ticket and the InvoMax bill are shown side by side, with a line when the difference isn't zero.
@@ -52,7 +52,34 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
     - #221558 (2008-02-18): parts 225.02, labor 26.00, total 275.45.
   - **Question on #221558:** all 5 lines are kind M (part), but the bill counts the 26.00 SAFETY INSPECTION as labor. Ask whether InvoMax shows that line as labor. Not approved until the owner says so.
 - **Running e2e:** use `NX_DAEMON=false npx nx e2e pages-e2e`. With the nx daemon on, it hung for 15 minutes on this PC.
-- **Next: Stage 4b (Tasks 10–13):** job mapping and suggested prices on the admin's invoice entry. The admin can always change the price. After that, the whole-branch review.
+- **Stage 4b done (Tasks 10–13, 2026-11-22; not merged, not pushed).**
+  - **Job mapping** (`/jobs`, admin only):
+    - The rules live in `job_map` in tickets.db and map InvoMax line codes and words to a `parts.csv` job, or to `ignore`.
+    - The page lists unmapped groups biggest first, with a proposed job and Accept, Change and Ignore. It also shows coverage (lines and dollars) and a "Show mapped" list with Remove.
+  - **Suggested prices:**
+    - `GET /api/price-suggestions` gives the median price for the job, with its range (25th–75th percentile) and its basis. It looks first at the same model ±2 years, then the same model, then the same make, then all cars; it tries the last 24 months first, then all time. History comes from our own filled tickets plus the InvoMax lines.
+    - Labor is multiplied by qty. With no history it falls back to the `parts.csv` price.
+    - On the admin's invoice entry, each line shows the suggestion and its range. An empty box is filled in; a typed price is never changed.
+    - When the car or qty changes, an "Update suggested prices" link appears.
+- **Whole-branch review (2026-11-22):** 0 Critical and 5 Important issues, all fixed and re-reviewed as fixed:
+  - Bills with odd invoice numbers now open.
+  - Each backup file is made, retried after an hour and shown on its own.
+  - The USB copy is pruned with the same retention as the PC.
+  - The upkeep line reads "Copied off this PC: <date>" and turns red after 7 days or when the last copy failed.
+  - A failing import backs off to 1h, 2h, 4h… and always runs again at 02:00. **Check InvoMax now** always runs.
+  - **Retiring InvoMax:** set `"invomaxDir": null` in `shop-settings.json` to turn the import off. The upkeep line then says so.
+  - Tests at the end: api has 326, pages-e2e has 48 passing, and switch-check prints `ready`.
+- **Parked for after the merge** (small and rare; the details are in the ledger):
+  - A bill with a *blank* invoice number shows in the list but can't be opened.
+  - `.try` copies are renamed before the import's database write, so a failed write leaves the kept copy newer than the import.
+  - "No copy off this PC yet" never turns red.
+  - The import back-off resets when the server restarts.
+  - A USB target *inside* `invomaxDir` is only refused because it is on the same drive. Add an explicit check before ever moving the shop root to another drive.
+  - Some API-only edge cases: typed finals that reuse a real InvoMax number, and `markNone` over an InvoMax link not being recorded.
+- **Owner checks still open (none approved yet):**
+  1. The 3 bills from the 2000s listed above, including the #221558 labor question.
+  2. **Job mapping session (about 1 hour):** on `/jobs`, map the top groups until coverage reaches about 90% of lines. Note the coverage reached here.
+  3. **Suggested prices check:** on a test ticket, enter 3–5 real jobs. See whether the suggestions and ranges look right, then delete the test ticket.
 
 ## InvoMax backup spike (2026-11-21, throwaway; owner said yes)
 - **Owner decisions:** keep the InvoMax final-bill read (a fallback if the replacement takes long, and data for the new app's rules); InvoMax stays paid for 1–2 more months at most. InvoMax has no list of past bills the owner can find, but File → Make Backup Files works.
