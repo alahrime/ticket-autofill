@@ -1,8 +1,9 @@
 // Before switching start-shop.bat to the TypeScript server: prints `ready` only when every check passes.
 //   cd shop-web && node tools/switch-check.mjs
-// 1. builds the api (apps/api/dist/main.js);  2. nx run-many -t test;  3. the parity guard;
+// 1. builds the api (apps/api/dist/main.js) and the admin app (apps/admin-app/dist);  2. nx run-many -t test;  3. the parity guard;
 // 4. every tests/test_*.py prints ok;  5. the built main.js, started on a throwaway root and a spare port
-// (never 8081, never the real tickets.db), answers GET / with 200 and loads openapi.yaml;
+// (never 8081, never the real tickets.db), answers GET / with 200, loads openapi.yaml and serves a copy of the
+// built admin app (/bills 303 to /admin when signed out, /app/assets/*.js as JavaScript);
 // 6. a second server on that port fails while the first listens (TypeScript: exit 3, or Python's OnlyServer);
 // 7. with no SHOP_ROOT, the bundle in its real place finds the repo root (shop.py) by itself.
 // It never stops or starts the live shop server. (The Playwright page tests are separate: npx nx e2e pages-e2e.)
@@ -19,6 +20,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const shopWeb = join(here, '..');
 const repo = join(shopWeb, '..'); // the folder holding shop.py
 const main = join(shopWeb, 'apps', 'api', 'dist', 'main.js');
+const appDist = join(shopWeb, 'apps', 'admin-app', 'dist');
 const nx = join(shopWeb, 'node_modules', 'nx', 'dist', 'bin', 'nx.js');
 
 const failed = [];
@@ -58,6 +60,7 @@ function tempRoot() {
   if (inside(root, repo) || inside(repo, root)) throw new Error(`temp root ${root} overlaps the repo`);
   cpSync(join(repo, 'web'), join(root, 'web'), { recursive: true });
   for (const f of ['parts.csv', 'vehicles.json']) copyFileSync(join(repo, f), join(root, f));
+  cpSync(appDist, join(root, 'shop-web', 'apps', 'admin-app', 'dist'), { recursive: true }); // where config.app looks
   return root;
 }
 
@@ -196,6 +199,14 @@ async function serverChecks(root) {
     if (me.status === 401) pass('GET /api/me answers 401 (openapi.yaml loaded from the bundle)');
     else fail('GET /api/me answers 401', `got ${me.status}`);
 
+    const bills = await fetch(`http://127.0.0.1:${port}/bills`, { redirect: 'manual' });
+    const js = readdirSync(join(root, 'shop-web', 'apps', 'admin-app', 'dist', 'assets')).find((f) => f.endsWith('.js'));
+    const asset = js ? await fetch(`http://127.0.0.1:${port}/app/assets/${js}`) : null;
+    if (bills.status === 303 && bills.headers.get('location') === '/admin' && asset?.status === 200 &&
+        (asset.headers.get('content-type') ?? '').startsWith('text/javascript'))
+      pass('the admin app: /bills sends a signed-out caller to /admin, /app/assets serves its JavaScript');
+    else fail('the admin app is served', `/bills ${bills.status}, /app/assets/${js} ${asset?.status}`);
+
     const logFile = join(root, 'shop.log');
     const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
     if (existsSync(join(root, 'tickets.db')) && existsSync(join(root, 'setup_code.txt')) && log.includes(` started 127.0.0.1:${port}\n`))
@@ -262,10 +273,13 @@ function walkUpCheck() {
 }
 
 async function checks() {
-  step('1. Build the api');
+  step('1. Build the api and the admin app');
   if (!run(process.execPath, [nx, 'build', 'api'], shopWeb) || !existsSync(main))
     return fail('npx nx build api', `${main} missing`);
   pass(`built ${relative(repo, main)}`);
+  if (!run(process.execPath, [nx, 'build', 'admin-app'], shopWeb) || !existsSync(join(appDist, 'index.html')))
+    return fail('npx nx build admin-app', `${join(appDist, 'index.html')} missing`);
+  pass(`built ${relative(repo, appDist)}`);
 
   step('2. nx run-many -t test');
   if (run(process.execPath, [nx, 'run-many', '-t', 'test'], shopWeb)) pass('nx run-many -t test');

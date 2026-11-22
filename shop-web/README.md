@@ -4,12 +4,14 @@ The TypeScript (Express 5, `node:sqlite`) port of the shop's Python ticket serve
 
 - `apps/api` - the Express server (listens on `127.0.0.1:8081`)
 - `libs/domain` - pure domain code, imported as `@shop/domain`
+- `apps/admin-app` - the React admin app (Vite, React 19; Bill history at `/bills`, job mapping at `/jobs`)
 
 ```
 npm ci
 npx nx test api
 npx nx build api
 npx nx run-many -t lint typecheck test build
+NX_DAEMON=false npx nx e2e pages-e2e
 ```
 
 `node:sqlite` runs fine under Jest (see `apps/api/test/sqlite.spec.ts`), so `better-sqlite3` is not needed.
@@ -17,7 +19,11 @@ npx nx run-many -t lint typecheck test build
 ## On the shop PC
 
 - `start-shop.bat` (repo root) runs `tools/run-shop.cmd`, which starts `node <repo>\shop-web\apps\api\dist\main.js` from the repo root with `UV_THREADPOOL_SIZE=8`. When it exits it logs a line in `shop.log` and starts it again after a back-off (5 s, doubling after each run under a minute, up to 5 min; back to 5 s after a longer run); exit code 3 (the port is taken) is retried twice, 10 s apart, then stops the loop. `start-shop.bat` first waits up to ~10 s for nothing to listen on 8081. The server exits 1 after an uncaught exception (R13) and writes `started <host:port>` in `shop.log` at each start. `start-shop.bat python` starts `shop.py` instead (the rollback); the daily copy uses SQLite's backup (`.tmp`, then renamed).
-- `node tools/switch-check.mjs` builds the api, runs `nx run-many -t test`, the parity guard and every `tests/test_*.py`, then starts the built `main.js` on a throwaway root and a spare port (never 8081) and checks `GET /`, the contract, one-server-per-port against both servers (exit 3), and the walk-up to `shop.py`. It prints `ready` only when everything passes.
+- `node tools/switch-check.mjs` builds the api and the admin app, runs `nx run-many -t test`, the parity guard and every `tests/test_*.py`, then starts the built `main.js` on a throwaway root and a spare port (never 8081) and checks `GET /`, the contract, one-server-per-port against both servers (exit 3), the walk-up to `shop.py`, and that the bundle serves the built admin app at `/app/assets/`. It prints `ready` only when everything passes.
+
+## The admin app
+
+`apps/admin-app` is a React 19 app built with Vite into `apps/admin-app/dist` (git-ignored; `npx nx build admin-app`). The server serves its `index.html` at `/bills` and `/jobs` to a signed-in admin (anyone else gets a 303 to `/admin`; a "Not built yet" page until it is built) and its files at `/app/assets/` (nothing outside that folder, no folder listings, cached for a year since every name carries its hash). It talks to the API through `@shop/api-client` (Orval's TanStack Query hooks); the filters, the page and the open bill live in the URL query. `npx nx test admin-app` runs its Vitest tests (jsdom, Testing Library, a mocked `fetch`). It loads nothing from the internet: system fonts, no CDN.
 
 ## Import InvoMax
 

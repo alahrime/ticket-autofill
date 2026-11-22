@@ -17,6 +17,9 @@
     },
     {
       "path": "./apps/pages-e2e"
+    },
+    {
+      "path": "./apps/admin-app"
     }
   ],
   "compilerOptions": {}

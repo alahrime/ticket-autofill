@@ -9,6 +9,7 @@ import { BadInput, Gone, NotFound } from './errors';
 import type { Deps } from './http/deps';
 import { className, requestLog, writeLog } from './http/log';
 import { refuseCrossSite, refuseHugeBody, securityHeaders, sessionOf } from './http/security';
+import { appRoutes } from './routes/app';
 import { authRoutes } from './routes/auth';
 import { billRoutes } from './routes/bills';
 import { catalogRoutes } from './routes/catalog';
@@ -86,6 +87,7 @@ export function createApp(deps: Deps): Express {
   app.use(userRoutes());
   app.use(upkeepRoutes());
   app.use(billRoutes());
+  app.use(appRoutes());
   app.use((req, res) => {
     // as shop.py: an /api/ GET or any POST needs a session first; then nothing here is 404
     if ((req.path.startsWith('/api/') || req.method === 'POST') && !sessionOf(req))

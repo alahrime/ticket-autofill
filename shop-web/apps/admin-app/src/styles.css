@@ -1,0 +1,435 @@
+/* The admin app: the same look as web/admin.html (system font, no web fonts), wide enough for the desk PC and
+   down to a 375 px phone. Under ~700 px the bill detail goes below the table. */
+:root {
+  --bg: #f4f4f4;
+  --surface: #fff;
+  --text: #222;
+  --muted: #555;
+  --line: #ccc;
+  --accent: #1f5fbf;
+  --accent-text: #fff;
+  --soft: #e4e4e4;
+  --selected: #dde8fa;
+  --error-bg: #fde2e2;
+  --error: #800;
+  --ok-bg: #e0f2e4;
+  --ok: #145a26;
+  --warn-bg: #fff3b0;
+  --warn: #4a3a00;
+  --focus: #0b3d91;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 16px system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-text-size-adjust: 100%;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  font: inherit;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid #aaa;
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--text);
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+button.link {
+  min-height: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+input {
+  font: inherit;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #888;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+}
+input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+label {
+  display: block;
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+/* header */
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--surface);
+  box-shadow: 0 1px 4px #0002;
+}
+.top .back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--text);
+  text-decoration: none;
+}
+.top ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.top nav a {
+  display: inline-block;
+  padding: 8px 2px;
+}
+.top nav a[aria-current='page'] {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 3px solid var(--accent);
+}
+
+main {
+  padding: 12px 16px 40px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+h1 {
+  font-size: 24px;
+  margin: 8px 0 16px;
+}
+h2 {
+  font-size: 20px;
+  margin: 0 0 10px;
+}
+h3 {
+  font-size: 17px;
+  margin: 0 0 6px;
+}
+
+.empty {
+  color: var(--muted);
+}
+.error {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--error-bg);
+  color: var(--error);
+}
+.warn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.notice:empty {
+  display: none;
+}
+.notice {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* needs a bill */
+.needs {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.card {
+  height: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.card .meta {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.candidates {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.candidates li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+}
+.candidates li span {
+  overflow-wrap: anywhere;
+}
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+/* the filter form */
+.search {
+  margin-bottom: 16px;
+}
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));
+  gap: 10px 12px;
+  align-items: start;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+.filters .note {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-self: end;
+}
+
+/* the table and the detail: side by side on a wide screen, the detail below on a phone */
+.split {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+@media (min-width: 701px) {
+  .split.open {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+.list,
+.detail {
+  min-width: 0;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  font-size: 14px;
+  color: var(--muted);
+}
+/* dates, bill numbers, plates and totals never break; names and vehicles wrap at spaces; on a phone the
+   table scrolls sideways inside its box (its Open buttons take the keyboard there), never the page */
+.results td:nth-child(1),
+.results td:nth-child(2),
+.results td:nth-child(5),
+.results td:nth-child(6) {
+  white-space: nowrap;
+}
+.results tbody tr {
+  cursor: pointer;
+}
+.results tbody tr:hover {
+  background: #f0f4fb;
+}
+.results tbody tr.selected {
+  background: var(--selected);
+}
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.detail {
+  container-type: inline-size;
+}
+.detail-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.detail-head h2:focus {
+  outline: none;
+}
+.detail-head h2:focus-visible {
+  outline: 3px solid var(--focus);
+}
+.customer {
+  margin: 0 0 6px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.linked {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.sides {
+  display: grid;
+  gap: 16px;
+}
+@container (min-width: 560px) {
+  .sides {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+.side {
+  min-width: 0;
+}
+.side-ref {
+  margin: 0 0 6px;
+  color: var(--muted);
+}
+.lines {
+  font-size: 14px;
+}
+.lines td {
+  overflow-wrap: break-word;
+}
+.lines td.code {
+  white-space: nowrap;
+}
+.totals {
+  margin: 8px 0 0;
+}
+.totals div {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 6px;
+}
+.totals dt {
+  color: var(--muted);
+}
+.totals dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.changes > .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: end;
+}
+.inline-form label {
+  flex-basis: 100%;
+  margin: 0;
+}
+.inline-form input {
+  width: 9em;
+}
+.inline-form .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+.final-form {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 130px), 1fr));
+  gap: 10px 12px;
+}
+.final-form .error,
+.final-form .actions {
+  grid-column: 1 / -1;
+  margin: 0;
+}

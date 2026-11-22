@@ -6,7 +6,8 @@
     "name": "pages-e2e",
     "implicitDependencies": [
       "api",
-      "invomax"
+      "invomax",
+      "admin-app"
     ],
     "targets": {
       "e2e": {
