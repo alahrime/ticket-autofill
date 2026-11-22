@@ -1944,9 +1944,12 @@ export const getUpkeepStatusUrl = () => {
 }
 
 /**
- * `backup.last` is the newest backup's date, `stale` when there is none from the last 2 days, `offsite`
- * when the backups were last copied off this PC (null: never). `import.last` is the newest InvoMax import
- * (null before any). `needs_bill` counts the filled tickets with no bill linked, typed or marked none.
+ * `backup.last` is the newest tickets backup's date and `backup.invomax` the newest invomax one; `stale` when
+ * either has none from the last 2 days. `offsite` is when the backups were last copied off this PC (null:
+ * never); `offsite_stale` when that is more than 7 days ago or the last copy failed (`offsite_failed`, its
+ * error class). `import.last` is the newest InvoMax import (null before any); `import.off` when
+ * shop-settings.json turns the import off (`"invomaxDir": null`). `needs_bill` counts the filled tickets with
+ * no bill linked, typed or marked none.
  * @summary How the backups and the InvoMax import stand (admin)
  */
 export const upkeepStatus = async ( options?: Parameters<typeof shopFetch>[1]): Promise<upkeepStatusResponse> => {
@@ -2083,7 +2086,9 @@ export const getStartImportUrl = () => {
 
 /**
  * Starts an import of InvoMax's bills in the background and replies at once; GET /api/upkeep/status says
- * when it is done. A good import then links the bills it can to their tickets. 409 while one is running.
+ * when it is done. A good import then links the bills it can to their tickets. It runs even while the
+ * automatic import is backing off after a failure. 409 while one is running; 400 when shop-settings.json
+ * turns the import off.
  * @summary Check InvoMax now (admin)
  */
 export const startImport = async (nothing: Nothing, options?: Parameters<typeof shopFetch>[1]): Promise<startImportResponse> => {

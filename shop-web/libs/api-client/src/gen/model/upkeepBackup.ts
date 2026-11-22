@@ -8,15 +8,27 @@
 
 export type UpkeepBackup = {
   /**
-     * The newest backup's date (YYYY-MM-DD).
+     * The newest tickets backup's date (YYYY-MM-DD).
      * @nullable
      */
   last: string | null;
-  /** No backup from the last 2 days. */
+  /** No tickets backup, or (with an invomax.db) no invomax one, from the last 2 days. */
   stale: boolean;
+  /**
+     * The newest invomax backup's date (YYYY-MM-DD).
+     * @nullable
+     */
+  invomax: string | null;
   /**
      * When the backups were last copied off this PC.
      * @nullable
      */
   offsite: string | null;
+  /** That copy is more than 7 days old, or the last copy failed. */
+  offsite_stale: boolean;
+  /**
+     * The last copy's error class when it failed (Error ENOSPC), else null.
+     * @nullable
+     */
+  offsite_failed: string | null;
 };

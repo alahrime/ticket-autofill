@@ -416,9 +416,12 @@ paths:
       tags: [upkeep]
       summary: How the backups and the InvoMax import stand (admin)
       description: |
-        `backup.last` is the newest backup's date, `stale` when there is none from the last 2 days, `offsite`
-        when the backups were last copied off this PC (null: never). `import.last` is the newest InvoMax import
-        (null before any). `needs_bill` counts the filled tickets with no bill linked, typed or marked none.
+        `backup.last` is the newest tickets backup's date and `backup.invomax` the newest invomax one; `stale` when
+        either has none from the last 2 days. `offsite` is when the backups were last copied off this PC (null:
+        never); `offsite_stale` when that is more than 7 days ago or the last copy failed (`offsite_failed`, its
+        error class). `import.last` is the newest InvoMax import (null before any); `import.off` when
+        shop-settings.json turns the import off (`"invomaxDir": null`). `needs_bill` counts the filled tickets with
+        no bill linked, typed or marked none.
       responses:
         '200':
           description: The upkeep line.
@@ -435,7 +438,9 @@ paths:
       summary: Check InvoMax now (admin)
       description: |
         Starts an import of InvoMax's bills in the background and replies at once; GET /api/upkeep/status says
-        when it is done. A good import then links the bills it can to their tickets. 409 while one is running.
+        when it is done. A good import then links the bills it can to their tickets. It runs even while the
+        automatic import is backing off after a failure. 409 while one is running; 400 when shop-settings.json
+        turns the import off.
       requestBody:
         required: true
         content:
@@ -1284,16 +1289,20 @@ components:
       properties:
         backup:
           type: object
-          required: [last, stale, offsite]
+          required: [last, stale, invomax, offsite, offsite_stale, offsite_failed]
           properties:
-            last: { type: [string, 'null'], description: The newest backup's date (YYYY-MM-DD). }
-            stale: { type: boolean, description: No backup from the last 2 days. }
+            last: { type: [string, 'null'], description: The newest tickets backup's date (YYYY-MM-DD). }
+            stale: { type: boolean, description: 'No tickets backup, or (with an invomax.db) no invomax one, from the last 2 days.' }
+            invomax: { type: [string, 'null'], description: The newest invomax backup's date (YYYY-MM-DD). }
             offsite: { type: [string, 'null'], description: When the backups were last copied off this PC. }
+            offsite_stale: { type: boolean, description: 'That copy is more than 7 days old, or the last copy failed.' }
+            offsite_failed: { type: [string, 'null'], description: "The last copy's error class when it failed (Error ENOSPC), else null." }
         import:
           type: object
-          required: [running, last]
+          required: [running, last, off]
           properties:
             running: { type: boolean }
+            off: { type: boolean, description: 'shop-settings.json turns the import off ("invomaxDir": null).' }
             last:
               oneOf:
                 - type: 'null'

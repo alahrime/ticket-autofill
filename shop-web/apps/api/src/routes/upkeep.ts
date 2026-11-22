@@ -2,6 +2,7 @@
 // "Copy backups to the USB drive". Admin only, 403 for a mechanic before any body is read.
 import { Router } from 'express';
 import { backupHealth } from '../backup';
+import { BadInput } from '../errors';
 import { validRequest } from '../http/contract';
 import { depsOf } from '../http/deps';
 import { jsonBody } from '../http/security';
@@ -14,15 +15,16 @@ export function upkeepRoutes(): Router {
   r.get('/api/upkeep/status', admin, (req, res) => {
     const { config, history, links, nightly } = depsOf(req);
     res.json({
-      backup: backupHealth(config.backups, new Date()),
-      import: { running: nightly.running(), last: history.lastImport() },
+      backup: backupHealth(config.backups, new Date(), config.invomaxDb),
+      import: { running: nightly.running(), last: history.lastImport(), off: !config.importInvomax },
       needs_bill: links.needsBillCount(),
     });
   });
 
   r.post('/api/upkeep/import', admin, jsonBody, validRequest, (req, res) => {
-    if (depsOf(req).nightly.importNow() === 'running')
-      return void res.status(409).json({ error: 'an import is already running' });
+    const r = depsOf(req).nightly.importNow();
+    if (r === 'off') throw new BadInput('the InvoMax import is turned off in shop-settings.json');
+    if (r === 'running') return void res.status(409).json({ error: 'an import is already running' });
     res.status(202).json({ started: true });
   });
 

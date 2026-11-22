@@ -9,5 +9,7 @@ import type { ImportRun } from './importRun.js';
 
 export type UpkeepImport = {
   running: boolean;
+  /** shop-settings.json turns the import off ("invomaxDir": null). */
+  off: boolean;
   last: null | ImportRun;
 };

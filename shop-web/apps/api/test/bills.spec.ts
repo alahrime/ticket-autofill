@@ -1,6 +1,6 @@
 // Bill history (/api/invoices, /api/customers, /api/needs-bill and the link routes) and the upkeep buttons'
 // API, over a real server with a temp InvoMax folder. Every name, phone and plate here is made up.
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Refused } from '@shop/domain';
 import { normalPlate } from '@shop/invomax';
@@ -345,7 +345,30 @@ describe('upkeep', () => {
     filled('2026-11-15');
     const [code, r] = await get('/api/upkeep/status');
     expect(code).toBe(200);
-    expect(r).toEqual({ backup: { last: null, stale: true, offsite: null }, import: { running: false, last: null }, needs_bill: 1 });
+    expect(r).toEqual({
+      backup: { last: null, stale: true, invomax: null, offsite: null, offsite_stale: false, offsite_failed: null },
+      import: { running: false, last: null, off: false },
+      needs_bill: 1,
+    });
+  });
+
+  it('status: the invomax backup counts toward stale, and a failed copy off this PC shows', async () => {
+    const p = (x: number): string => String(x).padStart(2, '0');
+    const d = new Date();
+    const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    mkdirSync(s.config.backups, { recursive: true });
+    writeFileSync(join(s.config.backups, `tickets-${today}.db`), '');
+    writeFileSync(join(s.config.backups, 'offsite-attempt.json'), JSON.stringify({ at: d.toISOString(), ok: false, error: 'Error ENOSPC' }));
+    const [, r] = await get('/api/upkeep/status');
+    expect(r.backup).toEqual({ last: today, stale: true, invomax: null, offsite: null, offsite_stale: true, offsite_failed: 'Error ENOSPC' });
+    writeFileSync(join(s.config.backups, `invomax-${today}.db`), '');
+    expect((await get('/api/upkeep/status'))[1].backup).toMatchObject({ stale: false, invomax: today });
+  });
+
+  it('with the import turned off, status says so and the button is 400', async () => {
+    s.config.importInvomax = false;
+    expect((await get('/api/upkeep/status'))[1].import).toEqual({ running: false, last: null, off: true });
+    expect(await post('/api/upkeep/import', {})).toEqual([400, { error: 'the InvoMax import is turned off in shop-settings.json' }]);
   });
 
   it('import: 202 started, then 409 while it runs', async () => {
