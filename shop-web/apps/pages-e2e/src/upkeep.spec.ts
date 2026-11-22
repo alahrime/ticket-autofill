@@ -3,14 +3,31 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { signIn } from './shop';
 
+type Backup = {
+  last: string | null;
+  stale: boolean;
+  invomax: string | null;
+  offsite: string | null;
+  offsite_stale: boolean;
+  offsite_failed: string | null;
+};
 type Status = {
-  backup: { last: string | null; stale: boolean; offsite: string | null };
-  import: { running: boolean; last: { finished: string; ok: boolean; invoices: number } | null };
+  backup: Backup;
+  import: { running: boolean; last: { finished: string; ok: boolean; invoices: number } | null; off: boolean };
   needs_bill: number;
 };
+const backup = (over: Partial<Backup> = {}): Backup => ({
+  last: '2026-11-20',
+  stale: false,
+  invomax: '2026-11-20',
+  offsite: null,
+  offsite_stale: false,
+  offsite_failed: null,
+  ...over,
+});
 const status = (over: Partial<Status> = {}): Status => ({
-  backup: { last: '2026-11-20', stale: false, offsite: null },
-  import: { running: false, last: null },
+  backup: backup(),
+  import: { running: false, last: null, off: false },
   needs_bill: 0,
   ...over,
 });
@@ -38,8 +55,8 @@ test('a stale backup shows red, a failed import says so, and tickets needing a b
   await mockStatus(
     page,
     status({
-      backup: { last: null, stale: true, offsite: null },
-      import: { running: false, last: { finished: '2026-11-20T08:30:00', ok: false, invoices: 0 } },
+      backup: backup({ last: null, stale: true, invomax: null }),
+      import: { running: false, last: { finished: '2026-11-20T08:30:00', ok: false, invoices: 0 }, off: false },
       needs_bill: 3,
     }),
   );
@@ -52,11 +69,46 @@ test('a stale backup shows red, a failed import says so, and tickets needing a b
 });
 
 test('a stale backup with a date is red too, and a copy off this PC drops the warning', async ({ page }) => {
-  await mockStatus(page, status({ backup: { last: '2026-11-01', stale: true, offsite: '2026-11-19T10:00:00.000Z' } }));
+  await mockStatus(page, status({ backup: backup({ last: '2026-11-01', invomax: '2026-11-01', stale: true, offsite: '2026-11-19T10:00:00.000Z' }) }));
   await board(page);
   const line = page.locator('#upkeep');
+  await expect(line.locator('.bad')).toHaveCount(1);
   await expect(line.locator('.bad')).toContainText('Last backup:');
   await expect(line).not.toContainText('No copy off this PC yet');
+  await expect(line.getByText('Copied off this PC:')).not.toHaveClass(/bad/);
+  await expect(line).not.toContainText('InvoMax bills');
+});
+
+test('a failed InvoMax bills backup turns the line red and says how old the bills backup is', async ({ page }) => {
+  await mockStatus(page, status({ backup: backup({ last: '2026-11-20', invomax: '2026-11-17', stale: true }) }));
+  await board(page);
+  const line = page.locator('#upkeep');
+  await expect(line.getByText(/^Last backup: .*; InvoMax bills: /)).toHaveClass(/bad/);
+  await expect(line).toContainText('InvoMax bills: ');
+  await expect(line).not.toContainText('none yet');
+});
+
+test('the copy off this PC shows its date, red when over a week old or when the last copy failed', async ({ page }) => {
+  let body = status({ backup: backup({ offsite: '2026-11-10T10:00:00.000Z', offsite_stale: true }) });
+  await page.route('**/api/upkeep/status', (r) => r.fulfill({ json: body }));
+  await board(page);
+  const line = page.locator('#upkeep');
+  await expect(line.getByText('Copied off this PC:')).toHaveClass(/bad/);
+  await expect(line).not.toContainText('last copy failed');
+  body = status({ backup: backup({ offsite: '2026-11-19T10:00:00.000Z', offsite_stale: true, offsite_failed: 'Error ENOSPC' }) });
+  await page.reload();
+  await expect(line.getByText('Copied off this PC:')).toHaveClass(/bad/);
+  await expect(line).toContainText('(last copy failed)');
+  await expect(line).not.toContainText('ENOSPC');
+});
+
+test('with the import turned off the line says so and there is no Check InvoMax button', async ({ page }) => {
+  await mockStatus(page, status({ import: { running: false, last: { finished: '2026-11-20T08:30:00', ok: true, invoices: 1 }, off: true } }));
+  await board(page);
+  const line = page.locator('#upkeep');
+  await expect(line).toContainText('InvoMax import: off');
+  await expect(line.getByRole('button', { name: 'Check InvoMax now' })).toHaveCount(0);
+  await expect(line.getByRole('button', { name: 'Copy backups to USB' })).toBeVisible();
 });
 
 test('Check InvoMax now says Started, and a second press says already running', async ({ page }) => {
@@ -124,7 +176,11 @@ test('the refresh does not stack up while a request hangs', async ({ page }) => 
 test('the board with its footer passes the axe scan', async ({ page }) => {
   await mockStatus(
     page,
-    status({ needs_bill: 2, import: { running: false, last: { finished: '2026-11-20T08:30:00', ok: true, invoices: 1 } } }),
+    status({
+      needs_bill: 2,
+      backup: backup({ offsite: '2026-11-10T10:00:00.000Z', offsite_stale: true, offsite_failed: 'Error' }),
+      import: { running: false, last: { finished: '2026-11-20T08:30:00', ok: true, invoices: 1 }, off: false },
+    }),
   );
   await board(page);
   await expect(page.locator('#upkeep')).toBeVisible();

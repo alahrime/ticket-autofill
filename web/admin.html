@@ -1500,19 +1500,22 @@ function when(t) {  // a date alone shows as a day; a time shows in this browser
 
 function renderUpkeep(u) {
   const b = u.backup || {}, im = u.import || {}, last = im.last;
+  // the bills' own backup, when it is not from the same day as the tickets one (it failed, or is missing)
+  const bills = "invomax" in b && b.invomax !== b.last ? "; InvoMax bills: " + (b.invomax ? when(b.invomax) : "none yet") : "";
   const rows = [el("p", {class: "row"},
-    el("span", {class: b.last && !b.stale ? "" : "bad", text: b.last ? "Last backup: " + when(b.last) : "Last backup: none yet"}),
-    b.offsite ? null : el("span", {text: "No copy off this PC yet"}),
-    el("span", {text: im.running ? "InvoMax: checking…" : last ? "InvoMax checked " + when(last.finished) + (last.ok ? "" : " (failed)") : "InvoMax not checked yet"}),
+    el("span", {class: b.last && !b.stale ? "" : "bad", text: (b.last ? "Last backup: " + when(b.last) : "Last backup: none yet") + bills}),
+    el("span", {class: b.offsite_stale ? "bad" : "",  // red after 7 days, or when the last copy failed
+      text: (b.offsite ? "Copied off this PC: " + when(b.offsite) : "No copy off this PC yet") + (b.offsite_failed ? " (last copy failed)" : "")}),
+    el("span", {text: im.off ? "InvoMax import: off" : im.running ? "InvoMax: checking…" : last ? "InvoMax checked " + when(last.finished) + (last.ok ? "" : " (failed)") : "InvoMax not checked yet"}),
     u.needs_bill > 0 ? el("a", {href: "/bills#needs", text: u.needs_bill + (u.needs_bill === 1 ? " ticket needs a bill" : " tickets need a bill")}) : null)];
   rows.push(el("p", {class: "row btns"},
-    el("button", {type: "button", class: "light", id: "btnImport", onclick: e => upkeepPost(e.currentTarget, "/api/upkeep/import", () => "Started: checking InvoMax now.")}, "Check InvoMax now"),
+    im.off ? null : el("button", {type: "button", class: "light", id: "btnImport", onclick: e => upkeepPost(e.currentTarget, "/api/upkeep/import", () => "Started: checking InvoMax now.")}, "Check InvoMax now"),
     el("button", {type: "button", class: "light", id: "btnCopy", onclick: e => upkeepPost(e.currentTarget, "/api/upkeep/copy-backups", d => {
       const c = (d.copies || []).reduce((n, x) => n + (x.copied || 0), 0), k = (d.copies || []).reduce((n, x) => n + (x.skipped || 0), 0);
       return "Copied " + c + ", skipped " + k + ".";
     })}, "Copy backups to USB")));
   $("upkeep").replaceChildren(...rows);
-  for (const id of S.upkeepBusy) $(id).disabled = true;  // a refresh mid-request keeps its button off
+  for (const id of S.upkeepBusy) if ($(id)) $(id).disabled = true;  // a refresh mid-request keeps its button off
   $("upkeep").hidden = false;
 }
 
