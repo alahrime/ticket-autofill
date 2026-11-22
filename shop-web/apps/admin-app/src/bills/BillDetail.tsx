@@ -253,7 +253,7 @@ export function BillDetail({ billKey, onKeyChange, onClose, focus = false }: Pro
             <OurTicket before={bill.before} />
             <InvoMaxBill after={bill.after} />
           </div>
-          {bill.before && <Changes bill={{ ...bill, before: bill.before }} onKeyChange={onKeyChange} />}
+          {bill.before && <Changes key={bill.key} bill={{ ...bill, before: bill.before }} onKeyChange={onKeyChange} />}
         </>
       )}
     </section>

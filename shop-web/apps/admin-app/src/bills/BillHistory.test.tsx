@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BILL, type Call, callsTo, mockFetch, renderWithClient, ROW } from '../test-utils';
+import type { Bill, BillRow } from '@shop/api-client';
 import { BillHistory } from './BillHistory';
 
 const list = (rows = [ROW], total = rows.length, page = 1) => ({ rows, total, page, per_page: 50 });
@@ -146,5 +147,48 @@ describe('BillHistory', () => {
     window.history.replaceState(null, '', '/bills?phone=x');
     renderWithClient(<BillHistory />);
     expect(await screen.findByRole('alert')).toHaveTextContent('phone must have a digit');
+  });
+  it('opening another bill resets the detail: no form, values or alert carried over from the last one', async () => {
+    const user = userEvent.setup();
+    const ticketRow = (id: number): BillRow => ({ ...ROW, key: `t${id}`, invoice_no: null, ticket_id: id, total: null });
+    const ticketBill = (id: number): Bill => ({
+      ...BILL,
+      key: `t${id}`,
+      before: { ...(BILL.before as NonNullable<Bill['before']>), ticket_id: id },
+      after: null,
+      link: null,
+      difference: null,
+    });
+    calls = mockFetch((method, url) => {
+      if (method === 'POST') return [409, { error: 'changed on another device' }];
+      if (url === '/api/needs-bill') return [200, { tickets: [] }];
+      if (url === '/api/invoices/t21') return [200, ticketBill(21)];
+      if (url === '/api/invoices/t22') return [200, ticketBill(22)];
+      if (url.startsWith('/api/invoices')) return [200, list([ticketRow(21), ticketRow(22)])];
+      return undefined;
+    });
+    renderWithClient(<BillHistory />);
+    // B once first, so it is cached and shows at once when opened again (nothing loading in between)
+    await user.click(await screen.findByRole('button', { name: 'Open ticket #22' }));
+    await screen.findByLabelText('Link by bill number');
+    await user.click(screen.getByRole('button', { name: 'Open ticket #21' }));
+    await screen.findByRole('region', { name: 'Ticket #21' });
+    await waitFor(() => expect(callsTo(calls, 'GET', '/api/invoices/t21')).toHaveLength(1));
+    await screen.findByLabelText('Link by bill number');
+    // bill A: a refused link (the 409 alert), then the typed form with a value
+    await user.type(screen.getByLabelText('Link by bill number'), '9000009');
+    await user.click(screen.getByRole('button', { name: 'Link bill' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('changed on another device');
+    await user.click(screen.getByRole('button', { name: 'Type the final bill' }));
+    await user.type(screen.getByLabelText('Parts'), '5');
+
+    await user.click(screen.getByRole('button', { name: 'Open ticket #22' }));
+    await screen.findByRole('region', { name: 'Ticket #22' });
+    expect(screen.queryByRole('form', { name: 'Type the final bill' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Link by bill number')).toHaveValue('');
+    await user.click(screen.getByRole('button', { name: 'Type the final bill' }));
+    expect(screen.getByLabelText('Parts')).toHaveValue('');
+    expect(callsTo(calls, 'POST', '/api/invoices/t22/final')).toHaveLength(0);
   });
 });

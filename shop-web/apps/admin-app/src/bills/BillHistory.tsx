@@ -218,6 +218,7 @@ export function BillHistory() {
         </section>
         {openKey && (
           <BillDetail
+            key={openKey} // another bill: a fresh detail (no open form, typed values or alert from the last one)
             billKey={openKey}
             focus={focusDetail}
             onKeyChange={(k) => open(k, false)}
