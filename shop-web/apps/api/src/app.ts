@@ -10,8 +10,10 @@ import type { Deps } from './http/deps';
 import { className, requestLog, writeLog } from './http/log';
 import { refuseCrossSite, refuseHugeBody, securityHeaders, sessionOf } from './http/security';
 import { authRoutes } from './routes/auth';
+import { billRoutes } from './routes/bills';
 import { catalogRoutes } from './routes/catalog';
 import { ticketRoutes } from './routes/tickets';
+import { upkeepRoutes } from './routes/upkeep';
 import { userRoutes } from './routes/users';
 
 type Mapped = { status: number; body: Record<string, unknown>; headers?: Record<string, string> } | 'drop';
@@ -82,6 +84,8 @@ export function createApp(deps: Deps): Express {
   app.use(ticketRoutes());
   app.use(catalogRoutes());
   app.use(userRoutes());
+  app.use(upkeepRoutes());
+  app.use(billRoutes());
   app.use((req, res) => {
     // as shop.py: an /api/ GET or any POST needs a session first; then nothing here is 404
     if ((req.path.startsWith('/api/') || req.method === 'POST') && !sessionOf(req))

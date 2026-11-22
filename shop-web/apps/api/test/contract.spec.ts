@@ -52,6 +52,35 @@ function responseChecker(): (schema: J, value: unknown) => unknown {
   };
 }
 
+/** Operations whose example can't get a 200 here. */
+const EXPECT: Record<string, number> = {
+  'POST /api/upkeep/import': 202, // started in the background (it fails at once: the temp InvoMax folder is empty)
+  'POST /api/upkeep/copy-backups': 400, // no USB drive is set up in a test (and a copy must go to another drive)
+};
+
+/** Ticket 2 filled on 2026-11-20 with Jane Testcase's phone, and InvoMax bill 9000001 of the same day. */
+function seedBillHistory(): void {
+  const t = s.store.create({ ...CAR, phone: '5550100000', lines: [{ desc: 'BRAKE PADS', qty: 1, price: 100, labor: 50 }] });
+  expect(t.id).toBe(2);
+  const data = JSON.parse((s.db.prepare('SELECT data FROM tickets WHERE id = 2').get() as { data: string }).data) as J;
+  data.updated = '2026-11-20T10:00:00';
+  s.db.prepare("UPDATE tickets SET status = 'filled', data = ? WHERE id = 2").run(JSON.stringify(data));
+  s.im
+    .prepare(
+      `INSERT INTO im_invoices (invoice_no, "date", "key", name, "first", "last", phone, plate, address, parts, labor,
+         supplies, discount, deposit, tax, total, balance, tax_rate, hash, lines_hash, first_seen, updated_at, gone_at, plate_norm)
+       VALUES ('9000001', '2026-11-20', '', 'DOE', 'JANE', 'DOE', '5550100000', 'XKS-4827', '', 12000, 9000, 1050, 0, 0,
+         783, 22833, 22833, 0.0375, '', '', '', '', '', 'XKS4827')`,
+    )
+    .run();
+  s.im
+    .prepare(
+      `INSERT INTO im_lines (invoice_no, line_no, code, description, kind, qty, unit, amount, vehicle, year, make, model, trim)
+       VALUES ('9000001', 1, 'P1', 'ITEM 1', 'part', 1, 12000, 12000, '2019 Cadillac XT5', 2019, 'Cadillac', 'XT5', '')`,
+    )
+    .run();
+}
+
 let s: TestServer;
 beforeEach(async () => {
   s = await makeServer();
@@ -67,7 +96,7 @@ describe('the OpenAPI contract', () => {
   });
 
   it('every route is in the spec', () => {
-    const served = routes(createApp({ store: s.store, accounts: s.accounts, config: s.config }));
+    const served = routes(createApp(s.deps));
     const api = [...served.keys()].filter((r) => r.split(' ')[1]?.startsWith('/api/'));
     expect(api.length).toBeGreaterThan(10);
     const ops = new Map(operations().map(([m, p, op]) => [`${m.toUpperCase()} ${p}`, op]));
@@ -82,6 +111,7 @@ describe('the OpenAPI contract', () => {
   it('every spec path answers', async () => {
     const a = await s.admin();
     expect((await s.call('/api/tickets', CAR, a)).body).toMatchObject({ id: 1 }); // the examples' ticket 1
+    seedBillHistory(); // the Bill history examples' filled ticket 2 and bill 9000001
     const check = responseChecker();
     for (const [method, path, op] of operations()) {
       const params: J[] = (op.parameters ?? []).map((p: J) =>
@@ -102,7 +132,7 @@ describe('the OpenAPI contract', () => {
       const r = await s.call(url, body, a);
       const where = `${method.toUpperCase()} ${url} -> ${r.status}`;
       expect([where, r.status === 404]).toEqual([where, false]);
-      expect([where, r.status]).toEqual([where, 200]); // the examples are good input, in file order
+      expect([where, r.status]).toEqual([where, EXPECT[`${method.toUpperCase()} ${path}`] ?? 200]); // good input, in file order
       const reply = op.responses[String(r.status)] ?? op.responses.default;
       expect([where, reply !== undefined]).toEqual([where, true]);
       const schema = reply?.content?.['application/json']?.schema;

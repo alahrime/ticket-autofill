@@ -1,5 +1,5 @@
 // A real server on a free port over a temp SHOP_ROOT, and a client like tests/test_shop.py's call().
-import { copyFileSync, cpSync, existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { request, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -8,7 +8,11 @@ import { Accounts } from '../src/accounts';
 import { createApp } from '../src/app';
 import { type Config, loadConfig } from '../src/config';
 import { openDb } from '../src/db';
-import { listen } from '../src/server';
+import type { History } from '../src/history/bills';
+import type { LinkStore } from '../src/history/links';
+import type { Deps } from '../src/http/deps';
+import { type Nightly, type NightlyOpts, startNightly } from '../src/nightly';
+import { listen, openHistory } from '../src/server';
 import { TicketStore } from '../src/store';
 import { REPO_ROOT, tempDir } from './py';
 
@@ -77,6 +81,16 @@ export type TestServer = {
   store: TicketStore;
   accounts: Accounts;
   server: Server;
+  /** invomax.db (read-write: tests put bills straight in), the links, Bill history and the nightly run. */
+  im: DatabaseSync;
+  links: LinkStore;
+  history: History;
+  nightly: Nightly;
+  deps: Deps;
+  /** The nightly run's checks (none at start): call one to tick it. */
+  ticks: Array<() => void>;
+  /** Lets every import retry sleep (and later ones) end: until then an import that retries waits. */
+  openSleep(): void;
   ids: Record<string, number>;
   /** GET without data; POST with it. Objects go as JSON to /api/ paths, as a form elsewhere. */
   call(path: string, data?: unknown, cookie?: string, headers?: Record<string, string>): Promise<Reply>;
@@ -87,19 +101,40 @@ export type TestServer = {
   close(): Promise<void>;
 };
 
-/** Temp SHOP_ROOT holding a copy of web/, parts.csv and vehicles.json, a fresh DB, the admin and two mechanics. */
-export async function makeServer(opts: { admin?: boolean; stallMs?: number } = {}): Promise<TestServer> {
+/**
+ * Temp SHOP_ROOT holding a copy of web/, parts.csv and vehicles.json, a fresh DB, the admin and two mechanics,
+ * and an empty temp InvoMax folder (never the real one). The nightly run checks only when a test ticks it.
+ */
+export async function makeServer(opts: { admin?: boolean; stallMs?: number; nightly?: NightlyOpts } = {}): Promise<TestServer> {
   const { dir, done } = tempDir();
   cpSync(join(REPO_ROOT, 'web'), join(dir, 'web'), { recursive: true });
   for (const f of ['parts.csv', 'vehicles.json']) copyFileSync(join(REPO_ROOT, f), join(dir, f));
-  const config = loadConfig({ SHOP_ROOT: dir, SHOP_PORT: '0' });
+  mkdirSync(join(dir, 'InvoMax'));
+  const config = loadConfig({ SHOP_ROOT: dir, SHOP_PORT: '0', INVOMAX_DIR: join(dir, 'InvoMax') });
   const db = openDb(config.db);
   const store = new TicketStore(db);
   const accounts = new Accounts(db, { iterations: 1000 }); // fast hashes
   const ids: Record<string, number> = {};
   if (opts.admin !== false) ids[ADMIN] = (await accounts.add(ADMIN, 'admin', PASSWORD)).id;
   for (const [name, pin] of Object.entries(PINS)) ids[name] = (await accounts.add(name, 'mechanic', pin)).id;
-  const server = await listen(createApp({ store, accounts, config }), config, { stallMs: opts.stallMs });
+  const parts = openHistory(config, db);
+  const ticks: Array<() => void> = [];
+  let open!: () => void;
+  const gate = new Promise<void>((ok) => (open = ok));
+  const nightly = startNightly(
+    { config, links: parts.links, im: parts.im },
+    {
+      atStart: false,
+      schedule: (f) => {
+        ticks.push(f);
+        return { stop: () => void ticks.splice(0) };
+      },
+      sleep: () => gate,
+      ...opts.nightly,
+    },
+  );
+  const deps: Deps = { store, accounts, config, links: parts.links, history: parts.history, nightly };
+  const server = await listen(createApp(deps), config, { stallMs: opts.stallMs });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
   const call: TestServer['call'] = (path, data, cookie, headers = {}) => {
@@ -128,6 +163,13 @@ export async function makeServer(opts: { admin?: boolean; stallMs?: number } = {
     store,
     accounts,
     server,
+    im: parts.im,
+    links: parts.links,
+    history: parts.history,
+    nightly,
+    deps,
+    ticks,
+    openSleep: () => open(),
     ids,
     call,
     signIn,
@@ -135,8 +177,12 @@ export async function makeServer(opts: { admin?: boolean; stallMs?: number } = {
     tech: (name) => signIn('mechanic', name, PINS[name] as string),
     log: () => (existsSync(config.log) ? readFileSync(config.log, 'utf8') : ''),
     close: async () => {
+      nightly.stop();
+      open(); // an import waiting on a retry sleep ends
       server.closeAllConnections();
       await new Promise<void>((ok) => server.close(() => ok()));
+      await nightly.settled();
+      parts.close();
       db.close();
       done();
     },

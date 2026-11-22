@@ -26,6 +26,8 @@ tags:
   - name: tickets
   - name: catalog
   - name: users
+  - name: upkeep
+  - name: bills
 
 paths:
   /api/me:
@@ -407,6 +409,303 @@ paths:
         '403': { $ref: '#/components/responses/NotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/upkeep/status:
+    get:
+      operationId: upkeepStatus
+      tags: [upkeep]
+      summary: How the backups and the InvoMax import stand (admin)
+      description: |
+        `backup.last` is the newest backup's date, `stale` when there is none from the last 2 days, `offsite`
+        when the backups were last copied off this PC (null: never). `import.last` is the newest InvoMax import
+        (null before any). `needs_bill` counts the filled tickets with no bill linked, typed or marked none.
+      responses:
+        '200':
+          description: The upkeep line.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Upkeep' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/upkeep/import:
+    post:
+      operationId: startImport
+      tags: [upkeep]
+      summary: Check InvoMax now (admin)
+      description: |
+        Starts an import of InvoMax's bills in the background and replies at once; GET /api/upkeep/status says
+        when it is done. A good import then links the bills it can to their tickets. 409 while one is running.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Nothing' }
+            example: {}
+      responses:
+        '202':
+          description: Started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [started]
+                properties:
+                  started: { type: boolean, const: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '409':
+          description: An import is already running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: an import is already running }
+
+  /api/upkeep/copy-backups:
+    post:
+      operationId: copyBackups
+      tags: [upkeep]
+      summary: Copy the backups to the USB drive (admin)
+      description: |
+        Copies the dated backups to each of shop-settings.json's `backupTargets` whose drive is in (a bare drive
+        letter means `<drive>\shop-backups`), skipping files already there. 400 `no USB drive set up` with no
+        target, `drive not found` when none of them is in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Nothing' }
+            example: {}
+      responses:
+        '200':
+          description: What each target got.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [copies]
+                properties:
+                  copies:
+                    type: array
+                    items: { $ref: '#/components/schemas/CopyResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/invoices:
+    get:
+      operationId: listInvoices
+      tags: [bills]
+      summary: Bill history, searched (admin)
+      description: |
+        Our filled tickets and InvoMax's bills, newest first, 50 a page. A ticket linked to its bill is one row
+        keyed `im<no>`; a bill alone is `im<no>`; a filled ticket with no InvoMax bill is `t<id>`. Every filter
+        is a partial match ignoring case, and they combine. `vin` searches our tickets only: InvoMax keeps no VIN.
+      parameters:
+        - name: name
+          in: query
+          description: Part of the first, last or full name (ours or InvoMax's).
+          schema: { type: string, maxLength: 80 }
+          example: jane
+        - name: phone
+          in: query
+          description: Some of the phone's digits; punctuation is ignored.
+          schema: { type: string, maxLength: 20, pattern: '^[0-9 ()+.-]*[0-9][0-9 ()+.-]*$', x-error: phone must be digits }
+        - name: tag
+          in: query
+          description: Part of the plate; spaces and dashes are ignored.
+          schema: { type: string, maxLength: 20 }
+        - name: vin
+          in: query
+          description: Part of the VIN, on our tickets only.
+          schema: { type: string, maxLength: 17 }
+        - name: from
+          in: query
+          description: First day (YYYY-MM-DD).
+          schema: { type: string, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$', x-error: from must be a date (YYYY-MM-DD) }
+        - name: to
+          in: query
+          description: Last day (YYYY-MM-DD).
+          schema: { type: string, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$', x-error: to must be a date (YYYY-MM-DD) }
+        - name: page
+          in: query
+          description: 1 or more.
+          schema: { type: string, pattern: '^[1-9][0-9]{0,5}$', x-error: page must be 1 or more }
+          example: '1'
+      responses:
+        '200':
+          description: One page of rows and how many match in all.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rows, total, page, per_page]
+                properties:
+                  rows:
+                    type: array
+                    items: { $ref: '#/components/schemas/BillRow' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  per_page: { type: integer, const: 50 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/invoices/{key}:
+    get:
+      operationId: getInvoice
+      tags: [bills]
+      summary: One row of Bill history, both sides (admin)
+      description: |
+        `im<no>`: that InvoMax bill (one InvoMax no longer has too, marked `gone`) and the ticket linked to it.
+        `t<id>`: a filled ticket; one linked to a bill is that pair (keyed `im<no>`).
+      parameters:
+        - $ref: '#/components/parameters/BillKey'
+      responses:
+        '200':
+          description: The bill.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Bill' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/customers/{phone}:
+    get:
+      operationId: getCustomer
+      tags: [bills]
+      summary: A customer's vehicles and their bills, by phone (admin)
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          description: The phone's digits (3 to 15); anything else, or no bills, is 404.
+          schema: { type: string, pattern: '^[0-9]{3,15}$' }
+          example: '5550100000'
+      responses:
+        '200':
+          description: Their vehicles (by plate, else VIN), each with its rows, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/needs-bill:
+    get:
+      operationId: listNeedsBill
+      tags: [bills]
+      summary: Filled tickets with no bill yet (admin)
+      description: The newest 200, newest filled first, each with up to 5 InvoMax bills that might be theirs.
+      responses:
+        '200':
+          description: The tickets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tickets]
+                properties:
+                  tickets:
+                    type: array
+                    items: { $ref: '#/components/schemas/NeedsBill' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/invoices/{key}/link:
+    post:
+      operationId: linkInvoice
+      tags: [bills]
+      summary: Link a filled ticket to an InvoMax bill (admin)
+      description: |
+        Any bill InvoMax still has, typed by number or picked from the candidates. `version` is the link's as
+        GET /api/invoices/{key} gave it (`link.version`; null when there was none): another is 409, as is a bill
+        another ticket has. A `t<id>` key only; an `im` key is 404.
+      parameters:
+        - $ref: '#/components/parameters/TicketKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkIn' }
+            example: { invoice_no: '9000001', version: null }
+      responses:
+        '200': { $ref: '#/components/responses/BillNow' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Changed' }
+
+  /api/invoices/{key}/unlink:
+    post:
+      operationId: unlinkInvoice
+      tags: [bills]
+      summary: Undo a ticket's link, typed bill or none (admin)
+      description: An unlinked pair is never linked again by itself. 404 when there is nothing to undo.
+      parameters:
+        - $ref: '#/components/parameters/TicketKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkVersioned' }
+            example: { version: 1 }
+      responses:
+        '200': { $ref: '#/components/responses/BillNow' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Changed' }
+
+  /api/invoices/{key}/none:
+    post:
+      operationId: markNoInvoice
+      tags: [bills]
+      summary: Mark a filled ticket as having no InvoMax bill (admin)
+      parameters:
+        - $ref: '#/components/parameters/TicketKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkVersioned' }
+            example: { version: null }
+      responses:
+        '200': { $ref: '#/components/responses/BillNow' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Changed' }
+
+  /api/invoices/{key}/final:
+    post:
+      operationId: typeFinal
+      tags: [bills]
+      summary: Type a ticket's final bill by hand (admin)
+      description: |
+        For a bill InvoMax doesn't have. Dollars, to the cent, 0 to 1,000,000 each; `total` must be parts +
+        labor + supplies + tax (no discount). The invoice number, if given, must be no other ticket's.
+      parameters:
+        - $ref: '#/components/parameters/TicketKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FinalIn' }
+            example: { invoice_no: '9000002', parts: 120, labor: 90, supplies: 10.5, tax: 7.83, total: 228.33, version: 1 }
+      responses:
+        '200': { $ref: '#/components/responses/BillNow' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Changed' }
+
 components:
   securitySchemes:
     session:
@@ -422,6 +721,20 @@ components:
       description: 1 to 9 digits; anything else is 404.
       schema: { type: integer, minimum: 0, maximum: 999999999 }
       example: 1
+    BillKey:
+      name: key
+      in: path
+      required: true
+      description: im<1 to 7 digits> (an InvoMax bill) or t<1 to 9 digits> (a ticket); anything else is 404.
+      schema: { type: string, pattern: '^(im[0-9]{1,7}|t[0-9]{1,9})$' }
+      example: im9000001
+    TicketKey:
+      name: key
+      in: path
+      required: true
+      description: t<ticket id, 1 to 9 digits>; anything else (an im key too) is 404.
+      schema: { type: string, pattern: '^t[1-9][0-9]{0,8}$' }
+      example: t2
 
   responses:
     BadRequest:
@@ -457,6 +770,17 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Conflict' }
+    BillNow:
+      description: The ticket's row as it is now, as GET /api/invoices/{key} gives it.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Bill' }
+    Changed:
+      description: Changed on another device (the link's version), or the bill is another ticket's.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: changed on another device }
 
   schemas:
     Error:
@@ -773,3 +1097,236 @@ components:
         additionalProperties:
           type: array
           items: { type: integer }
+
+    Nothing:
+      description: An empty JSON object (a POST must still send JSON).
+      type: object
+
+    Upkeep:
+      type: object
+      required: [backup, import, needs_bill]
+      properties:
+        backup:
+          type: object
+          required: [last, stale, offsite]
+          properties:
+            last: { type: [string, 'null'], description: The newest backup's date (YYYY-MM-DD). }
+            stale: { type: boolean, description: No backup from the last 2 days. }
+            offsite: { type: [string, 'null'], description: When the backups were last copied off this PC. }
+        import:
+          type: object
+          required: [running, last]
+          properties:
+            running: { type: boolean }
+            last:
+              oneOf:
+                - type: 'null'
+                - $ref: '#/components/schemas/ImportRun'
+        needs_bill: { type: integer }
+
+    ImportRun:
+      type: object
+      required: [finished, ok, invoices]
+      properties:
+        finished: { type: string, description: 'Local time, YYYY-MM-DDTHH:MM:SS.' }
+        ok: { type: boolean }
+        invoices: { type: integer }
+
+    CopyResult:
+      type: object
+      required: [copied, skipped, target]
+      properties:
+        copied: { type: integer }
+        skipped: { type: integer, description: 'Already there: the same size and time.' }
+        target: { type: string }
+
+    BillRow:
+      description: One row of Bill history. Money in dollars.
+      type: object
+      required: [key, date, invoice_no, ticket_id, name, phone, vehicle, plate, total]
+      properties:
+        key: { type: string, examples: [im9000001, t2] }
+        date: { type: string, description: "The bill's date, else the day the ticket was filled (YYYY-MM-DD)." }
+        invoice_no: { type: [string, 'null'] }
+        ticket_id: { type: [integer, 'null'] }
+        name: { type: string }
+        phone: { type: string, description: Digits. }
+        vehicle: { type: string }
+        plate: { type: string }
+        total: { type: [number, 'null'], description: The bill's total; null for a ticket with no bill. }
+
+    ImLine:
+      description: A line of an InvoMax bill. Money in dollars.
+      type: object
+      required: [code, description, kind, qty, unit, amount]
+      properties:
+        code: { type: string }
+        description: { type: string }
+        kind: { type: string, enum: [part, labor, other] }
+        qty: { type: number }
+        unit: { type: number }
+        amount: { type: number }
+
+    BillCustomer:
+      description: Who and what, from our ticket when there is one, else from InvoMax's bill.
+      type: object
+      required: [name, phone, vehicle, plate]
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        vehicle: { type: string }
+        plate: { type: string }
+
+    BillBefore:
+      description: Our ticket's side. Money in dollars.
+      type: object
+      required: [ticket_id, lines, parts, labor, subtotal]
+      properties:
+        ticket_id: { type: integer }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/Line' }
+        parts: { type: number }
+        labor: { type: number }
+        subtotal: { type: number }
+
+    BillAfter:
+      description: The bill's side, InvoMax's or typed by the admin (typed ones have no lines). Money in dollars.
+      type: object
+      required: [invoice_no, date, parts, labor, supplies, discount, deposit, tax, total, balance, lines, source, gone]
+      properties:
+        invoice_no: { type: [string, 'null'] }
+        date: { type: string }
+        parts: { type: number }
+        labor: { type: number }
+        supplies: { type: number }
+        discount: { type: number }
+        deposit: { type: number }
+        tax: { type: number }
+        total: { type: number }
+        balance: { type: number }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/ImLine' }
+        source: { type: string, enum: [invomax, typed] }
+        gone: { type: boolean, description: InvoMax no longer has this bill. }
+
+    BillLink:
+      type: object
+      required: [source, linked_by, linked_at, version]
+      properties:
+        source: { type: string, enum: [invomax, typed, none] }
+        linked_by: { type: string, description: 'auto, or admin#<id>.' }
+        linked_at: { type: string }
+        version: { type: integer, description: 'What link, unlink, none and final send back.' }
+
+    Bill:
+      description: Both sides of a row. `difference` is our subtotal less the bill's parts + labor, in dollars.
+      type: object
+      required: [key, customer, before, after, link, difference]
+      properties:
+        key: { type: string }
+        customer: { $ref: '#/components/schemas/BillCustomer' }
+        before:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/BillBefore'
+        after:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/BillAfter'
+        link:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/BillLink'
+        difference: { type: [number, 'null'] }
+
+    Customer:
+      type: object
+      required: [phone, vehicles]
+      properties:
+        phone: { type: string }
+        vehicles:
+          type: array
+          items: { $ref: '#/components/schemas/CustomerVehicle' }
+
+    CustomerVehicle:
+      type: object
+      required: [plate, vin, vehicle, bills]
+      properties:
+        plate: { type: string }
+        vin: { type: string }
+        vehicle: { type: string }
+        bills:
+          type: array
+          items: { $ref: '#/components/schemas/BillRow' }
+
+    Candidate:
+      type: object
+      required: [invoice_no, date, name, plate, total, why]
+      properties:
+        invoice_no: { type: string }
+        date: { type: string }
+        name: { type: string }
+        plate: { type: string }
+        total: { type: number, description: Dollars. }
+        why: { type: string, enum: [plate, phone] }
+
+    NeedsBill:
+      type: object
+      required: [ticket_id, name, vehicle, plate, filled, subtotal, candidates]
+      properties:
+        ticket_id: { type: integer }
+        name: { type: string }
+        vehicle: { type: string }
+        plate: { type: string }
+        filled: { type: string, description: The day it was filled (YYYY-MM-DD). }
+        subtotal: { type: number, description: 'Parts + labor on the ticket, in dollars.' }
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/Candidate' }
+
+    LinkVersion:
+      description: The link's version as GET /api/invoices/{key} gave it (link.version); null when there was none.
+      x-error: version must be null or a whole number
+      type: [integer, 'null']
+      minimum: 0
+      maximum: 9007199254740991
+
+    InvoiceNo:
+      x-error: invoice_no must be 1 to 7 digits
+      type: string
+      pattern: '^[0-9]{1,7}$'
+
+    LinkIn:
+      type: object
+      required: [invoice_no, version]
+      properties:
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        version: { $ref: '#/components/schemas/LinkVersion' }
+
+    LinkVersioned:
+      type: object
+      required: [version]
+      properties:
+        version: { $ref: '#/components/schemas/LinkVersion' }
+
+    Dollars:
+      description: Dollars to the cent, 0 to 1,000,000.
+      x-error: money must be dollars, 0 to 1000000
+      type: number
+      minimum: 0
+      maximum: 1000000
+
+    FinalIn:
+      description: InvoMax's bill as typed by the admin. total = parts + labor + supplies + tax (no discount).
+      type: object
+      required: [parts, labor, supplies, tax, total, version]
+      properties:
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        parts: { $ref: '#/components/schemas/Dollars' }
+        labor: { $ref: '#/components/schemas/Dollars' }
+        supplies: { $ref: '#/components/schemas/Dollars' }
+        tax: { $ref: '#/components/schemas/Dollars' }
+        total: { $ref: '#/components/schemas/Dollars' }
+        version: { $ref: '#/components/schemas/LinkVersion' }

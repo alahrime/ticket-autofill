@@ -153,6 +153,20 @@ const sameRoot = (a: string, b: string): boolean =>
   parse(resolve(a)).root.toLowerCase() === parse(resolve(b)).root.toLowerCase();
 const MTIME_SLACK_MS = 2000; // FAT (USB sticks) stores times to 2 seconds
 
+const DRIVE = /^[A-Za-z]:\\?$/;
+
+/** Is `s` a bare drive letter (D: or D:\)? */
+export const isDrive = (s: string): boolean => DRIVE.test(s);
+
+/**
+ * Where backups go on a target: a bare drive letter (D: or D:\) means <drive>\shop-backups (the
+ * `copy-backups` command's folder); any other entry of shop-settings.json's backupTargets is used as given.
+ */
+export function backupFolder(target: string): string {
+  if (!isDrive(target)) return target;
+  return join(`${target.slice(0, 2)}\\`, 'shop-backups'); // "E:" alone would mean that drive's current folder
+}
+
 export type CopyOpts = {
   /** Tests only: allow a target on the backups' own drive. */
   allowSameDrive?: boolean;

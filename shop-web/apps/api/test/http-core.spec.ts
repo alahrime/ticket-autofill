@@ -38,7 +38,8 @@ describe('one server per port', () => {
   it('a second copy fails with EADDRINUSE; the first deletes kiosk sessions and makes a setup code', async () => {
     const { dir, done } = tempDir();
     try {
-      const config = loadConfig({ SHOP_ROOT: dir, SHOP_PORT: '0' });
+      // the nightly run reads a temp InvoMax folder, never the real one
+      const config = loadConfig({ SHOP_ROOT: dir, SHOP_PORT: '0', INVOMAX_DIR: join(dir, 'InvoMax') });
       const db = openDb(config.db);
       db.exec(
         'CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, role TEXT NOT NULL, ' +

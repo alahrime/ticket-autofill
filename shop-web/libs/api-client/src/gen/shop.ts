@@ -26,13 +26,25 @@ import type {
 
 import type {
   BadRequestResponse,
+  Bill,
+  BillNowResponse,
+  ChangedResponse,
   CheckIn,
   ConflictResponse,
+  CopyBackups200,
+  Customer,
   Edit,
+  Error,
+  FinalIn,
   GetCatalogParams,
   GoneResponse,
   Hint,
+  LinkIn,
+  LinkVersioned,
+  ListInvoices200,
+  ListInvoicesParams,
   ListMechanics200,
+  ListNeedsBill200,
   ListTickets200,
   ListTicketsParams,
   ListUsers200,
@@ -42,8 +54,11 @@ import type {
   NewUser,
   NotAllowedResponse,
   NotFoundResponse,
+  Nothing,
   SignInResponse,
+  StartImport202,
   Ticket,
+  Upkeep,
   User,
   UserChange,
   Vehicles,
@@ -1885,4 +1900,1422 @@ export const useChangeUser = <TError = ErrorType<BadRequestResponse | SignInResp
         TContext
       > => {
       return useMutation(getChangeUserMutationOptions(options), queryClient);
+    }
+
+export type upkeepStatusResponse200 = {
+  data: Upkeep
+  status: 200
+}
+
+export type upkeepStatusResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type upkeepStatusResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type upkeepStatusResponseSuccess = (upkeepStatusResponse200) & {
+  headers: Headers;
+};
+export type upkeepStatusResponseError = (upkeepStatusResponse401 | upkeepStatusResponse403) & {
+  headers: Headers;
+};
+
+export type upkeepStatusResponse = (upkeepStatusResponseSuccess | upkeepStatusResponseError)
+
+export const getUpkeepStatusUrl = () => {
+
+
+
+
+  return `/api/upkeep/status`
+}
+
+/**
+ * `backup.last` is the newest backup's date, `stale` when there is none from the last 2 days, `offsite`
+ * when the backups were last copied off this PC (null: never). `import.last` is the newest InvoMax import
+ * (null before any). `needs_bill` counts the filled tickets with no bill linked, typed or marked none.
+ * @summary How the backups and the InvoMax import stand (admin)
+ */
+export const upkeepStatus = async ( options?: Parameters<typeof shopFetch>[1]): Promise<upkeepStatusResponse> => {
+
+  return shopFetch<upkeepStatusResponse>(getUpkeepStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getUpkeepStatusQueryKey = () => {
+    return [
+    `/api/upkeep/status`
+    ] as const;
+    }
+
+
+export const getUpkeepStatusQueryOptions = <TData = Awaited<ReturnType<typeof upkeepStatus>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof upkeepStatus>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getUpkeepStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof upkeepStatus>>> = ({ signal }) => upkeepStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof upkeepStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type UpkeepStatusQueryResult = NonNullable<Awaited<ReturnType<typeof upkeepStatus>>>
+export type UpkeepStatusQueryError = ErrorType<SignInResponse | NotAllowedResponse>
+
+
+export function useUpkeepStatus<TData = Awaited<ReturnType<typeof upkeepStatus>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof upkeepStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof upkeepStatus>>,
+          TError,
+          Awaited<ReturnType<typeof upkeepStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useUpkeepStatus<TData = Awaited<ReturnType<typeof upkeepStatus>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof upkeepStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof upkeepStatus>>,
+          TError,
+          Awaited<ReturnType<typeof upkeepStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useUpkeepStatus<TData = Awaited<ReturnType<typeof upkeepStatus>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof upkeepStatus>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary How the backups and the InvoMax import stand (admin)
+ */
+
+export function useUpkeepStatus<TData = Awaited<ReturnType<typeof upkeepStatus>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof upkeepStatus>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getUpkeepStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type startImportResponse202 = {
+  data: StartImport202
+  status: 202
+}
+
+export type startImportResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type startImportResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type startImportResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type startImportResponse409 = {
+  data: Error
+  status: 409
+}
+
+export type startImportResponseSuccess = (startImportResponse202) & {
+  headers: Headers;
+};
+export type startImportResponseError = (startImportResponse400 | startImportResponse401 | startImportResponse403 | startImportResponse409) & {
+  headers: Headers;
+};
+
+export type startImportResponse = (startImportResponseSuccess | startImportResponseError)
+
+export const getStartImportUrl = () => {
+
+
+
+
+  return `/api/upkeep/import`
+}
+
+/**
+ * Starts an import of InvoMax's bills in the background and replies at once; GET /api/upkeep/status says
+ * when it is done. A good import then links the bills it can to their tickets. 409 while one is running.
+ * @summary Check InvoMax now (admin)
+ */
+export const startImport = async (nothing: Nothing, options?: Parameters<typeof shopFetch>[1]): Promise<startImportResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<startImportResponse>(getStartImportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(nothing)
+  }
+);}
+
+
+
+
+
+export const getStartImportMutationKey = () => ['startImport'] as const;
+
+export const getStartImportMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startImport>>, TError,StartImportMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startImport>>, TError,StartImportMutationVariables, TContext> => {
+
+const mutationKey = getStartImportMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startImport>>, StartImportMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  startImport(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartImportMutationResult = NonNullable<Awaited<ReturnType<typeof startImport>>>
+    export type StartImportMutationBody = BodyType<Nothing>
+    export type StartImportMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | Error>
+    export type StartImportMutationVariables = {data: BodyType<Nothing>}
+
+    /**
+ * @summary Check InvoMax now (admin)
+ */
+export const useStartImport = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startImport>>, TError,StartImportMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startImport>>,
+        TError,
+        StartImportMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartImportMutationOptions(options), queryClient);
+    }
+
+export type copyBackupsResponse200 = {
+  data: CopyBackups200
+  status: 200
+}
+
+export type copyBackupsResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type copyBackupsResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type copyBackupsResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type copyBackupsResponseSuccess = (copyBackupsResponse200) & {
+  headers: Headers;
+};
+export type copyBackupsResponseError = (copyBackupsResponse400 | copyBackupsResponse401 | copyBackupsResponse403) & {
+  headers: Headers;
+};
+
+export type copyBackupsResponse = (copyBackupsResponseSuccess | copyBackupsResponseError)
+
+export const getCopyBackupsUrl = () => {
+
+
+
+
+  return `/api/upkeep/copy-backups`
+}
+
+/**
+ * Copies the dated backups to each of shop-settings.json's `backupTargets` whose drive is in (a bare drive
+ * letter means `<drive>\shop-backups`), skipping files already there. 400 `no USB drive set up` with no
+ * target, `drive not found` when none of them is in.
+ * @summary Copy the backups to the USB drive (admin)
+ */
+export const copyBackups = async (nothing: Nothing, options?: Parameters<typeof shopFetch>[1]): Promise<copyBackupsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<copyBackupsResponse>(getCopyBackupsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(nothing)
+  }
+);}
+
+
+
+
+
+export const getCopyBackupsMutationKey = () => ['copyBackups'] as const;
+
+export const getCopyBackupsMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof copyBackups>>, TError,CopyBackupsMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof copyBackups>>, TError,CopyBackupsMutationVariables, TContext> => {
+
+const mutationKey = getCopyBackupsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof copyBackups>>, CopyBackupsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  copyBackups(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CopyBackupsMutationResult = NonNullable<Awaited<ReturnType<typeof copyBackups>>>
+    export type CopyBackupsMutationBody = BodyType<Nothing>
+    export type CopyBackupsMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>
+    export type CopyBackupsMutationVariables = {data: BodyType<Nothing>}
+
+    /**
+ * @summary Copy the backups to the USB drive (admin)
+ */
+export const useCopyBackups = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof copyBackups>>, TError,CopyBackupsMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof copyBackups>>,
+        TError,
+        CopyBackupsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCopyBackupsMutationOptions(options), queryClient);
+    }
+
+export type listInvoicesResponse200 = {
+  data: ListInvoices200
+  status: 200
+}
+
+export type listInvoicesResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type listInvoicesResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type listInvoicesResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type listInvoicesResponseSuccess = (listInvoicesResponse200) & {
+  headers: Headers;
+};
+export type listInvoicesResponseError = (listInvoicesResponse400 | listInvoicesResponse401 | listInvoicesResponse403) & {
+  headers: Headers;
+};
+
+export type listInvoicesResponse = (listInvoicesResponseSuccess | listInvoicesResponseError)
+
+export const getListInvoicesUrl = (params?: ListInvoicesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/invoices?${stringifiedParams}` : `/api/invoices`
+}
+
+/**
+ * Our filled tickets and InvoMax's bills, newest first, 50 a page. A ticket linked to its bill is one row
+ * keyed `im<no>`; a bill alone is `im<no>`; a filled ticket with no InvoMax bill is `t<id>`. Every filter
+ * is a partial match ignoring case, and they combine. `vin` searches our tickets only: InvoMax keeps no VIN.
+ * @summary Bill history, searched (admin)
+ */
+export const listInvoices = async (params?: ListInvoicesParams, options?: Parameters<typeof shopFetch>[1]): Promise<listInvoicesResponse> => {
+
+  return shopFetch<listInvoicesResponse>(getListInvoicesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListInvoicesQueryKey = (params?: ListInvoicesParams,) => {
+    return [
+    `/api/invoices`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListInvoicesQueryOptions = <TData = Awaited<ReturnType<typeof listInvoices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(params?: ListInvoicesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInvoices>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListInvoicesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listInvoices>>> = ({ signal }) => listInvoices(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listInvoices>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListInvoicesQueryResult = NonNullable<Awaited<ReturnType<typeof listInvoices>>>
+export type ListInvoicesQueryError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>
+
+
+export function useListInvoices<TData = Awaited<ReturnType<typeof listInvoices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params: undefined |  ListInvoicesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInvoices>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listInvoices>>,
+          TError,
+          Awaited<ReturnType<typeof listInvoices>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListInvoices<TData = Awaited<ReturnType<typeof listInvoices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params?: ListInvoicesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInvoices>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listInvoices>>,
+          TError,
+          Awaited<ReturnType<typeof listInvoices>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListInvoices<TData = Awaited<ReturnType<typeof listInvoices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params?: ListInvoicesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInvoices>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Bill history, searched (admin)
+ */
+
+export function useListInvoices<TData = Awaited<ReturnType<typeof listInvoices>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params?: ListInvoicesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInvoices>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListInvoicesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type getInvoiceResponse200 = {
+  data: Bill
+  status: 200
+}
+
+export type getInvoiceResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type getInvoiceResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type getInvoiceResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type getInvoiceResponseSuccess = (getInvoiceResponse200) & {
+  headers: Headers;
+};
+export type getInvoiceResponseError = (getInvoiceResponse401 | getInvoiceResponse403 | getInvoiceResponse404) & {
+  headers: Headers;
+};
+
+export type getInvoiceResponse = (getInvoiceResponseSuccess | getInvoiceResponseError)
+
+export const getGetInvoiceUrl = (key: string,) => {
+
+
+
+
+  return `/api/invoices/${key}`
+}
+
+/**
+ * `im<no>`: that InvoMax bill (one InvoMax no longer has too, marked `gone`) and the ticket linked to it.
+ * `t<id>`: a filled ticket; one linked to a bill is that pair (keyed `im<no>`).
+ * @summary One row of Bill history, both sides (admin)
+ */
+export const getInvoice = async (key: string, options?: Parameters<typeof shopFetch>[1]): Promise<getInvoiceResponse> => {
+
+  return shopFetch<getInvoiceResponse>(getGetInvoiceUrl(key),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetInvoiceQueryKey = (key: string,) => {
+    return [
+    `/api/invoices/${key}`
+    ] as const;
+    }
+
+
+export const getGetInvoiceQueryOptions = <TData = Awaited<ReturnType<typeof getInvoice>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(key: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInvoice>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetInvoiceQueryKey(key);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getInvoice>>> = ({ signal }) => getInvoice(key, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: key !== null && key !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getInvoice>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetInvoiceQueryResult = NonNullable<Awaited<ReturnType<typeof getInvoice>>>
+export type GetInvoiceQueryError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>
+
+
+export function useGetInvoice<TData = Awaited<ReturnType<typeof getInvoice>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ key: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInvoice>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getInvoice>>,
+          TError,
+          Awaited<ReturnType<typeof getInvoice>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetInvoice<TData = Awaited<ReturnType<typeof getInvoice>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ key: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInvoice>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getInvoice>>,
+          TError,
+          Awaited<ReturnType<typeof getInvoice>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetInvoice<TData = Awaited<ReturnType<typeof getInvoice>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ key: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInvoice>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary One row of Bill history, both sides (admin)
+ */
+
+export function useGetInvoice<TData = Awaited<ReturnType<typeof getInvoice>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ key: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInvoice>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetInvoiceQueryOptions(key,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type getCustomerResponse200 = {
+  data: Customer
+  status: 200
+}
+
+export type getCustomerResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type getCustomerResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type getCustomerResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type getCustomerResponseSuccess = (getCustomerResponse200) & {
+  headers: Headers;
+};
+export type getCustomerResponseError = (getCustomerResponse401 | getCustomerResponse403 | getCustomerResponse404) & {
+  headers: Headers;
+};
+
+export type getCustomerResponse = (getCustomerResponseSuccess | getCustomerResponseError)
+
+export const getGetCustomerUrl = (phone: string,) => {
+
+
+
+
+  return `/api/customers/${phone}`
+}
+
+/**
+ * @summary A customer's vehicles and their bills, by phone (admin)
+ */
+export const getCustomer = async (phone: string, options?: Parameters<typeof shopFetch>[1]): Promise<getCustomerResponse> => {
+
+  return shopFetch<getCustomerResponse>(getGetCustomerUrl(phone),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCustomerQueryKey = (phone: string,) => {
+    return [
+    `/api/customers/${phone}`
+    ] as const;
+    }
+
+
+export const getGetCustomerQueryOptions = <TData = Awaited<ReturnType<typeof getCustomer>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(phone: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCustomer>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCustomerQueryKey(phone);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCustomer>>> = ({ signal }) => getCustomer(phone, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: phone !== null && phone !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCustomer>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetCustomerQueryResult = NonNullable<Awaited<ReturnType<typeof getCustomer>>>
+export type GetCustomerQueryError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>
+
+
+export function useGetCustomer<TData = Awaited<ReturnType<typeof getCustomer>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ phone: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCustomer>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getCustomer>>,
+          TError,
+          Awaited<ReturnType<typeof getCustomer>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetCustomer<TData = Awaited<ReturnType<typeof getCustomer>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ phone: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCustomer>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getCustomer>>,
+          TError,
+          Awaited<ReturnType<typeof getCustomer>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetCustomer<TData = Awaited<ReturnType<typeof getCustomer>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ phone: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCustomer>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary A customer's vehicles and their bills, by phone (admin)
+ */
+
+export function useGetCustomer<TData = Awaited<ReturnType<typeof getCustomer>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ phone: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCustomer>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetCustomerQueryOptions(phone,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type listNeedsBillResponse200 = {
+  data: ListNeedsBill200
+  status: 200
+}
+
+export type listNeedsBillResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type listNeedsBillResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type listNeedsBillResponseSuccess = (listNeedsBillResponse200) & {
+  headers: Headers;
+};
+export type listNeedsBillResponseError = (listNeedsBillResponse401 | listNeedsBillResponse403) & {
+  headers: Headers;
+};
+
+export type listNeedsBillResponse = (listNeedsBillResponseSuccess | listNeedsBillResponseError)
+
+export const getListNeedsBillUrl = () => {
+
+
+
+
+  return `/api/needs-bill`
+}
+
+/**
+ * The newest 200, newest filled first, each with up to 5 InvoMax bills that might be theirs.
+ * @summary Filled tickets with no bill yet (admin)
+ */
+export const listNeedsBill = async ( options?: Parameters<typeof shopFetch>[1]): Promise<listNeedsBillResponse> => {
+
+  return shopFetch<listNeedsBillResponse>(getListNeedsBillUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListNeedsBillQueryKey = () => {
+    return [
+    `/api/needs-bill`
+    ] as const;
+    }
+
+
+export const getListNeedsBillQueryOptions = <TData = Awaited<ReturnType<typeof listNeedsBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNeedsBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListNeedsBillQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listNeedsBill>>> = ({ signal }) => listNeedsBill({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listNeedsBill>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListNeedsBillQueryResult = NonNullable<Awaited<ReturnType<typeof listNeedsBill>>>
+export type ListNeedsBillQueryError = ErrorType<SignInResponse | NotAllowedResponse>
+
+
+export function useListNeedsBill<TData = Awaited<ReturnType<typeof listNeedsBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNeedsBill>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listNeedsBill>>,
+          TError,
+          Awaited<ReturnType<typeof listNeedsBill>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListNeedsBill<TData = Awaited<ReturnType<typeof listNeedsBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNeedsBill>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listNeedsBill>>,
+          TError,
+          Awaited<ReturnType<typeof listNeedsBill>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListNeedsBill<TData = Awaited<ReturnType<typeof listNeedsBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNeedsBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Filled tickets with no bill yet (admin)
+ */
+
+export function useListNeedsBill<TData = Awaited<ReturnType<typeof listNeedsBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNeedsBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListNeedsBillQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type linkInvoiceResponse200 = {
+  data: BillNowResponse
+  status: 200
+}
+
+export type linkInvoiceResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type linkInvoiceResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type linkInvoiceResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type linkInvoiceResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type linkInvoiceResponse409 = {
+  data: ChangedResponse
+  status: 409
+}
+
+export type linkInvoiceResponseSuccess = (linkInvoiceResponse200) & {
+  headers: Headers;
+};
+export type linkInvoiceResponseError = (linkInvoiceResponse400 | linkInvoiceResponse401 | linkInvoiceResponse403 | linkInvoiceResponse404 | linkInvoiceResponse409) & {
+  headers: Headers;
+};
+
+export type linkInvoiceResponse = (linkInvoiceResponseSuccess | linkInvoiceResponseError)
+
+export const getLinkInvoiceUrl = (key: string,) => {
+
+
+
+
+  return `/api/invoices/${key}/link`
+}
+
+/**
+ * Any bill InvoMax still has, typed by number or picked from the candidates. `version` is the link's as
+ * GET /api/invoices/{key} gave it (`link.version`; null when there was none): another is 409, as is a bill
+ * another ticket has. A `t<id>` key only; an `im` key is 404.
+ * @summary Link a filled ticket to an InvoMax bill (admin)
+ */
+export const linkInvoice = async (key: string,
+    linkIn: LinkIn, options?: Parameters<typeof shopFetch>[1]): Promise<linkInvoiceResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<linkInvoiceResponse>(getLinkInvoiceUrl(key),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(linkIn)
+  }
+);}
+
+
+
+
+
+export const getLinkInvoiceMutationKey = () => ['linkInvoice'] as const;
+
+export const getLinkInvoiceMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof linkInvoice>>, TError,LinkInvoiceMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof linkInvoice>>, TError,LinkInvoiceMutationVariables, TContext> => {
+
+const mutationKey = getLinkInvoiceMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof linkInvoice>>, LinkInvoiceMutationVariables> = (props) => {
+          const {key,data} = props ?? {};
+
+          return  linkInvoice(key,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LinkInvoiceMutationResult = NonNullable<Awaited<ReturnType<typeof linkInvoice>>>
+    export type LinkInvoiceMutationBody = BodyType<LinkIn>
+    export type LinkInvoiceMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>
+    export type LinkInvoiceMutationVariables = {key: string;data: BodyType<LinkIn>}
+
+    /**
+ * @summary Link a filled ticket to an InvoMax bill (admin)
+ */
+export const useLinkInvoice = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof linkInvoice>>, TError,LinkInvoiceMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof linkInvoice>>,
+        TError,
+        LinkInvoiceMutationVariables,
+        TContext
+      > => {
+      return useMutation(getLinkInvoiceMutationOptions(options), queryClient);
+    }
+
+export type unlinkInvoiceResponse200 = {
+  data: BillNowResponse
+  status: 200
+}
+
+export type unlinkInvoiceResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type unlinkInvoiceResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type unlinkInvoiceResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type unlinkInvoiceResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type unlinkInvoiceResponse409 = {
+  data: ChangedResponse
+  status: 409
+}
+
+export type unlinkInvoiceResponseSuccess = (unlinkInvoiceResponse200) & {
+  headers: Headers;
+};
+export type unlinkInvoiceResponseError = (unlinkInvoiceResponse400 | unlinkInvoiceResponse401 | unlinkInvoiceResponse403 | unlinkInvoiceResponse404 | unlinkInvoiceResponse409) & {
+  headers: Headers;
+};
+
+export type unlinkInvoiceResponse = (unlinkInvoiceResponseSuccess | unlinkInvoiceResponseError)
+
+export const getUnlinkInvoiceUrl = (key: string,) => {
+
+
+
+
+  return `/api/invoices/${key}/unlink`
+}
+
+/**
+ * An unlinked pair is never linked again by itself. 404 when there is nothing to undo.
+ * @summary Undo a ticket's link, typed bill or none (admin)
+ */
+export const unlinkInvoice = async (key: string,
+    linkVersioned: LinkVersioned, options?: Parameters<typeof shopFetch>[1]): Promise<unlinkInvoiceResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<unlinkInvoiceResponse>(getUnlinkInvoiceUrl(key),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(linkVersioned)
+  }
+);}
+
+
+
+
+
+export const getUnlinkInvoiceMutationKey = () => ['unlinkInvoice'] as const;
+
+export const getUnlinkInvoiceMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlinkInvoice>>, TError,UnlinkInvoiceMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unlinkInvoice>>, TError,UnlinkInvoiceMutationVariables, TContext> => {
+
+const mutationKey = getUnlinkInvoiceMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unlinkInvoice>>, UnlinkInvoiceMutationVariables> = (props) => {
+          const {key,data} = props ?? {};
+
+          return  unlinkInvoice(key,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnlinkInvoiceMutationResult = NonNullable<Awaited<ReturnType<typeof unlinkInvoice>>>
+    export type UnlinkInvoiceMutationBody = BodyType<LinkVersioned>
+    export type UnlinkInvoiceMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>
+    export type UnlinkInvoiceMutationVariables = {key: string;data: BodyType<LinkVersioned>}
+
+    /**
+ * @summary Undo a ticket's link, typed bill or none (admin)
+ */
+export const useUnlinkInvoice = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlinkInvoice>>, TError,UnlinkInvoiceMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof unlinkInvoice>>,
+        TError,
+        UnlinkInvoiceMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUnlinkInvoiceMutationOptions(options), queryClient);
+    }
+
+export type markNoInvoiceResponse200 = {
+  data: BillNowResponse
+  status: 200
+}
+
+export type markNoInvoiceResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type markNoInvoiceResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type markNoInvoiceResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type markNoInvoiceResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type markNoInvoiceResponse409 = {
+  data: ChangedResponse
+  status: 409
+}
+
+export type markNoInvoiceResponseSuccess = (markNoInvoiceResponse200) & {
+  headers: Headers;
+};
+export type markNoInvoiceResponseError = (markNoInvoiceResponse400 | markNoInvoiceResponse401 | markNoInvoiceResponse403 | markNoInvoiceResponse404 | markNoInvoiceResponse409) & {
+  headers: Headers;
+};
+
+export type markNoInvoiceResponse = (markNoInvoiceResponseSuccess | markNoInvoiceResponseError)
+
+export const getMarkNoInvoiceUrl = (key: string,) => {
+
+
+
+
+  return `/api/invoices/${key}/none`
+}
+
+/**
+ * @summary Mark a filled ticket as having no InvoMax bill (admin)
+ */
+export const markNoInvoice = async (key: string,
+    linkVersioned: LinkVersioned, options?: Parameters<typeof shopFetch>[1]): Promise<markNoInvoiceResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<markNoInvoiceResponse>(getMarkNoInvoiceUrl(key),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(linkVersioned)
+  }
+);}
+
+
+
+
+
+export const getMarkNoInvoiceMutationKey = () => ['markNoInvoice'] as const;
+
+export const getMarkNoInvoiceMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markNoInvoice>>, TError,MarkNoInvoiceMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markNoInvoice>>, TError,MarkNoInvoiceMutationVariables, TContext> => {
+
+const mutationKey = getMarkNoInvoiceMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markNoInvoice>>, MarkNoInvoiceMutationVariables> = (props) => {
+          const {key,data} = props ?? {};
+
+          return  markNoInvoice(key,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkNoInvoiceMutationResult = NonNullable<Awaited<ReturnType<typeof markNoInvoice>>>
+    export type MarkNoInvoiceMutationBody = BodyType<LinkVersioned>
+    export type MarkNoInvoiceMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>
+    export type MarkNoInvoiceMutationVariables = {key: string;data: BodyType<LinkVersioned>}
+
+    /**
+ * @summary Mark a filled ticket as having no InvoMax bill (admin)
+ */
+export const useMarkNoInvoice = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markNoInvoice>>, TError,MarkNoInvoiceMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof markNoInvoice>>,
+        TError,
+        MarkNoInvoiceMutationVariables,
+        TContext
+      > => {
+      return useMutation(getMarkNoInvoiceMutationOptions(options), queryClient);
+    }
+
+export type typeFinalResponse200 = {
+  data: BillNowResponse
+  status: 200
+}
+
+export type typeFinalResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type typeFinalResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type typeFinalResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type typeFinalResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type typeFinalResponse409 = {
+  data: ChangedResponse
+  status: 409
+}
+
+export type typeFinalResponseSuccess = (typeFinalResponse200) & {
+  headers: Headers;
+};
+export type typeFinalResponseError = (typeFinalResponse400 | typeFinalResponse401 | typeFinalResponse403 | typeFinalResponse404 | typeFinalResponse409) & {
+  headers: Headers;
+};
+
+export type typeFinalResponse = (typeFinalResponseSuccess | typeFinalResponseError)
+
+export const getTypeFinalUrl = (key: string,) => {
+
+
+
+
+  return `/api/invoices/${key}/final`
+}
+
+/**
+ * For a bill InvoMax doesn't have. Dollars, to the cent, 0 to 1,000,000 each; `total` must be parts +
+ * labor + supplies + tax (no discount). The invoice number, if given, must be no other ticket's.
+ * @summary Type a ticket's final bill by hand (admin)
+ */
+export const typeFinal = async (key: string,
+    finalIn: FinalIn, options?: Parameters<typeof shopFetch>[1]): Promise<typeFinalResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<typeFinalResponse>(getTypeFinalUrl(key),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(finalIn)
+  }
+);}
+
+
+
+
+
+export const getTypeFinalMutationKey = () => ['typeFinal'] as const;
+
+export const getTypeFinalMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof typeFinal>>, TError,TypeFinalMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof typeFinal>>, TError,TypeFinalMutationVariables, TContext> => {
+
+const mutationKey = getTypeFinalMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof typeFinal>>, TypeFinalMutationVariables> = (props) => {
+          const {key,data} = props ?? {};
+
+          return  typeFinal(key,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TypeFinalMutationResult = NonNullable<Awaited<ReturnType<typeof typeFinal>>>
+    export type TypeFinalMutationBody = BodyType<FinalIn>
+    export type TypeFinalMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>
+    export type TypeFinalMutationVariables = {key: string;data: BodyType<FinalIn>}
+
+    /**
+ * @summary Type a ticket's final bill by hand (admin)
+ */
+export const useTypeFinal = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof typeFinal>>, TError,TypeFinalMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof typeFinal>>,
+        TError,
+        TypeFinalMutationVariables,
+        TContext
+      > => {
+      return useMutation(getTypeFinalMutationOptions(options), queryClient);
     }

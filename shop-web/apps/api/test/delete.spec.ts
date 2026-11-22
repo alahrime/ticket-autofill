@@ -426,7 +426,8 @@ describe('purge', () => {
       now = new Date(now.getTime() + 14 * 86_400_000);
       (ticks[0] as () => void)();
       expect(s.store.get(keep.id)).toBeNull(); // an hour's tick
-      expect(s.log().trim().split('\n').map((l) => l.slice(20))).toEqual(['purged 1', 'purged 1']); // none for 0
+      const purged = s.log().trim().split('\n').map((l) => l.slice(20)).filter((l) => l.startsWith('purge'));
+      expect(purged).toEqual(['purged 1', 'purged 1']); // none for 0 (the nightly run logs lines of its own)
       expect(s.log()).not.toMatch(/JANE|TESTCASE|555/);
       broken = true; // the purge fails: logged by class, and the server goes on
       expect(() => (ticks[0] as () => void)()).not.toThrow();

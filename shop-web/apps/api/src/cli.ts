@@ -1,9 +1,8 @@
 // `admin <name>`: makes or resets an admin from the shop PC's command line (shop.py main()).
 import { createInterface } from 'node:readline';
-import { join } from 'node:path';
 import { Invalid } from '@shop/domain';
 import { Accounts, makeAdmin } from './accounts';
-import { copyBackups, restoreBackup } from './backup';
+import { backupFolder, copyBackups, isDrive, restoreBackup } from './backup';
 import type { Config } from './config';
 import { openDb } from './db';
 import { BadInput } from './errors';
@@ -79,9 +78,8 @@ export async function runRestoreCommand(config: Config, file: string, out: (s: s
 /** `copy-backups <drive>`: copies the backups to <drive>\shop-backups -> exit code. */
 export function runCopyBackupsCommand(config: Config, drive: string, out: (s: string) => void, now = new Date()): number {
   try {
-    if (!/^[A-Za-z]:\\?$/.test(drive)) throw new BadInput('give a drive letter, like D:');
-    const root = drive.slice(0, 2) + '\\'; // "E:" alone would mean that drive's current folder
-    const target = join(root, 'shop-backups');
+    if (!isDrive(drive)) throw new BadInput('give a drive letter, like D:');
+    const target = backupFolder(drive);
     const r = copyBackups(config.backups, target, now);
     out(`Copied ${r.copied} backup${r.copied === 1 ? '' : 's'} to ${target} (${r.skipped} already there).`);
     return 0;

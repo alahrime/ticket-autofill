@@ -212,6 +212,11 @@ export class LinkStore {
     });
   }
 
+  /** How many filled tickets have no final yet (needsBill lists the newest 200 of them). */
+  needsBillCount(): number {
+    return this.unlinkedFilled().length;
+  }
+
   /** The ticket's final as stored (its version is what link, unlink, markNone and typedFinal expect), or null. */
   final(ticketId: number): Final | null {
     return (
