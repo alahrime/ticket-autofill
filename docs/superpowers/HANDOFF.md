@@ -42,7 +42,7 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
   - **Bill history** (`/bills`, the React app `shop-web/apps/admin-app`, admin only):
     - Search by tag, name, phone, VIN (our tickets only; InvoMax keeps no VIN) and date.
     - Our ticket and the InvoMax bill are shown side by side, with a line when the difference isn't zero.
-  - **Settings:** `shop-settings.json` in the shop root holds `{ "invomaxDir": "C:\hunni\files", "backupTargets": ["D:"] }`. Defaults apply when it is missing or invalid; `INVOMAX_DIR` overrides it.
+  - **Settings:** `shop-settings.json` in the shop root holds `{ "invomaxDir": "C:\\hunni\\files", "backupTargets": ["D:"] }`. Defaults apply when it is missing or invalid; `INVOMAX_DIR` overrides it.
   - **What makes it live:** the owner's switch to the TS server (`start-shop.bat` → `run-shop.cmd`). Build it first: `npx nx build api` and `npx nx build admin-app`.
 - **Owner checks:**
   - Done 2026-11-21: 3 recent bills' lines on screen, **all match**.
