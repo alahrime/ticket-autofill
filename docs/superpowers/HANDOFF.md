@@ -22,8 +22,37 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
   - The remote fill and print project (below) is about driving InvoMax. It probably changes or goes away.
 
 ## Phase 4 build (started 2026-11-21, branch `phase4-bill-history`, worktree `.claude/worktrees/phase4-bill-history-2aa87d`)
-- Design approved; plan `docs/superpowers/plans/2026-11-21-phase4-bill-history.md`; ledger `.superpowers/sdd/2026-11-21-phase4-bill-history/progress.md` (in the worktree).
-- **Task 1 done:** InvoMax's Btrieve layout is fully mapped in `shop-web/libs/invomax/LAYOUT.md`. A throwaway decoder (`probe/layout/`) finds exactly the header's record count (INVOICE 53,447; DETAIL 245,602), and the lines add up to the bills on ~99%. **Owner checked 3 recent bills' lines on screen (2026-11-21): all match.** Labor is @403 (not @272); payments sit among the lines; InvoMax keeps no VIN on bills.
+- Design approved; plan `docs/superpowers/plans/2026-11-21-phase4-bill-history.md`. Ledger: `.superpowers/sdd/2026-11-21-phase4-bill-history/progress.md` in the worktree. It holds every ruling and deferred minor, kept for the final whole-branch review.
+- **Stage 4a done (Tasks 1–9, 2026-11-21; not merged, not pushed).** Each task had one implementer and two reviewers, and was fixed until both approved.
+  - **InvoMax import:** `@shop/invomax` decodes `INVOICE.btv`/`DETAIL.btv` (layout in `shop-web/libs/invomax/LAYOUT.md`). `import-invomax` copies them read-only into `invomax-import/` and fills `invomax.db`.
+    - The real data took 7.6 s on first run: 53,447 bills and 245,602 lines.
+    - An OS-held SQLite lock (`invomax-import/lock.db`) makes sure only one import runs at a time.
+  - **Backups:**
+    - `backups/tickets-YYYY-MM-DD.db` keeps 90.
+    - `backups/invomax-YYYY-MM-DD.db` keeps 14 daily plus 24 monthly.
+    - `restore <file>` refuses while the server is up. It checks the file, rolls back on failure, and sets the old file aside as `*.before-restore-*`.
+    - `copy-backups D:` copies to the USB drive as `<drive>\shop-backups`. It accepts drive letters only, refuses the backups' own drive, and checks each copy by SHA-256. It writes `offsite.json` only when every file is there.
+    - `start-shop.bat`'s daily `tickets-backup-*.db` stays as the rollback safety net.
+  - **Linking (`invoice_finals`, `invoice_unlinked` in tickets.db):**
+    - A filled ticket auto-links only when exactly one bill fits: same plate, filled−1 to +3 days, and no other ticket wants that bill.
+    - Everything else goes to the "needs a bill" list, which offers Link, Link by bill number, None of these, and Type the final bill.
+    - Each change is checked against a version number, so a stale screen can't overwrite it.
+  - **Nightly run (TS server only):** at 02:00 local time it backs up, prunes and copies to each `backupTargets` drive that is present. It then imports InvoMax and auto-links. It catches up after the PC was off.
+  - **Admin page:** an upkeep line shows the last backup (red after 2 days), "No copy off this PC yet", "InvoMax checked …", and "N tickets need a bill". It has **Check InvoMax now** and **Copy backups to USB** buttons, and a Bill history link. All of this is hidden under `shop.py`.
+  - **Bill history** (`/bills`, the React app `shop-web/apps/admin-app`, admin only):
+    - Search by tag, name, phone, VIN (our tickets only; InvoMax keeps no VIN) and date.
+    - Our ticket and the InvoMax bill are shown side by side, with a line when the difference isn't zero.
+  - **Settings:** `shop-settings.json` in the shop root holds `{ "invomaxDir": "C:\hunni\files", "backupTargets": ["D:"] }`. Defaults apply when it is missing or invalid; `INVOMAX_DIR` overrides it.
+  - **What makes it live:** the owner's switch to the TS server (`start-shop.bat` → `run-shop.cmd`). Build it first: `npx nx build api` and `npx nx build admin-app`.
+- **Owner checks:**
+  - Done 2026-11-21: 3 recent bills' lines on screen, **all match**.
+  - **Still open (owner couldn't check yet, 2026-11-21):** 3 bills from the 2000s against InvoMax's screen. Each is listed with the parts and labor the import found:
+    - #208780 (2002-01-14): parts 30.03, labor 105.00, total 137.95.
+    - #213793 (2005-01-18): parts 85.99, labor 25.00, total 121.12.
+    - #221558 (2008-02-18): parts 225.02, labor 26.00, total 275.45.
+  - **Question on #221558:** all 5 lines are kind M (part), but the bill counts the 26.00 SAFETY INSPECTION as labor. Ask whether InvoMax shows that line as labor. Not approved until the owner says so.
+- **Running e2e:** use `NX_DAEMON=false npx nx e2e pages-e2e`. With the nx daemon on, it hung for 15 minutes on this PC.
+- **Next: Stage 4b (Tasks 10–13):** job mapping and suggested prices on the admin's invoice entry. The admin can always change the price. After that, the whole-branch review.
 
 ## InvoMax backup spike (2026-11-21, throwaway; owner said yes)
 - **Owner decisions:** keep the InvoMax final-bill read (a fallback if the replacement takes long, and data for the new app's rules); InvoMax stays paid for 1–2 more months at most. InvoMax has no list of past bills the owner can find, but File → Make Backup Files works.
