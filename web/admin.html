@@ -20,6 +20,12 @@ header{position:sticky;top:0;z-index:5;display:flex;gap:12px;align-items:center;
 header h1{font-size:22px;margin:0;flex:1}
 #net{font-size:14px;color:#777}
 #net.bad{color:#b00;font-weight:600}
+a.btn{display:inline-flex;align-items:center;box-sizing:border-box;min-height:48px;padding:10px 18px;border-radius:8px;background:#ddd;color:#222;text-decoration:none}
+#upkeep{margin-top:24px;padding:12px 14px;border-top:1px solid #ccc;font-size:15px;color:#444}
+#upkeep .bad{color:#b00;font-weight:600}
+#upkeep .row{display:flex;gap:6px 18px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+#upkeep .row.btns{gap:12px;margin:0}
+#upkeep a{color:#1f5fbf}
 main{padding:12px 16px 40px}
 .msg{padding:12px 14px;border-radius:8px;margin:0 0 12px}
 .msg.err{background:#fde2e2;color:#800}
@@ -41,8 +47,8 @@ main{padding:12px 16px 40px}
 .card .meta{display:block;margin-top:4px;overflow-wrap:anywhere}
 .card.review{background:#fff3b0;border-color:#c99a00}
 .card.back{border-left:6px solid #a35a00}
-.meta{font-size:15px;color:#777}
-.empty{color:#888;font-size:15px;padding:8px 4px}
+.meta{font-size:15px;color:#595959}
+.empty{color:#595959;font-size:15px;padding:8px 4px}
 /* forms */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px 14px}
 .grid .wide{grid-column:1/-1}
@@ -108,6 +114,7 @@ dialog p{margin:0 0 10px;overflow-wrap:anywhere}
  <button type="button" id="btnNew">New ticket</button>
  <button type="button" id="btnUsers" class="light">Mechanics &amp; admins</button>
  <button type="button" id="btnDeleted" class="light">Deleted</button>
+ <a href="/bills" id="linkBills" class="btn" hidden>Bill history</a>
  <button type="button" id="btnBoard" class="light" hidden>Back to board</button>
  <form id="logoutForm" method="post" action="/logout"><button type="submit" class="light">Sign out</button></form>
 </header>
@@ -116,6 +123,7 @@ dialog p{margin:0 0 10px;overflow-wrap:anywhere}
 
  <section id="viewBoard">
   <div id="board"></div>
+  <footer id="upkeep" aria-label="Backups and InvoMax" hidden></footer>
  </section>
 
  <section id="viewTicket" hidden></section>
@@ -207,6 +215,7 @@ const TEXTS = [["request", "What the customer wants done"], ["notes", "Notes"]];
 const LABELS = Object.fromEntries([...FIELDS, ...TEXTS, ["mechanic", "Mechanic"]].map(([k, l]) => [k, l]));
 
 const S = {
+  upkeepBusy: new Set(),
   tickets: [], etag: "", view: "board",
   cur: null,        // the open ticket as the server last sent it
   dirty: false,     // the desk changed something on the open ticket and hasn't saved
@@ -403,6 +412,7 @@ function show(view) {
   $("btnUsers").hidden = view !== "board";
   $("btnDeleted").hidden = view !== "board";
   $("btnBoard").hidden = view === "board";
+  $("linkBills").hidden = view !== "board" || !S.upkeepOk;
   if (view !== "ticket") $("title").textContent = view === "users" ? "Mechanics & admins" : view === "deleted" ? "Deleted" : "Desk";
   window.scrollTo(0, 0);
 }
@@ -1383,6 +1393,71 @@ async function setActive(u, active) {
   }
 }
 
+/* ---------- backups and InvoMax footer (the TS server only: shop.py has no /api/upkeep) ---------- */
+
+const UPKEEP_MS = 60000;
+const localDay = t => /^\d{4}-\d{2}-\d{2}$/.test(t) ? new Date(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10)) : null;
+function when(t) {  // a date alone shows as a day; a time shows in this browser's local time
+  const day = localDay(t);
+  if (day) return day.toLocaleDateString(undefined, {year: "numeric", month: "short", day: "numeric"});
+  const d = new Date(t);
+  return isNaN(d) ? String(t) : d.toLocaleString(undefined, {dateStyle: "medium", timeStyle: "short"});
+}
+
+function renderUpkeep(u) {
+  const b = u.backup || {}, im = u.import || {}, last = im.last;
+  const rows = [el("p", {class: "row"},
+    el("span", {class: b.last && !b.stale ? "" : "bad", text: b.last ? "Last backup: " + when(b.last) : "Last backup: none yet"}),
+    b.offsite ? null : el("span", {text: "No copy off this PC yet"}),
+    el("span", {text: im.running ? "InvoMax: checking…" : last ? "InvoMax checked " + when(last.finished) + (last.ok ? "" : " (failed)") : "InvoMax not checked yet"}),
+    u.needs_bill > 0 ? el("a", {href: "/bills#needs", text: u.needs_bill + (u.needs_bill === 1 ? " ticket needs a bill" : " tickets need a bill")}) : null)];
+  rows.push(el("p", {class: "row btns"},
+    el("button", {type: "button", class: "light", id: "btnImport", onclick: e => upkeepPost(e.currentTarget, "/api/upkeep/import", () => "Started: checking InvoMax now.")}, "Check InvoMax now"),
+    el("button", {type: "button", class: "light", id: "btnCopy", onclick: e => upkeepPost(e.currentTarget, "/api/upkeep/copy-backups", d => {
+      const c = (d.copies || []).reduce((n, x) => n + (x.copied || 0), 0), k = (d.copies || []).reduce((n, x) => n + (x.skipped || 0), 0);
+      return "Copied " + c + ", skipped " + k + ".";
+    })}, "Copy backups to USB")));
+  $("upkeep").replaceChildren(...rows);
+  for (const id of S.upkeepBusy) $(id).disabled = true;  // a refresh mid-request keeps its button off
+  $("upkeep").hidden = false;
+}
+
+async function upkeepPost(btn, path, done) {
+  const id = btn.id;
+  S.upkeepBusy.add(id);
+  btn.disabled = true;
+  try {
+    const r = await api("POST", path, {});
+    flash(done(r.data), "ok");
+  } catch (e) {
+    if (e.status !== 401) flash(e.message);
+  } finally {
+    S.upkeepBusy.delete(id);
+    const now = $(id);
+    if (now) now.disabled = false;
+    loadUpkeep();
+  }
+}
+
+async function loadUpkeep() {
+  if (S.upkeepLoading || S.upkeepGone || document.hidden) return;  // a slow request never stacks up another
+  S.upkeepLoading = true;
+  try {
+    const r = await api("GET", "/api/upkeep/status");
+    if (!r.data || !r.data.backup) throw new Http(200, {});
+    S.upkeepOk = true;
+    $("linkBills").hidden = S.view !== "board";
+    renderUpkeep(r.data);
+  } catch (e) {
+    if (e.status === 404) {  // shop.py: no such route; hide it all, say nothing
+      S.upkeepGone = true; S.upkeepOk = false;
+      $("upkeep").hidden = true; $("linkBills").hidden = true;
+    }  // any other failure: keep what is shown; the next tick tries again
+  } finally {
+    S.upkeepLoading = false;
+  }
+}
+
 /* ---------- start ---------- */
 
 $("btnNew").addEventListener("click", newTicket);
@@ -1394,7 +1469,7 @@ $("resetForm").addEventListener("submit", resetSecret);
 $("btnCancelReset").addEventListener("click", closeReset);
 $("btnDeleted").addEventListener("click", showDeleted);
 for (const e of ["focusin", "input", "change"]) document.addEventListener(e, carField);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { poll(); loadUpkeep(); } });
 window.addEventListener("pageshow", e => { if (e.persisted) location.reload(); });  // from the back/forward cache: ask the server again
 
 show("board");
@@ -1404,7 +1479,9 @@ loadMe();
 loadVehicles();
 loadMechanics();
 poll();
+loadUpkeep();
 setInterval(poll, POLL_MS);
+setInterval(loadUpkeep, UPKEEP_MS);
 setInterval(updateAges, AGE_MS);
 </script>
 </body></html>

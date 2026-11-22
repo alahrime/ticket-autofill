@@ -2,9 +2,10 @@
 // vehicles.json, a new tickets.db, the admin made with the server's own `admin <name>` command and two mechanics
 // added through the API. Never the real tickets.db; never start-shop.bat. Returns the teardown.
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { btrieveFile, detailBytes, invoiceBytes } from '@shop/invomax/testing';
 import { ADMIN, BASE, PASSWORD, PINS, PORT } from './shop';
 
 export const REPO = resolve(__dirname, '../../../..'); // the folder holding shop.py and web/
@@ -34,7 +35,30 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const root = mkdtempSync(join(tmpdir(), 'shop-pages-e2e-'));
   cpSync(join(REPO, 'web'), join(root, 'web'), { recursive: true });
   for (const f of ['parts.csv', 'vehicles.json']) copyFileSync(join(REPO, f), join(root, f));
-  const env = { ...process.env, SHOP_ROOT: root, SHOP_PORT: String(PORT) };
+  // InvoMax's tables: made-up ones in a temp folder (never C:\hunni), so Check InvoMax now reads nothing real.
+  const invomax = join(root, 'fake-invomax');
+  mkdirSync(invomax);
+  writeFileSync(
+    join(invomax, 'INVOICE.btv'),
+    btrieveFile({
+      pageSize: 1536,
+      recordLength: 498,
+      records: [
+        invoiceBytes({ invoice_no: '9000001', date: '2026-11-20', last: 'DOE', first: 'JANE', phone: '(555)010-0000', plate: 'XKS-4827', parts: 12000, labor: 9000, total: 21000 }),
+      ],
+    }),
+  );
+  writeFileSync(
+    join(invomax, 'DETAIL.btv'),
+    btrieveFile({
+      pageSize: 1024,
+      recordLength: 265,
+      records: [detailBytes({ invoice_no: '9000001', code: 'LABOR', description: 'REPLACE FRONT PADS', kind: 'labor', qty: 1, unit: 9000, date: '2026-11-20' })],
+    }),
+  );
+  // The USB target: a folder in the temp root, never a real drive; the backups stay in <root>/backups.
+  writeFileSync(join(root, 'shop-settings.json'), JSON.stringify({ backupTargets: [join(root, 'usb-stick')] }));
+  const env = { ...process.env, SHOP_ROOT: root, SHOP_PORT: String(PORT), INVOMAX_DIR: invomax };
 
   const made = spawnSync(process.execPath, [MAIN, 'admin', ADMIN], {
     env,

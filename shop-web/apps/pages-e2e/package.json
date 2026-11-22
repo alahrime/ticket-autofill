@@ -5,7 +5,8 @@
   "nx": {
     "name": "pages-e2e",
     "implicitDependencies": [
-      "api"
+      "api",
+      "invomax"
     ],
     "targets": {
       "e2e": {
@@ -13,7 +14,8 @@
         "dependsOn": [
           {
             "projects": [
-              "api"
+              "api",
+              "invomax"
             ],
             "target": "build"
           }
