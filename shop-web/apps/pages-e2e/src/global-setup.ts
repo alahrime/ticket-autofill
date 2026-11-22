@@ -119,6 +119,9 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       records: [
         detailBytes({ invoice_no: '9000001', code: 'LABOR', description: 'REPLACE FRONT PADS', kind: 'labor', qty: 1, unit: 9000, date: '2026-11-20' }),
         detailBytes({ invoice_no: '9000002', code: 'PADS', description: 'BRAKE PAD SET', kind: 'part', qty: 1, unit: 10000, date: day(-2) }),
+        // Job mapping: more unmapped groups (a generic LABOR code, so one group per description's words)
+        detailBytes({ invoice_no: '9000001', code: 'LABOR', description: 'REPLACE REAR BRAKE PADS', kind: 'labor', qty: 1, unit: 8000, date: '2026-11-20' }),
+        detailBytes({ invoice_no: '9000002', code: 'LABOR', description: 'REPLACE FRONT PADS', kind: 'labor', qty: 1, unit: 9000, date: day(-2) }),
       ],
     }),
   );

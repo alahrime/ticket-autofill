@@ -115,6 +115,7 @@ dialog p{margin:0 0 10px;overflow-wrap:anywhere}
  <button type="button" id="btnUsers" class="light">Mechanics &amp; admins</button>
  <button type="button" id="btnDeleted" class="light">Deleted</button>
  <a href="/bills" id="linkBills" class="btn" hidden>Bill history</a>
+ <a href="/jobs" id="linkJobs" class="btn" hidden>Job mapping</a>
  <button type="button" id="btnBoard" class="light" hidden>Back to board</button>
  <form id="logoutForm" method="post" action="/logout"><button type="submit" class="light">Sign out</button></form>
 </header>
@@ -413,6 +414,7 @@ function show(view) {
   $("btnDeleted").hidden = view !== "board";
   $("btnBoard").hidden = view === "board";
   $("linkBills").hidden = view !== "board" || !S.upkeepOk;
+  $("linkJobs").hidden = view !== "board" || !S.upkeepOk;
   if (view !== "ticket") $("title").textContent = view === "users" ? "Mechanics & admins" : view === "deleted" ? "Deleted" : "Desk";
   window.scrollTo(0, 0);
 }
@@ -1447,11 +1449,12 @@ async function loadUpkeep() {
     if (!r.data || !r.data.backup) throw new Http(200, {});
     S.upkeepOk = true;
     $("linkBills").hidden = S.view !== "board";
+    $("linkJobs").hidden = S.view !== "board";
     renderUpkeep(r.data);
   } catch (e) {
     if (e.status === 404) {  // shop.py: no such route; hide it all, say nothing
       S.upkeepGone = true; S.upkeepOk = false;
-      $("upkeep").hidden = true; $("linkBills").hidden = true;
+      $("upkeep").hidden = true; $("linkBills").hidden = true; $("linkJobs").hidden = true;
     }  // any other failure: keep what is shown; the next tick tries again
   } finally {
     S.upkeepLoading = false;
