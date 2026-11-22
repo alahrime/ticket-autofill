@@ -74,6 +74,11 @@ col.c-total{width:100px}
 col.c-del{width:56px}
 td .x{min-width:48px;padding:10px;background:#eee;color:#900}
 td .code{display:block;font-size:13px;color:#666;margin-top:2px}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+td .sugg{font-size:13px;color:#555;margin-top:2px}
+td .sugg div{overflow-wrap:anywhere}
+td .sugg button[hidden]{display:none}
+td .sugg button{display:inline;min-height:0;min-width:0;padding:2px 0;background:none;border:0;color:#06c;text-decoration:underline;font:inherit;cursor:pointer}
 .totals{display:flex;gap:20px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px;font-size:18px}
 .totals b{font-size:20px}
 .deps td{border-bottom:1px solid #eee;padding:8px 4px}
@@ -332,8 +337,10 @@ function timeoutSignal() {
   return c.signal;
 }
 
-async function api(method, path, body, headers) {
-  const opt = {method, headers: {...(headers || {})}, cache: "no-store", signal: timeoutSignal()};
+async function api(method, path, body, headers, signal) {  // signal: lets the caller drop a request it no longer wants
+  let sig = timeoutSignal();
+  if (signal) sig = AbortSignal.any ? AbortSignal.any([signal, sig]) : signal;
+  const opt = {method, headers: {...(headers || {})}, cache: "no-store", signal: sig};
   if (body !== undefined) {
     opt.headers["Content-Type"] = "application/json";
     opt.body = JSON.stringify(body);
@@ -398,7 +405,10 @@ function refreshModels(root) {  // models of the make typed in this form; of the
 
 function carField(ev) {
   const root = ev.target.closest && ev.target.closest("#viewTicket");
-  if (root && ["year", "make", "model"].includes(ev.target.name)) refreshModels(root);
+  if (root && ["year", "make", "model"].includes(ev.target.name)) {
+    refreshModels(root);
+    if (ev.type !== "focusin") for (const tr of root.querySelectorAll("#tLines tr")) if (tr.suggStale) tr.suggStale();  // offer, never fetch
+  }
 }
 
 /* ---------- views ---------- */
@@ -635,7 +645,7 @@ function loadTicket(t) {
          el("col", {class: "c-money"}), el("col", {class: "c-total"}), ed ? el("col", {class: "c-del"}) : null),
       el("thead", {}, el("tr", {},
         el("th", {text: "Description"}), el("th", {class: "num", text: "Qty"}), el("th", {class: "num", text: "Price"}),
-        el("th", {class: "num", text: "Labor"}), el("th", {class: "num", text: "Line total"}), ed ? el("th", {}) : null)),
+        el("th", {class: "num", text: "Labor"}), el("th", {class: "num", text: "Line total"}), ed ? el("th", {}, el("span", {class: "vh", text: "Remove"})) : null)),
       tbody),
     (t.lines || []).length || ed ? null : el("div", {class: "empty", text: "No lines yet."}),
     el("div", {class: "ferr", "data-for": "lines"}),
@@ -691,14 +701,14 @@ function lineRow(ln, ed) {
     const c = lineCents(tr.querySelector(".q").value, tr.querySelector(".p").value, tr.querySelector(".l").value);
     total.textContent = centsText(c.parts + c.labor);
   };
-  const upd = () => { paint(); if (ed) recalc(); };
+  const upd = () => { paint(); if (ed) recalc(); if (tr.suggRefresh) tr.suggRefresh(); };
   const desc = el("input", {class: "d", value: ln.desc || "", readOnly: !ed, autocomplete: "off", "aria-label": "Description",
     list: ed ? "part-list" : null, ...NAMEISH,
     oninput: () => {  // a different description is no longer that catalog part
       const p = tr.querySelector(".p"), l = tr.querySelector(".l");
       const h = PARTS.get(squash(desc.value));
       if (tr.dataset.code && squash(desc.value) !== tr.dataset.codeDesc) {
-        tr.dataset.code = ""; showCode();
+        tr.dataset.code = ""; showCode(); suggDrop(tr);
         for (const [box, k] of [[p, "autoP"], [l, "autoL"]]) {  // prices that part brought go with it; typed ones stay
           if (tr.dataset[k] && box.value === tr.dataset[k]) box.value = "";
           delete tr.dataset[k];
@@ -706,6 +716,7 @@ function lineRow(ln, ed) {
         if (!h) upd();
       }
       if (!h) return partHints(desc.value);
+      const same = tr.dataset.code === h.code && tr.dataset.codeDesc === squash(h.description);  // already this part
       tr.dataset.code = h.code; tr.dataset.codeDesc = squash(h.description);  // a parts.csv part: its code, and its
       const put = (box, k, v) => {                                             // prices where the desk typed none
         if (!v || (box.value.trim() && box.value !== tr.dataset[k])) return;  // 0 stays blank: a labor-only line
@@ -713,20 +724,99 @@ function lineRow(ln, ed) {
       };
       put(p, "autoP", h.part_price); put(l, "autoL", h.labor_price);
       showCode(); upd();
+      if (!same) suggest(tr);  // a code was just picked: ask for the shop's usual prices, once
     }});
-  const cell = (cls, val, label) => el("td", {}, el("input", {class: cls, value: val, readOnly: !ed, inputMode: "decimal",
-    autocomplete: "off", oninput: upd, "aria-label": label}));
+  const link = el("button", {type: "button", text: "Update suggested prices", onclick: () => suggest(tr)});
+  const untouched = () => [["autoP", ".p"], ["autoL", ".l"]].some(([k, c]) => tr.dataset[k] && tr.querySelector(c).value === tr.dataset[k]);
+  const showLink = () => {  // only while some box still holds a suggestion and the car or qty has moved on
+    link.hidden = !(tr.suggStaleNow && untouched());
+    link.setAttribute("aria-label", "Update suggested prices for " + (desc.value.trim() || "this line"));
+  };
+  tr.suggStale = () => { if (tr.suggHas) { tr.suggStaleNow = true; showLink(); } };
+  tr.suggRefresh = showLink;
+  const cell = (cls, val, label, on) => el("td", {}, el("input", {class: cls, value: val, readOnly: !ed, inputMode: "decimal",
+    autocomplete: "off", oninput: on || upd, "aria-label": label}));
+  link.hidden = true;
+  tr.suggLink = link;  // lives in the line's .sugg, which exists only while there is a suggestion to show
   tr.append(
     el("td", {}, desc, code),
-    cell("q", fmtCell(ln.qty, false), "Quantity"),
+    cell("q", fmtCell(ln.qty, false), "Quantity", () => { tr.suggStale(); upd(); }),
     cell("p", fmtCell(ln.price, true), "Price"),
     cell("l", fmtCell(ln.labor, true), "Labor"),
     total);
   if (ed) tr.append(el("td", {}, el("button", {type: "button", class: "x", text: "✕", "aria-label": "Remove line",
-    onclick: () => { tr.remove(); markDirty(); recalc(); }})));
+    onclick: () => { suggDrop(tr); tr.remove(); markDirty(); recalc(); }})));
   showCode();
   paint();
   return tr;
+}
+
+/* ---------- suggested prices: the shop's own history, for a picked code (the desk can always change them) ---------- */
+
+// Basis -> "2017–2021 HONDA HR-V", "HONDA HR-V, any year", "any HONDA", "all vehicles"
+function basisText(b) {
+  const mm = [b.make, b.model].filter(Boolean).join(" ");
+  if (b.level === "model_years" && Array.isArray(b.years)) return b.years[0] + "–" + b.years[1] + " " + mm;
+  if (b.level === "model") return mm + ", any year";
+  if (b.level === "make") return "any " + (b.make || "make");
+  return "all vehicles";
+}
+
+function suggText(label, s) {
+  if (s.basis.level === "catalog") return label + ": list price (no history)";
+  return label + ": from " + s.count + (s.count === 1 ? " job" : " jobs") + " · " + basisText(s.basis) + " · " +
+    (s.basis.recent ? "last 2 yrs" : "all time") + ": " + money(s.low) + "–" + money(s.high);
+}
+
+function goodSugg(s) {
+  return s && typeof s === "object" && [s.price, s.low, s.high, s.count].every(Number.isFinite) && s.price >= 0 &&
+    s.basis && typeof s.basis === "object";
+}
+
+// Forget a line's suggestion and any request still out for it (the line changed or went away)
+function suggDrop(tr) {
+  tr.suggSeq = (tr.suggSeq || 0) + 1;
+  if (tr.suggCtl) tr.suggCtl.abort();
+  tr.suggCtl = null; tr.suggHas = false; tr.suggStaleNow = false;
+  if (tr.suggBox) { tr.suggBox.remove(); tr.suggBox = null; tr.suggRefresh(); }
+}
+
+async function suggest(tr) {
+  if (S.suggGone || !tr.isConnected || !tr.dataset.code) return;
+  const q = tr.querySelector(".q").value.trim();
+  const qty = /^[0-9]+(\.[0-9]+)?$/.test(q) ? Number(q) : NaN;
+  if (!(qty > 0 && qty <= 10000)) return;  // nothing sensible to ask; the prices stay
+  const f = n => ($("t-" + n) ? $("t-" + n).value.trim() : "");
+  const params = new URLSearchParams({code: tr.dataset.code});
+  const year = f("year");
+  if (/^[0-9]{4}$/.test(year) && year >= 1900 && year <= 2100) params.set("year", year);
+  if (f("make")) params.set("make", f("make"));
+  if (f("model")) params.set("model", f("model"));
+  params.set("qty", String(qty));
+  const code = tr.dataset.code, seq = (tr.suggSeq = (tr.suggSeq || 0) + 1);
+  if (tr.suggCtl) tr.suggCtl.abort();  // one request per line: the newer one wins
+  const ctl = tr.suggCtl = new AbortController();
+  let r;
+  try { r = await api("GET", "/api/price-suggestions?" + params, undefined, undefined, ctl.signal); }
+  catch (e) {
+    if (e.status === 404 && seq === tr.suggSeq) S.suggGone = true;  // shop.py: no such route; stay quiet from now on
+    return;  // any other failure: the parts.csv prices stand
+  }
+  if (seq !== tr.suggSeq || !tr.isConnected || tr.dataset.code !== code) return;  // the line moved on
+  tr.suggCtl = null;
+  const d = r.data || {};
+  const got = [["Part", d.part, ".p", "autoP"], ["Labor", d.labor, ".l", "autoL"]].filter(g => goodSugg(g[1]));
+  if (!got.length) return;
+  for (const [, s, c, k] of got) {
+    const box = tr.querySelector(c);
+    if (box.value.trim() && box.value !== tr.dataset[k]) continue;  // typed or changed by the desk: never filled
+    if (s.price > 0) box.value = tr.dataset[k] = s.price.toFixed(2);
+  }
+  if (tr.suggBox) tr.suggBox.remove();
+  tr.suggBox = el("div", {class: "sugg"}, got.map(([label, s]) => el("div", {text: suggText(label, s)})), tr.suggLink);
+  tr.firstElementChild.append(tr.suggBox);
+  tr.suggHas = true; tr.suggStaleNow = false;
+  tr.querySelector(".p").dispatchEvent(new Event("input", {bubbles: true}));  // totals, and the unsaved mark
 }
 
 // parts.csv hints under a line's description: typed text -> matching parts (as on the mechanic's phone)
