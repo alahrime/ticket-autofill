@@ -37,6 +37,9 @@ export type ImLine = {
   vehicle: string;
 };
 
+/** Codes whose job is named only in the description (LAYOUT.md): one group per description, not per code. */
+export const GENERIC_CODES: readonly string[] = ['LABOR', 'INSTALL-'];
+
 const MAX_QTY = 10000;
 const MAX_CENTS = 1e11; // $1 billion: anything beyond is garbage
 

@@ -122,7 +122,7 @@ export async function makeServer(opts: { admin?: boolean; stallMs?: number; nigh
   let open!: () => void;
   const gate = new Promise<void>((ok) => (open = ok));
   const nightly = startNightly(
-    { config, links: parts.links, im: parts.im },
+    { config, links: parts.links, im: parts.im, jobs: parts.jobs },
     {
       atStart: false,
       schedule: (f) => {
@@ -133,7 +133,7 @@ export async function makeServer(opts: { admin?: boolean; stallMs?: number; nigh
       ...opts.nightly,
     },
   );
-  const deps: Deps = { store, accounts, config, links: parts.links, history: parts.history, nightly };
+  const deps: Deps = { store, accounts, config, links: parts.links, history: parts.history, jobs: parts.jobs, nightly };
   const server = await listen(createApp(deps), config, { stallMs: opts.stallMs });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 

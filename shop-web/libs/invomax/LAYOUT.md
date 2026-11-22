@@ -109,7 +109,7 @@ A fragment runs from its start offset to the next larger offset among the live o
 - `*`, any other kind, and **payment lines** are `other`. A payment line is one whose @96 holds a word, or whose code is `DEPOSIT`, as on older bills.
 - With payments excluded, the part lines sum to INVOICE parts and the labor lines to INVOICE labor (@403). This holds on 98.7% of bills since 2020 and 98.5–99.4% in earlier decades.
 
-**`GENERIC_CODES`** are the codes whose job is named only in the description: `LABOR` (about 4,100 different descriptions since 2022) and `INSTALL-` (about 3,400). `NOTE`/`NOTEP` are note lines (`*`), not jobs.
+**`GENERIC_CODES`** (exported from `@shop/invomax`) are the codes whose job is named only in the description: `LABOR` (about 4,100 different descriptions since 2022) and `INSTALL-` (about 3,400). `NOTE`/`NOTEP` are note lines (`*`), not jobs.
 
 ## Owner check
 

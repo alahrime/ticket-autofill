@@ -28,6 +28,7 @@ tags:
   - name: users
   - name: upkeep
   - name: bills
+  - name: jobs
 
 paths:
   /api/me:
@@ -712,6 +713,96 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Changed' }
 
+  /api/job-map:
+    get:
+      operationId: listJobMap
+      tags: [jobs]
+      summary: InvoMax line groups, their proposed and accepted jobs, and the coverage (admin)
+      description: |
+        Part and labor lines on bills InvoMax still has, grouped: one group per code, but one per description
+        words for a generic code (LABOR, INSTALL-). Biggest first (most lines), 100 a page. `proposed` is worked
+        out on each request from parts.csv (whole words only); only accepted rules are stored.
+      parameters:
+        - name: unmapped
+          in: query
+          description: 1 lists only groups with a line no rule maps.
+          schema: { type: string, enum: ['0', '1'], x-error: unmapped must be 0 or 1 }
+          example: '1'
+        - name: page
+          in: query
+          description: 1 or more.
+          schema: { type: string, pattern: '^[1-9][0-9]{0,5}$', x-error: page must be 1 or more }
+          example: '1'
+      responses:
+        '200':
+          description: One page of groups and the coverage over all lines.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups, coverage, page]
+                properties:
+                  groups:
+                    type: array
+                    items: { $ref: '#/components/schemas/JobGroup' }
+                  coverage: { $ref: '#/components/schemas/JobCoverage' }
+                  page: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+    post:
+      operationId: putJobRule
+      tags: [jobs]
+      summary: Accept a job mapping rule (admin)
+      description: |
+        Lines with this code whose description has every one of `words` (empty: every line with the code) are
+        `job`. The rule with the most words wins, a tie the newer. Adds the rule or replaces the one with the same
+        code and words (as a set). `job` must be a parts.csv code or `ignore`, else 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobRuleIn' }
+            example: { im_code: LABOR, words: [FRONT, PADS], job: FBP }
+      responses:
+        '200':
+          description: The rule as stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rule]
+                properties:
+                  rule: { $ref: '#/components/schemas/JobRule' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
+  /api/job-map/delete:
+    post:
+      operationId: deleteJobRule
+      tags: [jobs]
+      summary: Drop a job mapping rule (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobRuleKey' }
+            example: { im_code: LABOR, words: [PADS, FRONT] }
+      responses:
+        '200':
+          description: Whether there was such a rule.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+
 components:
   securitySchemes:
     session:
@@ -1336,3 +1427,90 @@ components:
         tax: { $ref: '#/components/schemas/Dollars' }
         total: { $ref: '#/components/schemas/Dollars' }
         version: { $ref: '#/components/schemas/LinkVersion' }
+
+    ImCode:
+      description: An InvoMax line code (FBP, LABOR, INSTALL-).
+      x-error: im_code must be 1 to 8 characters
+      type: string
+      minLength: 1
+      maxLength: 8
+
+    JobWords:
+      description: Description words, upper-case letters and digits (as normalised); compared as a set.
+      x-error: words must be up to 10 upper-case letters-and-digits words
+      type: array
+      maxItems: 10
+      items: { type: string, pattern: '^[A-Z0-9]{1,40}$' }
+
+    JobRuleKey:
+      type: object
+      required: [im_code, words]
+      properties:
+        im_code: { $ref: '#/components/schemas/ImCode' }
+        words: { $ref: '#/components/schemas/JobWords' }
+
+    JobRuleIn:
+      type: object
+      required: [im_code, words, job]
+      properties:
+        im_code: { $ref: '#/components/schemas/ImCode' }
+        words: { $ref: '#/components/schemas/JobWords' }
+        job: { type: string, description: 'A parts.csv code, or ignore.', x-checked-in: route }
+
+    JobRule:
+      type: object
+      required: [id, im_code, words, job, made_by, made_at]
+      properties:
+        id: { type: integer }
+        im_code: { type: string }
+        words:
+          type: array
+          items: { type: string }
+          description: Each once, sorted.
+        job: { type: string }
+        made_by: { type: string, examples: ['admin#1'] }
+        made_at: { type: string, description: 'Local time, YYYY-MM-DDTHH:MM:SS.' }
+
+    JobPick:
+      type: object
+      required: [job, words]
+      properties:
+        job: { type: string }
+        words:
+          type: array
+          items: { type: string }
+
+    JobGroup:
+      type: object
+      required: [im_code, words, lines, dollars, samples, proposed, rule]
+      properties:
+        im_code: { type: string }
+        words:
+          description: The description's words for a generic code's group; [] for any other code.
+          type: array
+          items: { type: string }
+        lines: { type: integer }
+        dollars: { type: number }
+        samples:
+          description: Up to 3 descriptions, the most frequent first.
+          type: array
+          items: { type: string }
+        proposed:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/JobPick'
+        rule:
+          description: The rule that maps the group's code and words, if any.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/JobPick'
+
+    JobCoverage:
+      description: Part and labor lines on bills InvoMax still has; mapped means a rule (ignore too) maps it.
+      type: object
+      required: [lines, mapped_lines, dollars, mapped_dollars]
+      properties:
+        lines: { type: integer }
+        mapped_lines: { type: integer }
+        dollars: { type: number }
+        mapped_dollars: { type: number }

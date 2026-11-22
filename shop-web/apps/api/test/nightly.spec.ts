@@ -11,6 +11,8 @@ import { openDb } from '../src/db';
 import { BadInput } from '../src/errors';
 import { LinkStore } from '../src/history/links';
 import { openImDb } from '../src/invomax/imdb';
+import { JobIndex } from '../src/jobs/index';
+import { JobMap } from '../src/jobs/jobmap';
 import { due, latestTwoAm, type Nightly, NIGHTLY_CHECK_MS, startNightly } from '../src/nightly';
 import { TicketStore } from '../src/store';
 import { tempDir } from './py';
@@ -33,8 +35,8 @@ const schedule = (f: () => void, ms: number): { stop(): void } => {
   every.push(ms);
   return { stop: () => ticks.splice(0) };
 };
-const start = (o: { links?: LinkStore; sleep?: (ms: number) => Promise<void> } = {}): Nightly =>
-  (n = startNightly({ config: cfg, links: o.links ?? links, im }, { clock: () => now, schedule, sleep: o.sleep ?? (async () => undefined) }));
+const start = (o: { links?: LinkStore; jobs?: JobIndex; sleep?: (ms: number) => Promise<void> } = {}): Nightly =>
+  (n = startNightly({ config: cfg, links: o.links ?? links, im, jobs: o.jobs }, { clock: () => now, schedule, sleep: o.sleep ?? (async () => undefined) }));
 const tick = async (): Promise<void> => {
   (ticks[0] as () => void)();
   await n?.settled();
@@ -189,6 +191,29 @@ describe('startNightly', () => {
     now = new Date(2026, 10, 21, 1, 5);
     await tick();
     expect(imports()).toHaveLength(1); // the import was good: not due again
+  });
+
+  it('a good import rebuilds the job index over the new lines', async () => {
+    const jobs = new JobIndex(new JobMap(db), im, cfg.catalog);
+    new JobMap(db).put({ im_code: 'P1', words: [], job: 'FBP' }, 'admin#1');
+    expect(jobs.coverage().lines).toBe(0); // built before the import
+    start({ jobs });
+    await n?.settled();
+    expect(jobs.builds).toBe(2);
+    expect(jobs.job('9000001', 1)).toBe('FBP');
+    expect(jobs.builds).toBe(2); // nothing changed since: no third build
+  });
+
+  it('a failed job index rebuild is logged and does not fail the import', async () => {
+    const jobs = new JobIndex(new JobMap(db), im, cfg.catalog);
+    jobs.refresh = () => {
+      throw new Error('SQLITE_BUSY: database is locked');
+    };
+    start({ jobs });
+    await n?.settled();
+    expect(imports().map((r) => r.ok)).toEqual([1]);
+    expect(log()).toMatch(/jobmap rebuild failed Error\n/);
+    expect(log()).not.toMatch(/locked/);
   });
 
   it('a failed backup is logged by class; the import still runs', async () => {

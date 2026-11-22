@@ -11,6 +11,8 @@ import { History } from './history/bills';
 import { LinkStore } from './history/links';
 import type { Deps } from './http/deps';
 import { openImDb } from './invomax/imdb';
+import { JobIndex } from './jobs/index';
+import { JobMap } from './jobs/jobmap';
 import { type Nightly, type NightlyOpts, startNightly } from './nightly';
 import { type PurgeOpts, startPurge } from './purge';
 import { makeSetupCode } from './routes/auth';
@@ -51,19 +53,21 @@ export function listen(app: RequestListener, where: { host: string; port: number
   });
 }
 
-/** invomax.db (made if missing), the links between tickets and bills, and Bill history's read-only connection. */
-export type HistoryParts = { im: DatabaseSync; links: LinkStore; history: History; close(): void };
+/** invomax.db (made if missing), the links between tickets and bills, Bill history's read-only connection and the job index. */
+export type HistoryParts = { im: DatabaseSync; links: LinkStore; history: History; jobs: JobIndex; close(): void };
 
 /** Opens what Bill history needs next to tickets.db (`db`); close() closes what it opened, never `db`. */
 export function openHistory(config: Config, db: DatabaseSync): HistoryParts {
   const im = openImDb(config.invomaxDb);
   try {
     const links = new LinkStore(db, im); // makes invoice_finals before the read-only connection looks for it
+    const jobs = new JobIndex(new JobMap(db), im, config.catalog); // makes job_map; built on first use
     const history = new History(config.db, config.invomaxDb);
     return {
       im,
       links,
       history,
+      jobs,
       close: () => {
         history.close();
         im.close();
@@ -94,16 +98,16 @@ export async function startServer(
     const store = new TicketStore(db);
     const accounts = new Accounts(db);
     parts = openHistory(config, db);
-    const { im, links, history } = parts;
+    const { im, links, history, jobs } = parts;
     // the nightly run starts after the purge, below: nothing reads deps.nightly before then (no request yet)
-    const deps: Deps = { store, accounts, config, links, history, nightly: NOT_STARTED };
+    const deps: Deps = { store, accounts, config, links, history, jobs, nightly: NOT_STARTED };
     server = await listen(createApp(deps), config, { log: config.log, ...listenOpts });
     // straight after listening, before any request is read: a second copy that failed above changed nothing
     try {
       accounts.deleteKioskSessions();
       makeSetupCode(accounts, config.setup);
       purge = startPurge(store, config.log, { clock, schedule });
-      nightly = deps.nightly = startNightly({ config, links, im }, nightlyOpts);
+      nightly = deps.nightly = startNightly({ config, links, im, jobs }, nightlyOpts);
     } catch (e) {
       server.closeAllConnections();
       await new Promise((ok) => server.close(ok));

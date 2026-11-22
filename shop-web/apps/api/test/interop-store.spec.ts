@@ -5,6 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { edit, markDeleted, type Ticket } from '@shop/domain';
 import { openDb } from '../src/db';
 import { LinkStore } from '../src/history/links';
+import { JobMap } from '../src/jobs/jobmap';
 import { openImDb } from '../src/invomax/imdb';
 import { TicketStore } from '../src/store';
 import { py, pyEnv, REPO_ROOT, tempDir } from './py';
@@ -185,6 +186,29 @@ describe('tickets.db shared with python', () => {
     expect(q('SELECT ticket_id, source, version FROM invoice_finals')).toEqual([{ ticket_id: a.id, source: 'none', version: 2 }]);
     expect(s.get(b.id)).toMatchObject({ notes: 'again', version: 3 });
     im.close();
+  });
+
+  it('job_map survives a python save, and python leaves it alone', () => {
+    const map = new JobMap(db);
+    map.put({ im_code: 'LABOR', words: ['FRONT', 'PADS'], job: 'FBP' }, 'admin#1');
+    const t = s.create(DESK);
+    py(
+      [
+        'import os, tickets',
+        's = tickets.Store(os.environ["DB"])',
+        't = s.get(int(os.environ["ID"]))',
+        't.notes = "from python"',
+        's.save(t, t.version)',
+        's.close()',
+      ].join('\n'),
+      { DB: path, ID: String(t.id) },
+    );
+    map.put({ im_code: 'FBP', words: [], job: 'FBP' }, 'admin#1'); // a write after Python's
+    expect(new JobMap(db).rules().map((r) => [r.im_code, r.words, r.job])).toEqual([
+      ['LABOR', ['FRONT', 'PADS'], 'FBP'],
+      ['FBP', [], 'FBP'],
+    ]);
+    expect(s.get(t.id)).toMatchObject({ notes: 'from python', version: 2 });
   });
 
   it('waits for a python write lock', async () => {

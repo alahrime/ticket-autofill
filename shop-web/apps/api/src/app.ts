@@ -13,6 +13,7 @@ import { appRoutes } from './routes/app';
 import { authRoutes } from './routes/auth';
 import { billRoutes } from './routes/bills';
 import { catalogRoutes } from './routes/catalog';
+import { jobMapRoutes } from './routes/jobmap';
 import { ticketRoutes } from './routes/tickets';
 import { upkeepRoutes } from './routes/upkeep';
 import { userRoutes } from './routes/users';
@@ -87,6 +88,7 @@ export function createApp(deps: Deps): Express {
   app.use(userRoutes());
   app.use(upkeepRoutes());
   app.use(billRoutes());
+  app.use(jobMapRoutes());
   app.use(appRoutes());
   app.use((req, res) => {
     // as shop.py: an /api/ GET or any POST needs a session first; then nothing here is 404

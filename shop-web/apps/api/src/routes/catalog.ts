@@ -14,7 +14,8 @@ export type Hint = {
   part_price: number;
   labor_price: number;
 };
-type Part = Hint & { aliases: string[] };
+/** A parts.csv row; aliases are lower-cased, split on |. */
+export type Part = Hint & { aliases: string[] };
 
 /** Rows of an excel-dialect CSV (Python's csv module): quoted fields, "" inside quotes, CRLF / LF / CR. */
 function csvRows(text: string): string[][] {
@@ -69,7 +70,7 @@ function pyFloat(s: string): number | null {
 }
 
 /** parts.csv by code (prices.load_catalog: a later row with the same code replaces the earlier); throws when malformed. */
-function loadCatalog(path: string): Part[] {
+export function loadParts(path: string): Part[] {
   const text = readFileSync(path, 'utf8').replace(/^\ufeff/, '');
   const [head, ...rows] = csvRows(text);
   const col = (name: string): number => {
@@ -113,7 +114,7 @@ export function hints(q: string, catalogPath: string): Hint[] {
   if (!want) return [];
   let cat: Part[];
   try {
-    cat = loadCatalog(catalogPath);
+    cat = loadParts(catalogPath);
   } catch {
     return []; // missing or malformed: no hints, never a 500
   }

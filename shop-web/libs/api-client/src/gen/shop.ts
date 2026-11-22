@@ -33,16 +33,21 @@ import type {
   ConflictResponse,
   CopyBackups200,
   Customer,
+  DeleteJobRule200,
   Edit,
   Error,
   FinalIn,
   GetCatalogParams,
   GoneResponse,
   Hint,
+  JobRuleIn,
+  JobRuleKey,
   LinkIn,
   LinkVersioned,
   ListInvoices200,
   ListInvoicesParams,
+  ListJobMap200,
+  ListJobMapParams,
   ListMechanics200,
   ListNeedsBill200,
   ListTickets200,
@@ -55,6 +60,7 @@ import type {
   NotAllowedResponse,
   NotFoundResponse,
   Nothing,
+  PutJobRule200,
   SignInResponse,
   StartImport202,
   Ticket,
@@ -3323,4 +3329,381 @@ export const useTypeFinal = <TError = ErrorType<BadRequestResponse | SignInRespo
         TContext
       > => {
       return useMutation(getTypeFinalMutationOptions(options), queryClient);
+    }
+
+export type listJobMapResponse200 = {
+  data: ListJobMap200
+  status: 200
+}
+
+export type listJobMapResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type listJobMapResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type listJobMapResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type listJobMapResponseSuccess = (listJobMapResponse200) & {
+  headers: Headers;
+};
+export type listJobMapResponseError = (listJobMapResponse400 | listJobMapResponse401 | listJobMapResponse403) & {
+  headers: Headers;
+};
+
+export type listJobMapResponse = (listJobMapResponseSuccess | listJobMapResponseError)
+
+export const getListJobMapUrl = (params?: ListJobMapParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/job-map?${stringifiedParams}` : `/api/job-map`
+}
+
+/**
+ * Part and labor lines on bills InvoMax still has, grouped: one group per code, but one per description
+ * words for a generic code (LABOR, INSTALL-). Biggest first (most lines), 100 a page. `proposed` is worked
+ * out on each request from parts.csv (whole words only); only accepted rules are stored.
+ * @summary InvoMax line groups, their proposed and accepted jobs, and the coverage (admin)
+ */
+export const listJobMap = async (params?: ListJobMapParams, options?: Parameters<typeof shopFetch>[1]): Promise<listJobMapResponse> => {
+
+  return shopFetch<listJobMapResponse>(getListJobMapUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListJobMapQueryKey = (params?: ListJobMapParams,) => {
+    return [
+    `/api/job-map`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListJobMapQueryOptions = <TData = Awaited<ReturnType<typeof listJobMap>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(params?: ListJobMapParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobMap>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListJobMapQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listJobMap>>> = ({ signal }) => listJobMap(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listJobMap>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListJobMapQueryResult = NonNullable<Awaited<ReturnType<typeof listJobMap>>>
+export type ListJobMapQueryError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>
+
+
+export function useListJobMap<TData = Awaited<ReturnType<typeof listJobMap>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params: undefined |  ListJobMapParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobMap>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listJobMap>>,
+          TError,
+          Awaited<ReturnType<typeof listJobMap>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListJobMap<TData = Awaited<ReturnType<typeof listJobMap>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params?: ListJobMapParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobMap>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listJobMap>>,
+          TError,
+          Awaited<ReturnType<typeof listJobMap>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListJobMap<TData = Awaited<ReturnType<typeof listJobMap>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params?: ListJobMapParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobMap>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary InvoMax line groups, their proposed and accepted jobs, and the coverage (admin)
+ */
+
+export function useListJobMap<TData = Awaited<ReturnType<typeof listJobMap>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>>(
+ params?: ListJobMapParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listJobMap>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListJobMapQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type putJobRuleResponse200 = {
+  data: PutJobRule200
+  status: 200
+}
+
+export type putJobRuleResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type putJobRuleResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type putJobRuleResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type putJobRuleResponseSuccess = (putJobRuleResponse200) & {
+  headers: Headers;
+};
+export type putJobRuleResponseError = (putJobRuleResponse400 | putJobRuleResponse401 | putJobRuleResponse403) & {
+  headers: Headers;
+};
+
+export type putJobRuleResponse = (putJobRuleResponseSuccess | putJobRuleResponseError)
+
+export const getPutJobRuleUrl = () => {
+
+
+
+
+  return `/api/job-map`
+}
+
+/**
+ * Lines with this code whose description has every one of `words` (empty: every line with the code) are
+ * `job`. The rule with the most words wins, a tie the newer. Adds the rule or replaces the one with the same
+ * code and words (as a set). `job` must be a parts.csv code or `ignore`, else 400.
+ * @summary Accept a job mapping rule (admin)
+ */
+export const putJobRule = async (jobRuleIn: JobRuleIn, options?: Parameters<typeof shopFetch>[1]): Promise<putJobRuleResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<putJobRuleResponse>(getPutJobRuleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(jobRuleIn)
+  }
+);}
+
+
+
+
+
+export const getPutJobRuleMutationKey = () => ['putJobRule'] as const;
+
+export const getPutJobRuleMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putJobRule>>, TError,PutJobRuleMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof putJobRule>>, TError,PutJobRuleMutationVariables, TContext> => {
+
+const mutationKey = getPutJobRuleMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof putJobRule>>, PutJobRuleMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  putJobRule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PutJobRuleMutationResult = NonNullable<Awaited<ReturnType<typeof putJobRule>>>
+    export type PutJobRuleMutationBody = BodyType<JobRuleIn>
+    export type PutJobRuleMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>
+    export type PutJobRuleMutationVariables = {data: BodyType<JobRuleIn>}
+
+    /**
+ * @summary Accept a job mapping rule (admin)
+ */
+export const usePutJobRule = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putJobRule>>, TError,PutJobRuleMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof putJobRule>>,
+        TError,
+        PutJobRuleMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPutJobRuleMutationOptions(options), queryClient);
+    }
+
+export type deleteJobRuleResponse200 = {
+  data: DeleteJobRule200
+  status: 200
+}
+
+export type deleteJobRuleResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type deleteJobRuleResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type deleteJobRuleResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type deleteJobRuleResponseSuccess = (deleteJobRuleResponse200) & {
+  headers: Headers;
+};
+export type deleteJobRuleResponseError = (deleteJobRuleResponse400 | deleteJobRuleResponse401 | deleteJobRuleResponse403) & {
+  headers: Headers;
+};
+
+export type deleteJobRuleResponse = (deleteJobRuleResponseSuccess | deleteJobRuleResponseError)
+
+export const getDeleteJobRuleUrl = () => {
+
+
+
+
+  return `/api/job-map/delete`
+}
+
+/**
+ * @summary Drop a job mapping rule (admin)
+ */
+export const deleteJobRule = async (jobRuleKey: JobRuleKey, options?: Parameters<typeof shopFetch>[1]): Promise<deleteJobRuleResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<deleteJobRuleResponse>(getDeleteJobRuleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(jobRuleKey)
+  }
+);}
+
+
+
+
+
+export const getDeleteJobRuleMutationKey = () => ['deleteJobRule'] as const;
+
+export const getDeleteJobRuleMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteJobRule>>, TError,DeleteJobRuleMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteJobRule>>, TError,DeleteJobRuleMutationVariables, TContext> => {
+
+const mutationKey = getDeleteJobRuleMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteJobRule>>, DeleteJobRuleMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  deleteJobRule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteJobRuleMutationResult = NonNullable<Awaited<ReturnType<typeof deleteJobRule>>>
+    export type DeleteJobRuleMutationBody = BodyType<JobRuleKey>
+    export type DeleteJobRuleMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>
+    export type DeleteJobRuleMutationVariables = {data: BodyType<JobRuleKey>}
+
+    /**
+ * @summary Drop a job mapping rule (admin)
+ */
+export const useDeleteJobRule = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteJobRule>>, TError,DeleteJobRuleMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteJobRule>>,
+        TError,
+        DeleteJobRuleMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteJobRuleMutationOptions(options), queryClient);
     }

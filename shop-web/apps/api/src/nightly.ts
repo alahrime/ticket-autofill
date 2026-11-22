@@ -1,6 +1,6 @@
 // The nightly run: at 02:00 local time (and as a catch-up when the PC was off or signed out then), our own
-// backup, its pruning and the copy to the USB drive, then the InvoMax import and auto-linking. Checked at start
-// and every 5 minutes; whatever fails is logged by class name and tried again on a later check, never thrown.
+// backup, its pruning and the copy to the USB drive, then the InvoMax import, auto-linking and the job index. Checked
+// at start and every 5 minutes; whatever fails is logged by class name and tried again on a later check, never thrown.
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, parse, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -11,6 +11,7 @@ import { BadInput } from './errors';
 import type { LinkStore } from './history/links';
 import { className, logLine } from './http/log';
 import { importOnce, lastGoodImport } from './invomax/import';
+import type { JobIndex } from './jobs/index';
 import { every, type Schedule } from './purge';
 
 export const NIGHTLY_CHECK_MS = 300_000;
@@ -34,7 +35,8 @@ export type Nightly = {
   settled(): Promise<void>;
 };
 
-export type NightlyDeps = { config: Config; links: LinkStore; im: DatabaseSync };
+/** jobs: the job index, rebuilt after a good import (left out: nothing to rebuild). */
+export type NightlyDeps = { config: Config; links: LinkStore; im: DatabaseSync; jobs?: JobIndex };
 export type NightlyOpts = {
   clock?: () => Date;
   schedule?: Schedule;
@@ -71,7 +73,7 @@ const driveThere = (target: string): boolean => existsSync(parse(resolve(target)
 
 /** Starts the checks (at once unless atStart is false, then every NIGHTLY_CHECK_MS). */
 export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly {
-  const { config, links, im } = deps;
+  const { config, links, im, jobs } = deps;
   const clock = opts.clock ?? (() => new Date());
   const log = (what: string): void => logLine(config.log, what);
   let checking: Promise<void> | null = null;
@@ -88,11 +90,23 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
     }
   };
 
-  /** One import in the background, then auto-linking if it was good. importOnce never rejects. */
+  /** The job index over the new lines, built now rather than on the next request; never fails the import. */
+  const rebuildJobs = (): void => {
+    try {
+      jobs?.refresh();
+    } catch (e) {
+      log(`jobmap rebuild failed ${className(e)}`);
+    }
+  };
+
+  /** One import in the background, then auto-linking and the job index if it was good. importOnce never rejects. */
   const runImport = (): Promise<void> => {
     const run = (async () => {
       const r = await importOnce(config, { sleep: opts.sleep, now: clock });
-      if (r.ok) autoLink();
+      if (r.ok) {
+        autoLink();
+        rebuildJobs();
+      }
     })()
       .catch((e: unknown) => log(`invomax import failed ${className(e)}`))
       .finally(() => {
