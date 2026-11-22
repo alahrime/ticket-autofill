@@ -223,6 +223,14 @@ export class LinkStore {
     return new Set((rows as { ticket_id: number }[]).map((r) => r.ticket_id));
   }
 
+  /** A cheap stamp of the InvoMax links (count, ids, newest link time, versions): any change to them changes it. */
+  invomaxMarker(): string {
+    const r = this.db
+      .prepare("SELECT COUNT(*) AS n, SUM(ticket_id) AS i, MAX(linked_at) AS m, SUM(version) AS v FROM invoice_finals WHERE source = 'invomax'")
+      .get() as { n: number; i: number | null; m: string | null; v: number | null };
+    return `${r.n}|${r.i ?? 0}|${r.m ?? ''}|${r.v ?? 0}`;
+  }
+
   /** The ticket's final as stored (its version is what link, unlink, markNone and typedFinal expect), or null. */
   final(ticketId: number): Final | null {
     return (

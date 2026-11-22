@@ -100,6 +100,16 @@ export class TicketStore {
     return row ? fromRow(row) : null;
   }
 
+  /** A cheap stamp of the filled tickets (count, newest update, version total); another process's writes change it too. */
+  filledMarker(): string {
+    const r = this.db
+      .prepare(
+        "SELECT COUNT(*) AS n, MAX(json_extract(data, '$.updated')) AS u, SUM(json_extract(data, '$.version')) AS v FROM tickets WHERE status = 'filled'",
+      )
+      .get() as { n: number; u: string | null; v: number | null };
+    return `${r.n}|${r.u ?? ''}|${r.v ?? 0}`;
+  }
+
   /** Newest first; no statuses (or an empty list, as in Python) = all but deleted ones (those only when asked). */
   list(statuses?: string[]): Ticket[] {
     const where = statuses?.length

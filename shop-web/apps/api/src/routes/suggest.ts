@@ -1,5 +1,6 @@
 // Price suggestions (admin): what the job's part and labor usually cost, from the shop's history. Money out is
 // dollars to the cent; the admin can always type another price.
+import { statSync } from 'node:fs';
 import { Router } from 'express';
 import { MAX_QTY } from '@shop/domain';
 import { BadInput } from '../errors';
@@ -50,23 +51,47 @@ function answer(pick: Pick | null, catalog: number | undefined, qty: number): Su
   return { price: p, count: 0, low: p, high: p, basis: { level: 'catalog' } };
 }
 
+const partsCache = new Map<string, { key: string; byCode: Map<string, Part> }>();
+
+/** parts.csv by code, read again only when the file's mtime or size changes; empty when missing or malformed. */
+function catalogOf(path: string): Map<string, Part> {
+  let key = 'none';
+  try {
+    const st = statSync(path);
+    key = `${st.mtimeMs}|${st.size}`;
+  } catch {
+    // missing: no catalog
+  }
+  const had = partsCache.get(path);
+  if (had?.key === key) return had.byCode;
+  let byCode = new Map<string, Part>();
+  if (key !== 'none') {
+    try {
+      byCode = new Map(loadParts(path).map((p) => [p.code, p]));
+    } catch {
+      // malformed: no catalog
+    }
+  }
+  partsCache.set(path, { key, byCode });
+  return byCode;
+}
+
 export function suggestRoutes(): Router {
   const r = Router({ caseSensitive: true, strict: true });
   r.get('/api/price-suggestions', signedIn('admin'), validRequest, (req, res) => {
     const { code, car, qty } = parse(req.originalUrl);
     const d = depsOf(req);
-    let row: Part | undefined;
-    try {
-      row = loadParts(d.config.catalog).find((p) => p.code === code);
-    } catch {
-      row = undefined; // parts.csv missing or malformed: history only
+    const row = catalogOf(d.config.catalog).get(code);
+    if (!row) {
+      res.json({ part: null, labor: null }); // not a job code: nothing to scan
+      return;
     }
     const now = new Date();
     const pick = (kind: 'part' | 'labor'): Pick | null =>
       suggest([...d.jobs.samples(code, kind), ...ourSamples(d.store, d.links, code, kind)], car, now);
     res.json({
-      part: answer(pick('part'), row?.part_price, 1),
-      labor: answer(pick('labor'), row?.labor_price, qty),
+      part: answer(pick('part'), row.part_price, 1),
+      labor: answer(pick('labor'), row.labor_price, qty),
     });
   });
   return r;

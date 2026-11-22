@@ -1,5 +1,6 @@
 // Price suggestions: the pick over samples (levels, recency, median, percentiles), the shop's own samples, and
 // the route. Made-up values only.
+import { readFileSync, writeFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { MAX_QTY } from '@shop/domain';
 import { ourSamples, suggest } from '../src/jobs/suggest';
@@ -60,6 +61,16 @@ describe('suggest', () => {
   it('make and model compare trimmed, upper-cased, with spaces collapsed', () => {
     const list = [1, 2, 3].map((u) => s(u * 1000, '2026-05-01', 2019, ' honda ', ' hr   v '));
     expect(suggest(list, { year: 2019, make: 'Honda', model: 'HR V' }, NOW)?.basis.level).toBe('model_years');
+  });
+
+  it('a blank make and model do not match samples with no vehicle: they fall to all', () => {
+    const list = [s(1000, '2026-05-01', null, '', ''), s(2000, '2026-05-02', null, '', ''), s(3000, '2026-05-03', null, ' ', ' '), s(9000, '2026-05-04', 2019)];
+    expect(suggest(list, { year: 2019, make: ' ', model: '' }, NOW)).toMatchObject({ count: 4, basis: { level: 'all', make: '', model: '' } });
+  });
+
+  it('a blank model with a make falls to make, not to the blank-model samples', () => {
+    const list = [s(1000, '2026-05-01', null, 'HONDA', ''), s(2000, '2026-05-02', null, 'HONDA', ''), s(3000, '2026-05-03', 2019, 'HONDA', 'CIVIC'), s(9000, '2026-05-04', 2019, 'FORD', 'F150')];
+    expect(suggest(list, { year: 2019, make: 'Honda', model: '' }, NOW)).toMatchObject({ count: 3, basis: { level: 'make', make: 'HONDA', model: '' } });
   });
 
   it('recent means on or after the same day 24 months ago', () => {
@@ -142,6 +153,58 @@ describe('ourSamples and the route', () => {
     });
     r = await srv.call('/api/price-suggestions?code=FBP&year=2019&make=Ford&model=F150', undefined, a); // other car: the whole shop
     expect(r.body).toMatchObject({ part: { price: 50, basis: { level: 'all' } }, labor: { price: 100 } });
+  });
+
+  const Q = '/api/price-suggestions?code=FBP&year=2019&make=Cadillac&model=XT5&qty=1';
+  const fillNew = (price: number): number => {
+    const id = make([{ desc: 'PADS', code: 'FBP', qty: 1, price, labor: price }]);
+    fill(srv.db, id, '2026-10-05T09:00:00');
+    return id;
+  };
+
+  it('keeps the scan of filled tickets between requests; a new filled ticket or an InvoMax link starts a new one', async () => {
+    const a = await srv.admin();
+    [40, 50, 60].forEach(fillNew);
+    const list = jest.spyOn(srv.store, 'list');
+    const first = (await srv.call(Q, undefined, a)).body as { part: { count: number } };
+    expect(first.part.count).toBe(3);
+    expect(list).toHaveBeenCalledTimes(1); // one scan feeds both kinds
+    await srv.call(Q, undefined, a);
+    expect(list).toHaveBeenCalledTimes(1);
+    const id = fillNew(70); // another filled ticket
+    expect(((await srv.call(Q, undefined, a)).body as { part: { count: number } }).part.count).toBe(4);
+    expect(list).toHaveBeenCalledTimes(2);
+    srv.im
+      .prepare(
+        `INSERT INTO im_invoices (invoice_no, "date", "key", name, "first", "last", phone, plate, address, parts, labor,
+           supplies, discount, deposit, tax, total, balance, tax_rate, hash, lines_hash, first_seen, updated_at, gone_at, plate_norm)
+         VALUES ('9000001', '2026-10-05', '', 'DOE', 'JANE', 'DOE', '5550100000', 'XKS-4827', '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', '', '', '', '', 'XKS4827')`,
+      )
+      .run();
+    srv.deps.links.link(id, '9000001', null, 'admin#1'); // now its bill carries it
+    expect(((await srv.call(Q, undefined, a)).body as { part: { count: number } }).part.count).toBe(3);
+    expect(list).toHaveBeenCalledTimes(3);
+    list.mockRestore();
+  });
+
+  it('reads parts.csv again when the file changes', async () => {
+    const a = await srv.admin();
+    expect(((await srv.call(Q, undefined, a)).body as { part: { price: number } }).part.price).toBe(100);
+    const file = srv.config.catalog;
+    writeFileSync(file, readFileSync(file, 'utf8').replace(/^FBP,(.*),no,100,100/m, 'FBP,$1,no,123,100'));
+    expect(((await srv.call(Q, undefined, a)).body as { part: { price: number } }).part.price).toBe(123);
+  });
+
+  it('a code that is not in parts.csv is answered at once, with no scan of the index or the tickets', async () => {
+    const a = await srv.admin();
+    fillNew(40);
+    const list = jest.spyOn(srv.store, 'list');
+    const samples = jest.spyOn(srv.deps.jobs, 'samples');
+    const r = await srv.call('/api/price-suggestions?code=NOPE-0&make=Cadillac', undefined, a);
+    expect([r.status, r.body]).toEqual([200, { part: null, labor: null }]);
+    expect([list.mock.calls.length, samples.mock.calls.length]).toEqual([0, 0]);
+    list.mockRestore();
+    samples.mockRestore();
   });
 
   it('API: bad input is 400, a mechanic 403, no session 401', async () => {

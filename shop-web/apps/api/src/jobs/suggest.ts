@@ -60,9 +60,14 @@ export function suggest(samples: Sample[], car: Car, now: Date): Pick | null {
   const levels: { level: Basis['level']; keep: (x: Sample) => boolean }[] = [];
   const years: [number, number] | null = car.year === null ? null : [car.year - YEARS_AROUND, car.year + YEARS_AROUND];
   const sameModel = (x: Sample): boolean => norm(x.make) === make && norm(x.model) === model;
-  if (years && car.year !== null)
-    levels.push({ level: 'model_years', keep: (x) => sameModel(x) && x.year !== null && Math.abs(x.year - (car.year as number)) <= YEARS_AROUND });
-  levels.push({ level: 'model', keep: sameModel }, { level: 'make', keep: (x) => norm(x.make) === make }, { level: 'all', keep: () => true });
+  // a blank model (or make) says nothing about the car: it must not match the samples with no vehicle either
+  if (model !== '') {
+    if (years && car.year !== null)
+      levels.push({ level: 'model_years', keep: (x) => sameModel(x) && x.year !== null && Math.abs(x.year - (car.year as number)) <= YEARS_AROUND });
+    levels.push({ level: 'model', keep: sameModel });
+  }
+  if (make !== '') levels.push({ level: 'make', keep: (x) => norm(x.make) === make });
+  levels.push({ level: 'all', keep: () => true });
   const basisOf = (level: Basis['level'], isRecent: boolean): Basis => ({
     level,
     years: level === 'model_years' ? years : null,
@@ -86,21 +91,40 @@ function yearOf(s: string): number | null {
   return y !== null && y >= 1900 && y <= 2100 ? y : null;
 }
 
-/**
- * What the shop's own filled tickets charged for the job (cents per unit): one list call and one links query.
- * Tickets tied to an InvoMax bill are left out; that bill's lines are already in the InvoMax samples.
- */
-export function ourSamples(store: TicketStore, links: LinkStore, job: string, kind: 'part' | 'labor'): Sample[] {
+type Cached = { key: string; byJob: Map<string, Sample[]> };
+const cache = new WeakMap<TicketStore, Cached>();
+
+/** Filled tickets' lines by "job|kind", the InvoMax-linked tickets left out: one scan, kept until a marker changes. */
+function index(store: TicketStore, links: LinkStore): Map<string, Sample[]> {
+  const key = `${store.filledMarker()}#${links.invomaxMarker()}`; // from the database: Python's writes count too
+  const had = cache.get(store);
+  if (had?.key === key) return had.byJob;
   const billed = links.invomaxLinked();
-  const out: Sample[] = [];
+  const byJob = new Map<string, Sample[]>();
+  const add = (job: string, kind: string, s: Sample): void => {
+    const k = `${job}|${kind}`;
+    const list = byJob.get(k);
+    if (list) list.push(s);
+    else byJob.set(k, [s]);
+  };
   for (const t of store.list(['filled'])) {
     if (billed.has(t.id)) continue;
+    const at = { date: filledDay(t), year: yearOf(t.year), make: t.make, model: t.model };
     for (const line of t.lines) {
-      if (line.code !== job) continue;
-      const dollars = kind === 'part' ? line.price : line.labor === null ? null : line.labor / Math.max(line.qty, 1);
-      if (dollars === null || !(dollars > 0)) continue;
-      out.push({ unit: dollars * 100, date: filledDay(t), year: yearOf(t.year), make: t.make, model: t.model });
+      if (!line.code) continue;
+      if (line.price !== null && line.price > 0) add(line.code, 'part', { unit: line.price * 100, ...at });
+      if (line.labor !== null && line.labor > 0) add(line.code, 'labor', { unit: (line.labor / Math.max(line.qty, 1)) * 100, ...at });
     }
   }
-  return out;
+  cache.set(store, { key, byJob });
+  return byJob;
+}
+
+/**
+ * What the shop's own filled tickets charged for the job (cents per unit). One scan of the filled tickets feeds
+ * every job and both kinds; it is kept until the tickets or the InvoMax links change. Tickets tied to an
+ * InvoMax bill are left out: that bill's lines are already in the InvoMax samples.
+ */
+export function ourSamples(store: TicketStore, links: LinkStore, job: string, kind: 'part' | 'labor'): Sample[] {
+  return (index(store, links).get(`${job}|${kind}`) ?? []).map((s) => ({ ...s }));
 }
