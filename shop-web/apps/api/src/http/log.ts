@@ -51,8 +51,8 @@ export function noteActor(res: Response, s: Session | null): void {
 /**
  * /api/customers/<phone> holds customer data: it is logged as /api/customers/:phone. Whether to redact is
  * decided on the percent-decoded path (any case, any segment, anything after it), so a 401 / 404 or %35 for
- * "5" can't leak the phone either; what is written is always the raw, still-encoded path (a decoded %0A would
- * forge a log line). Ticket ids and invoice keys stay: they say which record changed and are no one's data.
+ * "5" can't leak the phone either; a match is always written as exactly /api/customers/:phone. Every other
+ * path is written raw, still encoded (a decoded %0A would forge a log line). Ticket ids and invoice keys stay: they say which record changed and are no one's data.
  */
 const CUSTOMERS_DECODED = /\/customers\//i;
 const CUSTOMERS_RAW = /\/customers(?:\/|%2f)/i;
@@ -71,12 +71,8 @@ export function logPath(url: string): string {
   } catch {
     // not valid percent-encoding: checked as it came
   }
-  let out = raw;
-  if (CUSTOMERS_DECODED.test(decoded) || CUSTOMERS_RAW.test(raw)) {
-    const at = raw.search(CUSTOMERS_RAW);
-    // the raw prefix when it can be cut cleanly there, else the fixed pattern
-    out = at >= 0 ? `${raw.slice(0, at)}/customers/:phone` : REDACTED;
-  }
+  // a customer path is always the fixed pattern: no part of it is kept, so nothing in it can leak
+  const out = CUSTOMERS_DECODED.test(decoded) || CUSTOMERS_RAW.test(raw) ? REDACTED : raw;
   return out.replace(CONTROL, '');
 }
 

@@ -228,22 +228,24 @@ describe('Bill history', () => {
       '/api/customers//5550100000',
       '/api/customers%2F5550100000',
       '/api/cust%6Fmers/5550100000',
+      '/api/cust%6Fmers/5550100000/customers/x', // a later literal /customers/ must not keep the prefix
+      '/api/%63ustomers/5550100000',
+      '/api/customers/5550100000/customers/1',
     ];
     const before = s.log().split('\n').filter(Boolean).length;
     for (const p of paths) await get(p);
     const lines = s.log().split('\n').filter(Boolean).slice(before);
     expect(lines).toHaveLength(paths.length); // one line per request: nothing forged
     for (const l of lines) expect(l).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d GET \S+ \d{3} (admin#\d+ )?\d+\.\ds$/);
-    expect(lines.map((l) => l.split(' ')[3])).toEqual([
-      '/api%0Afake/customers/:phone', // raw, still encoded
+    const logged = lines.map((l) => l.split(' ')[3]);
+    // a customer path is always exactly the fixed pattern; anything else stays raw, still encoded
+    expect(logged).toEqual([
+      '/api/customers/:phone',
       '/api/tickets%0A2026-11-21%2000:00:00%20GET%20/forged%20200',
-      '/api/customers/:phone',
-      '/api//customers/:phone',
-      '/api/customers/:phone',
-      '/api/customers/:phone',
-      '/api/customers/:phone', // can't be cut cleanly in the raw path: the fixed pattern
+      ...Array(8).fill('/api/customers/:phone'),
     ]);
-    expect(s.log()).not.toMatch(/0100000/);
+    for (const p of logged.filter((x) => x !== logged[1])) expect(p).not.toMatch(/\d/); // no phone digit at all
+    expect(s.log()).not.toMatch(/0100000|555/);
   });
 
   it('links by typing any bill number, checking the version; unlink, none and a typed final', async () => {
