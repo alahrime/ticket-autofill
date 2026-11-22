@@ -1,11 +1,13 @@
 // The nightly run: at 02:00 local time (and as a catch-up when the PC was off or signed out then), our own
-// backup, its pruning and the copy to the USB drive, then the InvoMax import, auto-linking and the job index. Checked
-// at start and every 5 minutes; whatever fails is logged by class name and tried again on a later check, never thrown.
+// backups (tickets.db and invomax.db, each on its own), their pruning and the copy to the USB drive, then the
+// InvoMax import, auto-linking and the job index. Checked at start and every 5 minutes; whatever fails is logged by
+// class name and tried again on a later check, never thrown: a failed backup an hour on, a failed import after 1, 2,
+// 4... hours (and always at the next 02:00), so a lasting problem never reruns all day.
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, parse, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { Refused } from '@shop/domain';
-import { backupFolder, backupNow, copyBackups, pruneBackups } from './backup';
+import { backupFile, type BackupKind, backupFolder, copyBackups, pruneBackups } from './backup';
 import type { Config } from './config';
 import { BadInput } from './errors';
 import type { LinkStore } from './history/links';
@@ -15,6 +17,7 @@ import type { JobIndex } from './jobs/index';
 import { every, type Schedule } from './purge';
 
 export const NIGHTLY_CHECK_MS = 300_000;
+const HOUR_MS = 3_600_000;
 
 /** Today's 02:00 (local) if `now` is at or after it, else yesterday's. */
 export function latestTwoAm(now: Date): Date {
@@ -25,9 +28,21 @@ export function latestTwoAm(now: Date): Date {
 /** One rule for the 02:00 run and the catch-up: nothing good yet, or the last good one before the latest 02:00. */
 export const due = (now: Date, lastGood: Date | null): boolean => lastGood === null || lastGood < latestTwoAm(now);
 
+/**
+ * When a failed automatic import may run again: 1, 2, 4... hours after the `fails`-th failure in a row (at `at`),
+ * but never later than the 02:00 after it.
+ */
+export function importRetryAt(at: Date, fails: number): Date {
+  const backOff = new Date(at.getTime() + HOUR_MS * 2 ** Math.min(Math.max(fails - 1, 0), 10));
+  const twoAm = latestTwoAm(at);
+  const next = new Date(twoAm.getFullYear(), twoAm.getMonth(), twoAm.getDate() + 1, 2, 0, 0, 0);
+  return backOff < next ? backOff : next;
+}
+
 export type Nightly = {
   stop(): void;
-  importNow(): 'started' | 'running';
+  /** Runs an import now, back-off or not; 'off' when shop-settings.json turned the import off. */
+  importNow(): 'started' | 'running' | 'off';
   /** Copies the backups to the USB drive now; rejects BadInput (no target / drive not found) or Refused (one is running). */
   copyNow(): Promise<{ copied: number; skipped: number; target: string }[]>;
   running(): boolean;
@@ -45,14 +60,15 @@ export type NightlyOpts = {
   atStart?: boolean;
 };
 
-const BACKUP_NAME = /^tickets-\d{4}-\d{2}-\d{2}\.db$/;
+const BACKUP_NAME = /^(tickets|invomax)-\d{4}-\d{2}-\d{2}\.db$/;
+const KINDS: BackupKind[] = ['tickets', 'invomax'];
 
-/** When the newest tickets-*.db backup was written (its mtime), or null (none, or the folder can't be read). */
-function lastBackupFile(dir: string): Date | null {
+/** When the newest <kind>-*.db backup was written (its mtime), or null (none, or the folder can't be read). */
+function lastBackupFile(dir: string, kind: BackupKind): Date | null {
   try {
     if (!existsSync(dir)) return null;
     const newest = readdirSync(dir)
-      .filter((n) => BACKUP_NAME.test(n))
+      .filter((n) => BACKUP_NAME.exec(n)?.[1] === kind)
       .sort()
       .pop();
     return newest ? statSync(join(dir, newest)).mtime : null;
@@ -79,7 +95,13 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
   let checking: Promise<void> | null = null;
   let importing: Promise<void> | null = null;
   let copying: Promise<void> | null = null; // a copy to the USB drive under way (one at a time)
-  let lastBackup: Date | null = null; // this process's last good backup (the file's mtime counts too)
+  // per file: this process's last good backup (the file's mtime counts too) and its last failure
+  const lastBackup: Record<BackupKind, Date | null> = { tickets: null, invomax: null };
+  const backupFailed: Record<BackupKind, Date | null> = { tickets: null, invomax: null };
+  // the automatic import's back-off: failures in a row, when it may run again, the class last logged
+  let importFails = 0;
+  let importNotBefore: Date | null = null;
+  let loggedFailure = '';
 
   const autoLink = (): void => {
     try {
@@ -99,14 +121,26 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
     }
   };
 
-  /** One import in the background, then auto-linking and the job index if it was good. importOnce never rejects. */
-  const runImport = (): Promise<void> => {
+  /**
+   * One import in the background, then auto-linking and the job index if it was good. importOnce never rejects.
+   * A failure is logged once until its class changes; an automatic one (not the button's) backs off.
+   */
+  const runImport = (automatic: boolean): Promise<void> => {
     const run = (async () => {
-      const r = await importOnce(config, { sleep: opts.sleep, now: clock });
+      const r = await importOnce(config, { sleep: opts.sleep, now: clock, quiet: true });
       if (r.ok) {
+        importFails = 0;
+        importNotBefore = null;
+        loggedFailure = '';
         autoLink();
         rebuildJobs();
+        return;
       }
+      if (r.failure && r.failure !== loggedFailure) {
+        log(`invomax import failed ${r.failure}`);
+        loggedFailure = r.failure;
+      }
+      if (automatic) importNotBefore = importRetryAt(clock(), ++importFails);
     })()
       .catch((e: unknown) => log(`invomax import failed ${className(e)}`))
       .finally(() => {
@@ -131,14 +165,30 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
     return run;
   };
 
-  const backup = async (now: Date): Promise<void> => {
-    try {
-      await backupNow(config, now);
-      lastBackup = now;
-    } catch (e) {
-      log(`backup failed ${className(e)}`);
-      return;
+  /** Is this file's backup due: none since the latest 02:00, and no failure in the last hour? */
+  const backupDue = (kind: BackupKind, now: Date): boolean => {
+    if (kind === 'invomax' && !existsSync(config.invomaxDb)) return false;
+    const fileAt = lastBackupFile(config.backups, kind);
+    const mine = lastBackup[kind];
+    const lastGood = mine && (!fileAt || mine > fileAt) ? mine : fileAt;
+    const failed = backupFailed[kind];
+    return due(now, lastGood) && !(failed && now.getTime() - failed.getTime() < HOUR_MS);
+  };
+
+  /** Backs up each due file on its own, then prunes and copies to the USB drive whatever succeeded. */
+  const backup = async (now: Date, kinds: BackupKind[]): Promise<void> => {
+    let made = 0;
+    for (const kind of kinds) {
+      try {
+        if (await backupFile(config, kind, now)) made++;
+        lastBackup[kind] = now;
+        backupFailed[kind] = null;
+      } catch (e) {
+        backupFailed[kind] = now;
+        log(`backup failed ${kind} ${className(e)}`);
+      }
     }
+    if (!made) return;
     try {
       pruneBackups(config.backups, now);
     } catch (e) {
@@ -162,10 +212,15 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
     if (checking) return;
     checking = (async () => {
       const now = clock();
-      const fileAt = lastBackupFile(config.backups);
-      const lastGood = lastBackup && (!fileAt || lastBackup > fileAt) ? lastBackup : fileAt;
-      if (due(now, lastGood)) await backup(now);
-      if (!importing && due(now, localIso(lastGoodImport(im)))) await runImport();
+      const kinds = KINDS.filter((k) => backupDue(k, now));
+      if (kinds.length) await backup(now, kinds);
+      if (
+        config.importInvomax &&
+        !importing &&
+        due(now, localIso(lastGoodImport(im))) &&
+        !(importNotBefore && now < importNotBefore)
+      )
+        await runImport(true);
     })()
       .catch((e: unknown) => log(`nightly error ${className(e)}`))
       .finally(() => {
@@ -179,8 +234,9 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
   return {
     stop: () => timer.stop(),
     importNow: () => {
+      if (!config.importInvomax) return 'off';
       if (importing) return 'running';
-      void runImport();
+      void runImport(false);
       return 'started';
     },
     copyNow: () =>

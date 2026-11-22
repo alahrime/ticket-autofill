@@ -1,6 +1,6 @@
 // The nightly run: backup (+ prune, + copy to the USB drive) and the InvoMax import (+ auto-linking), at 02:00
 // local time and as a catch-up when the PC was off then. A fake clock and a hand-ticked schedule drive it.
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { Refused } from '@shop/domain';
@@ -11,6 +11,7 @@ import { openDb } from '../src/db';
 import { BadInput } from '../src/errors';
 import { LinkStore } from '../src/history/links';
 import { openImDb } from '../src/invomax/imdb';
+import { importOnce } from '../src/invomax/import';
 import { JobIndex } from '../src/jobs/index';
 import { JobMap } from '../src/jobs/jobmap';
 import { due, latestTwoAm, type Nightly, NIGHTLY_CHECK_MS, startNightly } from '../src/nightly';
@@ -64,14 +65,20 @@ const filledTicket = (): number => {
 };
 const finals = (): { ticket_id: number; invoice_no: string }[] =>
   db.prepare('SELECT ticket_id, invoice_no FROM invoice_finals').all() as never;
-/** As if the last good run was at `at`: a backup file made then and an ok import row finished then. */
+const ymd = (at: Date): string => {
+  const p = (x: number): string => String(x).padStart(2, '0');
+  return `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())}`;
+};
+/** As if the last good run was at `at`: both backup files made then and an ok import row finished then. */
 const ranAt = (at: Date): void => {
   mkdirSync(cfg.backups, { recursive: true });
   const p = (x: number): string => String(x).padStart(2, '0');
-  const day = `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())}`;
-  const file = join(cfg.backups, `tickets-${day}.db`);
-  openDb(file).close();
-  utimesSync(file, at, at);
+  const day = ymd(at);
+  for (const kind of ['tickets', 'invomax']) {
+    const file = join(cfg.backups, `${kind}-${day}.db`);
+    openDb(file).close();
+    utimesSync(file, at, at);
+  }
   im.prepare(
     `INSERT INTO im_imports (started, finished, ok, tries, invoices, lines, added, changed, gone)
      VALUES (?, ?, 1, 1, 0, 0, 0, 0, 0)`,
@@ -144,7 +151,6 @@ describe('startNightly', () => {
     await tick();
     expect(imports()).toHaveLength(1);
     expect(statSync(join(cfg.backups, 'tickets-2026-11-21.db')).mtimeMs).toBe(before);
-    expect(existsSync(join(cfg.backups, 'invomax-2026-11-21.db'))).toBe(false);
     expect(log()).toBe('');
   });
 
@@ -165,16 +171,105 @@ describe('startNightly', () => {
     expect(imports()).toHaveLength(2);
   });
 
-  it('a failed import logs `invomax import failed`; the next tick tries again', async () => {
+  it('a failed import logs `invomax import failed`; a check an hour on tries again', async () => {
     rmSync(join(cfg.invomaxDir, 'INVOICE.btv'));
     start();
     await n?.settled();
     expect(log()).toMatch(/invomax import failed \w+/);
     expect(imports().map((r) => r.ok)).toEqual([0]);
     putBills();
-    now = new Date(2026, 10, 21, 1, 5);
+    now = new Date(2026, 10, 21, 2, 0);
     await tick();
     expect(imports().map((r) => r.ok)).toEqual([0, 1]);
+  });
+
+  it('a failing import backs off 1h, 2h, 4h, 8h, and always runs at the next 02:00; one log line per class', async () => {
+    rmSync(join(cfg.invomaxDir, 'INVOICE.btv'));
+    const at = (d: number, h: number, m = 0): Date => new Date(2026, 10, d, h, m);
+    const runsAt = async (when: Date): Promise<number> => {
+      now = when;
+      await tick();
+      return imports().length;
+    };
+    now = at(21, 3);
+    start();
+    await n?.settled();
+    expect(imports()).toHaveLength(1);
+    expect(await runsAt(at(21, 3, 5))).toBe(1);
+    expect(await runsAt(at(21, 3, 55))).toBe(1);
+    expect(await runsAt(at(21, 4))).toBe(2); // 1 hour on
+    expect(await runsAt(at(21, 5))).toBe(2);
+    expect(await runsAt(at(21, 6))).toBe(3); // 2 hours on
+    expect(await runsAt(at(21, 9, 55))).toBe(3);
+    expect(await runsAt(at(21, 10))).toBe(4); // 4 hours on
+    expect(await runsAt(at(21, 17, 55))).toBe(4);
+    expect(await runsAt(at(21, 18))).toBe(5); // 8 hours on
+    expect(await runsAt(at(22, 1, 55))).toBe(5); // 16 hours would be 10:00 tomorrow...
+    expect(await runsAt(at(22, 2))).toBe(6); // ...but the next 02:00 comes first
+    expect(log().match(/invomax import failed/g)).toHaveLength(1); // the same class: logged once
+    // the button always runs, back-off or not
+    now = at(22, 2, 30);
+    expect(n?.importNow()).toBe('started');
+    await n?.settled();
+    expect(imports()).toHaveLength(7);
+    putBills();
+    now = at(22, 2, 35);
+    expect(n?.importNow()).toBe('started');
+    await n?.settled();
+    expect(imports().map((r) => r.ok).slice(-1)).toEqual([1]);
+    // a good import resets it all: the next failure is logged again
+    rmSync(join(cfg.invomaxDir, 'INVOICE.btv'));
+    expect(n?.importNow()).toBe('started');
+    await n?.settled();
+    expect(log().match(/invomax import failed/g)).toHaveLength(2);
+  });
+
+  it('invomaxDir: null in shop-settings.json turns the import off; the button says so', async () => {
+    writeFileSync(join(tmp.dir, 'shop-settings.json'), JSON.stringify({ invomaxDir: null }));
+    cfg = loadConfig({ SHOP_ROOT: tmp.dir });
+    expect(cfg.importInvomax).toBe(false);
+    start();
+    await n?.settled();
+    expect(existsSync(join(cfg.backups, 'tickets-2026-11-21.db'))).toBe(true); // backups go on
+    expect(existsSync(join(cfg.backups, 'invomax-2026-11-21.db'))).toBe(true); // the bills' only copy, once InvoMax is gone
+    expect(imports()).toEqual([]);
+    expect(n?.importNow()).toBe('off');
+    await n?.settled();
+    expect(imports()).toEqual([]);
+    expect(await importOnce(cfg)).toMatchObject({ ok: false, tries: 0, error: 'the InvoMax import is turned off' });
+  });
+
+  it('a failed invomax backup still prunes and copies the tickets one, and is tried again an hour on', async () => {
+    mkdirSync(cfg.backups, { recursive: true });
+    const long = new Date(2026, 0, 1);
+    for (let i = 0; i < 95; i++) {
+      const f = join(cfg.backups, `tickets-${ymd(new Date(2026, 0, 1 + i))}.db`);
+      writeFileSync(f, 'old');
+      utimesSync(f, long, long);
+    }
+    const good = cfg.invomaxDb;
+    cfg.invomaxDb = join(tmp.dir, 'damaged-invomax.db');
+    writeFileSync(cfg.invomaxDb, 'not a database: a damaged invomax.db'.repeat(50));
+    cfg.backupTargets = [join(tmp.dir, 'usb')]; // the backups' own drive: the copy runs and fails, after the guard
+    cfg.importInvomax = false; // the backups alone (an import would open the damaged file too)
+    now = new Date(2026, 10, 21, 0, 30);
+    start();
+    await n?.settled();
+    const tickets = join(cfg.backups, 'tickets-2026-11-21.db');
+    expect(existsSync(tickets)).toBe(true);
+    expect(existsSync(join(cfg.backups, 'invomax-2026-11-21.db'))).toBe(false);
+    expect(log()).toMatch(/backup failed invomax \w+/);
+    expect(readdirSync(cfg.backups).filter((f) => /^tickets-.*\.db$/.test(f))).toHaveLength(90); // pruned
+    expect(JSON.parse(readFileSync(join(cfg.backups, 'offsite-attempt.json'), 'utf8'))).toMatchObject({ ok: false, error: 'BadInput' });
+    const made = statSync(tickets).mtimeMs;
+    now = new Date(2026, 10, 21, 1, 0);
+    await tick();
+    expect(log().match(/backup failed/g)).toHaveLength(1); // not again within the hour
+    cfg.invomaxDb = good;
+    now = new Date(2026, 10, 21, 1, 35);
+    await tick();
+    expect(existsSync(join(cfg.backups, 'invomax-2026-11-21.db'))).toBe(true);
+    expect(statSync(tickets).mtimeMs).toBe(made); // only the one that was missing
   });
 
   it('a failed auto-link is logged and does not fail the import', async () => {

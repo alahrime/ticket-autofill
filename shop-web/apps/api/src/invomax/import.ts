@@ -19,6 +19,8 @@ export type ImportResult = {
   changed: number;
   gone: number;
   error: string;
+  /** A failure's class name (BtrieveError, Error, ...), '' when ok or when another import held the lock. */
+  failure: string;
 };
 
 export type ImportOpts = {
@@ -27,6 +29,8 @@ export type ImportOpts = {
   vehicles?: Vehicles;
   /** Replaces copyTable (tests inject failures). */
   copy?: (src: string, dest: string) => void;
+  /** true: no `invomax import failed` log line (the nightly run logs a failure class once until it changes). */
+  quiet?: boolean;
 };
 
 export const RETRIES = 3;
@@ -271,31 +275,37 @@ export async function importOnce(config: Config, opts: ImportOpts = {}): Promise
     }
   };
   const started = now();
+  if (!config.importInvomax) return { ok: false, tries: 0, ...empty, error: 'the InvoMax import is turned off', failure: '' };
   let lock: Lock | null = null;
   let db: DatabaseSync | undefined;
   let tries = 0;
   try {
     checkFolders(config); // before anything is created
     lock = takeLock(config.importDir); // synchronous: a second call in this process sees it
-    if (!lock) return { ok: false, tries: 0, ...empty, error: 'already running' };
+    if (!lock) return { ok: false, tries: 0, ...empty, error: 'already running', failure: '' };
     await Promise.resolve(); // yield once with the lock held, so a second call in this process meets it
     db = openImDb(config.invomaxDb);
     const vehicles = opts.vehicles ?? loadVehicles(config);
     const vhash = vehicles ? sha(JSON.stringify(vehicles)) : '';
     if (!vehicles) logLine(config.log, 'invomax import vehicles unreadable');
     const copy = opts.copy ?? copyTable;
+    // Each try copies to *.btv.try; only a copy that decodes and passes the guards replaces the last good copy.
     const invoiceCopy = join(config.importDir, 'INVOICE.btv');
     const detailCopy = join(config.importDir, 'DETAIL.btv');
+    const invoiceTry = `${invoiceCopy}.try`;
+    const detailTry = `${detailCopy}.try`;
     for (;;) {
       tries++;
       const t0 = Date.now();
       try {
-        copy(join(config.invomaxDir, 'INVOICE.btv'), invoiceCopy);
-        copy(join(config.invomaxDir, 'DETAIL.btv'), detailCopy);
-        const d = readInvoiceFiles(readFileSync(invoiceCopy), readFileSync(detailCopy));
+        copy(join(config.invomaxDir, 'INVOICE.btv'), invoiceTry);
+        copy(join(config.invomaxDir, 'DETAIL.btv'), detailTry);
+        const d = readInvoiceFiles(readFileSync(invoiceTry), readFileSync(detailTry));
         const stored = (db.prepare("SELECT count(*) AS n FROM im_invoices WHERE gone_at = ''").get() as { n: number }).n;
         if ((stored >= 100 && d.invoices.length < stored * 0.9) || (d.invoices.length > 0 && d.lines.length === 0))
           throw new TooFewBills(`too few bills (${d.invoices.length} of ${stored})`);
+        renameSync(invoiceTry, invoiceCopy);
+        renameSync(detailTry, detailCopy);
         const c = upsert(db, d, vehicles, vhash, now());
         const ms = Date.now() - t0;
         db.prepare(
@@ -304,15 +314,18 @@ export async function importOnce(config: Config, opts: ImportOpts = {}): Promise
         ).run(started, now(), tries, c.invoices, c.lines, c.added, c.changed, c.gone, d.oddNumbers, d.badNumbers, d.duplicates, ms, vhash);
         logLine(config.log, `invomax import ok ${c.invoices}/${c.lines} +${c.added} ~${c.changed} -${c.gone}`);
         logLine(config.log, `invomax import notes odd ${d.oddNumbers} bad ${d.badNumbers} dup ${d.duplicates} ${ms}ms`);
-        return { ok: true, tries, ...c, error: '' };
+        return { ok: true, tries, ...c, error: '', failure: '' };
       } catch (e) {
+        rmSync(invoiceTry, { force: true });
+        rmSync(detailTry, { force: true });
         if (!retryable(e) || tries > RETRIES) throw e;
       }
       await sleep(RETRY_MS);
     }
   } catch (e) {
     const error = String((e as Error)?.message ?? e).slice(0, 300);
-    logLine(config.log, `invomax import failed ${className(e)}`);
+    const failure = className(e);
+    if (!opts.quiet) logLine(config.log, `invomax import failed ${failure}`);
     try {
       db ??= openImDb(config.invomaxDb);
       db.prepare(
@@ -322,7 +335,7 @@ export async function importOnce(config: Config, opts: ImportOpts = {}): Promise
     } catch {
       // no database to note it in: the log line is all there is
     }
-    return { ok: false, tries, ...empty, error };
+    return { ok: false, tries, ...empty, error, failure };
   } finally {
     try {
       db?.close();

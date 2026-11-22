@@ -376,6 +376,7 @@ describe('config', () => {
       setup: join('C:\\shop', 'setup_code.txt'),
       log: join('C:\\shop', 'shop.log'),
       invomaxDir: String.raw`C:\hunni\files`,
+      importInvomax: true,
       invomaxDb: join('C:\\shop', 'invomax.db'),
       importDir: join('C:\\shop', 'invomax-import'),
       backups: join('C:\\shop', 'backups'),

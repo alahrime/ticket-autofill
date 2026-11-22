@@ -171,6 +171,19 @@ test('a torn copy that heals on retry imports', async () => {
   expect(sleepCalls).toEqual([60_000]);
 });
 
+test('a torn copy never replaces the last good copy in the import folder', async () => {
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true });
+  const kept = join(cfg.importDir, 'INVOICE.btv');
+  const good = readFileSync(kept);
+  writeFileSync(join(cfg.invomaxDir, 'INVOICE.btv'), invFile([inv('9000001')], 9)); // torn on every try
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: false, tries: 4 });
+  expect(readFileSync(kept).equals(good)).toBe(true);
+  expect(readdirSync(cfg.importDir).filter((f) => f.endsWith('.try'))).toEqual([]);
+  put([inv('9000001'), inv('9000002'), inv('9000003'), inv('9000004')], [line('9000004', 1)]);
+  expect(await importOnce(cfg, { sleep })).toMatchObject({ ok: true, added: 1 });
+  expect(readFileSync(kept).equals(readFileSync(join(cfg.invomaxDir, 'INVOICE.btv')))).toBe(true); // a good one does
+});
+
 test('one at a time', async () => {
   const [a, b] = await Promise.all([importOnce(cfg, { sleep }), importOnce(cfg, { sleep })]);
   expect([a.ok, b.ok].sort()).toEqual([false, true]);
@@ -345,6 +358,25 @@ test('shop-settings.json: defaults, override, and a bad file only warns', () => 
     writeFileSync(join(tmp.dir, 'shop-settings.json'), JSON.stringify({ invomaxDir: 5 }));
     expect(at().backupTargets).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(2);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test('shop-settings.json: "invomaxDir": null turns the import off (INVOMAX_DIR still turns it on)', async () => {
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  try {
+    expect(loadConfig({ SHOP_ROOT: tmp.dir }).importInvomax).toBe(true);
+    writeFileSync(join(tmp.dir, 'shop-settings.json'), JSON.stringify({ invomaxDir: null, backupTargets: ['E:\\b'] }));
+    const off = loadConfig({ SHOP_ROOT: tmp.dir });
+    expect(off).toMatchObject({ importInvomax: false, backupTargets: ['E:\\b'] });
+    expect(loadConfig({ SHOP_ROOT: tmp.dir, INVOMAX_DIR: join(tmp.dir, 'im') }).importInvomax).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+    expect(await importOnce(off, { sleep })).toMatchObject({ ok: false, tries: 0, error: 'the InvoMax import is turned off' });
+    expect(existsSync(cfg.importDir)).toBe(false); // nothing was copied
+    const out: string[] = [];
+    expect(await runImportCommand(off, (s) => out.push(s), async () => undefined)).toBe(1);
+    expect(out.join('\n')).toMatch(/turned off/);
   } finally {
     warn.mockRestore();
   }

@@ -13,6 +13,8 @@ export type Config = {
   setup: string;
   log: string;
   invomaxDir: string; // InvoMax's own folder: only ever read
+  /** false when shop-settings.json has `"invomaxDir": null` (InvoMax retired): no import runs at all. */
+  importInvomax: boolean;
   invomaxDb: string;
   importDir: string;
   backups: string;
@@ -23,9 +25,12 @@ export type Config = {
 /** Where InvoMax keeps its files on the shop PC unless shop-settings.json or INVOMAX_DIR says otherwise. */
 export const DEFAULT_INVOMAX_DIR = String.raw`C:\hunni\files`;
 
-type Settings = { invomaxDir: string; backupTargets: string[] };
+type Settings = { invomaxDir: string | null; backupTargets: string[] };
 
-/** shop-settings.json: missing -> defaults; unreadable or the wrong shape -> defaults and one warning (the server still starts). */
+/**
+ * shop-settings.json: missing -> defaults; unreadable or the wrong shape -> defaults and one warning (the server
+ * still starts). `"invomaxDir": null` turns the InvoMax import off.
+ */
 function settings(file: string): Settings {
   const defaults: Settings = { invomaxDir: DEFAULT_INVOMAX_DIR, backupTargets: [] };
   if (!existsSync(file)) return defaults;
@@ -35,11 +40,11 @@ function settings(file: string): Settings {
     const o = j as Record<string, unknown>;
     const dir = o['invomaxDir'];
     const targets = o['backupTargets'];
-    if (dir !== undefined && (typeof dir !== 'string' || dir === '')) throw new Error('shape');
+    if (dir !== undefined && dir !== null && (typeof dir !== 'string' || dir === '')) throw new Error('shape');
     if (targets !== undefined && (!Array.isArray(targets) || !targets.every((t) => typeof t === 'string'))) throw new Error('shape');
-    return { invomaxDir: dir ?? defaults.invomaxDir, backupTargets: (targets as string[] | undefined) ?? [] };
+    return { invomaxDir: dir === undefined ? defaults.invomaxDir : dir, backupTargets: (targets as string[] | undefined) ?? [] };
   } catch {
-    console.warn('shop-settings.json is not valid (invomaxDir: text, backupTargets: list of text); using the defaults.');
+    console.warn('shop-settings.json is not valid (invomaxDir: text or null, backupTargets: list of text); using the defaults.');
     return defaults;
   }
 }
@@ -79,7 +84,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     web: at('web'),
     setup: at('setup_code.txt'),
     log: at('shop.log'),
-    invomaxDir: env['INVOMAX_DIR'] ? resolve(env['INVOMAX_DIR']) : resolve(root, set.invomaxDir),
+    // off (null): the default folder is named but never read, as importOnce refuses first
+    invomaxDir: env['INVOMAX_DIR'] ? resolve(env['INVOMAX_DIR']) : resolve(root, set.invomaxDir ?? DEFAULT_INVOMAX_DIR),
+    importInvomax: Boolean(env['INVOMAX_DIR']) || set.invomaxDir !== null,
     invomaxDb: at('invomax.db'),
     importDir: at('invomax-import'),
     backups: at('backups'),
