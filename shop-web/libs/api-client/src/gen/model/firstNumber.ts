@@ -5,9 +5,11 @@
  * The JSON API behind web/admin.html (the desk) and web/tech.html (the mechanics' phones).
  * OpenAPI spec version: 1.0.0
  */
+import type { HighestFrom } from './highestFrom.js';
 
 export interface FirstNumber {
   confirmed: boolean;
   /** @pattern ^[0-9]+$ */
   proposed: string;
+  from: HighestFrom;
 }

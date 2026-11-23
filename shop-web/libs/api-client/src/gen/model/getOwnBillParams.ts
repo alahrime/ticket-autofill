@@ -6,11 +6,10 @@
  * OpenAPI spec version: 1.0.0
  */
 
-export type OwnBillRevisionsItem = {
-  /** @minimum 1 */
-  revision: number;
-  /** YYYY-MM-DDTHH:MM:SS, local. */
-  at: string;
-  /** admin#<user id> */
-  by: string;
+export type GetOwnBillParams = {
+  /**
+   * A revision number, 1 or more.
+   * @pattern ^[1-9][0-9]{0,5}$
+   */
+  rev?: string;
 };

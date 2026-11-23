@@ -224,7 +224,8 @@ paths:
         The admin deletes any ticket; a mechanic, any one they may open (their own, or a waiting one nobody was
         given). Deleted from waiting, working or review with no deposit, it is removed for good 14 days later;
         a deleted approved or filled ticket, or one with any deposit, is kept until restored. Already deleted,
-        or a stale version: 409. The only 403 is the one every POST from another site gets.
+        a stale version, or a ticket that has our own bill (an issued invoice; use Fix bill): 409. The only 403
+        is the one every POST from another site gets.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -702,7 +703,9 @@ paths:
       summary: Type a ticket's final bill by hand (admin)
       description: |
         For a bill InvoMax doesn't have. Dollars, to the cent, 0 to 1,000,000 each; `total` must be parts +
-        labor + supplies + tax (no discount). The invoice number, if given, must be no other ticket's.
+        labor + supplies + tax (no discount). The invoice number, if given, must be no other ticket's. Once our
+        own first invoice number is confirmed, an all-digit number at or above our next one is 409: InvoMax makes
+        no new bills then, so it is a typo that would drive our numbers.
       parameters:
         - $ref: '#/components/parameters/TicketKey'
       requestBody:
@@ -895,8 +898,9 @@ paths:
         Own billing (404 while `ownBilling` is off in shop-settings.json). Until the first number is confirmed,
         it runs the InvoMax import first (when the import is on) and waits for it, so InvoMax's bills from this
         morning count: a failed import is 503 and proposes nothing. `proposed` is the highest number used + 1:
-        InvoMax's 7-digit numbers on bills of the last 400 days, typed finals' and our own numbers, and the
-        counter. Once confirmed, it only reports (`proposed` is the number the next bill gets).
+        InvoMax's 7-digit numbers on bills of the last 400 days (none more than 10000 above their median),
+        typed finals' and our own numbers, and the counter; `from` says which. Once confirmed, it only reports
+        (`proposed` is the number the next bill gets).
       responses:
         '200':
           description: Confirmed or not, and the number.
@@ -997,16 +1001,24 @@ paths:
     get:
       operationId: getOwnBill
       tags: [bills]
-      summary: Our bill's latest revision, its revisions and its ticket (admin)
-      description: Own billing (404 while off). Not one of our bills, 404. Money in dollars.
+      summary: Our bill's latest revision (or an earlier one), its revisions and its ticket (admin)
+      description: |
+        Own billing (404 while off). Not one of our bills, or no such revision: 404. Money in dollars. With
+        `rev`, that revision's snapshot as it was stored (read-only: what that print showed); else the latest.
       parameters:
         - $ref: '#/components/parameters/OwnBillNo'
+        - name: rev
+          in: query
+          description: A revision number, 1 or more.
+          schema: { type: string, pattern: '^[1-9][0-9]{0,5}$', x-error: rev must be 1 or more }
+          example: '1'
       responses:
         '200':
-          description: The latest snapshot (what a reprint prints), every revision's when and who, the ticket id.
+          description: The snapshot (the latest, or that revision), every revision's when and who, the ticket id.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OwnBill' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/SignIn' }
         '403': { $ref: '#/components/responses/NotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1578,12 +1590,16 @@ components:
     BillOwn:
       description: Our own bill's number and revisions.
       type: object
-      required: [invoice_no, revisions, revised_at, revised_by]
+      required: [invoice_no, revisions, revised_at, revised_by, history]
       properties:
         invoice_no: { type: string }
         revisions: { type: integer, description: 1 until the bill is fixed. }
         revised_at: { type: [string, 'null'], description: When the latest fix was made; null with one revision. }
         revised_by: { type: [string, 'null'], description: 'Who made it (admin#<id>); null with one revision.' }
+        history:
+          description: Every revision's number, when and who, oldest first (empty when the saved copy is missing).
+          type: array
+          items: { $ref: '#/components/schemas/OwnBillRevision' }
 
     Bill:
       description: Both sides of a row. `difference` is our subtotal less the bill's parts + labor, in dollars.
@@ -1836,10 +1852,23 @@ components:
 
     FirstNumber:
       type: object
-      required: [confirmed, proposed]
+      required: [confirmed, proposed, from]
       properties:
         confirmed: { type: boolean }
         proposed: { type: string, pattern: '^[0-9]+$', examples: ['9000006'] }
+        from: { $ref: '#/components/schemas/HighestFrom' }
+
+    HighestFrom:
+      description: |
+        Where the highest number used came from: an InvoMax bill (`invoice_no`, `date`), a final typed by hand or
+        our own bill (`invoice_no`, `ticket_id`), our counter, or nothing used yet (`none`).
+      type: object
+      required: [source, invoice_no, date, ticket_id]
+      properties:
+        source: { type: string, enum: [invomax, typed, ours, counter, none] }
+        invoice_no: { type: [string, 'null'], examples: ['9000005'] }
+        date: { type: [string, 'null'], description: "The InvoMax bill's date (YYYY-MM-DD); else null." }
+        ticket_id: { type: [integer, 'null'], description: "The typed final's or our bill's ticket; else null." }
 
     FirstNumberIn:
       type: object
@@ -1951,11 +1980,13 @@ components:
         bill: { $ref: '#/components/schemas/BillSnapshot' }
         revisions:
           type: array
-          items:
-            type: object
-            required: [revision, at, by]
-            properties:
-              revision: { type: integer, minimum: 1 }
-              at: { type: string, description: 'YYYY-MM-DDTHH:MM:SS, local.' }
-              by: { type: string, description: 'admin#<user id>' }
+          items: { $ref: '#/components/schemas/OwnBillRevision' }
         ticket_id: { type: integer }
+
+    OwnBillRevision:
+      type: object
+      required: [revision, at, by]
+      properties:
+        revision: { type: integer, minimum: 1 }
+        at: { type: string, description: 'YYYY-MM-DDTHH:MM:SS, local.' }
+        by: { type: string, description: 'admin#<user id>' }

@@ -44,6 +44,7 @@ import type {
   FirstNumber,
   FirstNumberIn,
   GetCatalogParams,
+  GetOwnBillParams,
   GoneResponse,
   Hint,
   ImportFailedResponse,
@@ -965,7 +966,8 @@ export const getDeleteTicketUrl = (id: number,) => {
  * The admin deletes any ticket; a mechanic, any one they may open (their own, or a waiting one nobody was
  * given). Deleted from waiting, working or review with no deposit, it is removed for good 14 days later;
  * a deleted approved or filled ticket, or one with any deposit, is kept until restored. Already deleted,
- * or a stale version: 409. The only 403 is the one every POST from another site gets.
+ * a stale version, or a ticket that has our own bill (an issued invoice; use Fix bill): 409. The only 403
+ * is the one every POST from another site gets.
  * @summary Delete a ticket (it can be restored)
  */
 export const deleteTicket = async (id: number,
@@ -3268,7 +3270,9 @@ export const getTypeFinalUrl = (key: string,) => {
 
 /**
  * For a bill InvoMax doesn't have. Dollars, to the cent, 0 to 1,000,000 each; `total` must be parts +
- * labor + supplies + tax (no discount). The invoice number, if given, must be no other ticket's.
+ * labor + supplies + tax (no discount). The invoice number, if given, must be no other ticket's. Once our
+ * own first invoice number is confirmed, an all-digit number at or above our next one is 409: InvoMax makes
+ * no new bills then, so it is a typo that would drive our numbers.
  * @summary Type a ticket's final bill by hand (admin)
  */
 export const typeFinal = async (key: string,
@@ -4041,8 +4045,9 @@ export const getGetFirstInvoiceNumberUrl = () => {
  * Own billing (404 while `ownBilling` is off in shop-settings.json). Until the first number is confirmed,
  * it runs the InvoMax import first (when the import is on) and waits for it, so InvoMax's bills from this
  * morning count: a failed import is 503 and proposes nothing. `proposed` is the highest number used + 1:
- * InvoMax's 7-digit numbers on bills of the last 400 days, typed finals' and our own numbers, and the
- * counter. Once confirmed, it only reports (`proposed` is the number the next bill gets).
+ * InvoMax's 7-digit numbers on bills of the last 400 days (none more than 10000 above their median),
+ * typed finals' and our own numbers, and the counter; `from` says which. Once confirmed, it only reports
+ * (`proposed` is the number the next bill gets).
  * @summary Whether our first invoice number is confirmed, and the number to propose (admin)
  */
 export const getFirstInvoiceNumber = async ( options?: Parameters<typeof shopFetch>[1]): Promise<getFirstInvoiceNumberResponse> => {
@@ -4544,6 +4549,11 @@ export type getOwnBillResponse200 = {
   status: 200
 }
 
+export type getOwnBillResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
 export type getOwnBillResponse401 = {
   data: SignInResponse
   status: 401
@@ -4562,27 +4572,37 @@ export type getOwnBillResponse404 = {
 export type getOwnBillResponseSuccess = (getOwnBillResponse200) & {
   headers: Headers;
 };
-export type getOwnBillResponseError = (getOwnBillResponse401 | getOwnBillResponse403 | getOwnBillResponse404) & {
+export type getOwnBillResponseError = (getOwnBillResponse400 | getOwnBillResponse401 | getOwnBillResponse403 | getOwnBillResponse404) & {
   headers: Headers;
 };
 
 export type getOwnBillResponse = (getOwnBillResponseSuccess | getOwnBillResponseError)
 
-export const getGetOwnBillUrl = (no: string,) => {
+export const getGetOwnBillUrl = (no: string,
+    params?: GetOwnBillParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/own-bills/${no}`
+  return stringifiedParams.length > 0 ? `/api/own-bills/${no}?${stringifiedParams}` : `/api/own-bills/${no}`
 }
 
 /**
- * Own billing (404 while off). Not one of our bills, 404. Money in dollars.
- * @summary Our bill's latest revision, its revisions and its ticket (admin)
+ * Own billing (404 while off). Not one of our bills, or no such revision: 404. Money in dollars. With
+ * `rev`, that revision's snapshot as it was stored (read-only: what that print showed); else the latest.
+ * @summary Our bill's latest revision (or an earlier one), its revisions and its ticket (admin)
  */
-export const getOwnBill = async (no: string, options?: Parameters<typeof shopFetch>[1]): Promise<getOwnBillResponse> => {
+export const getOwnBill = async (no: string,
+    params?: GetOwnBillParams, options?: Parameters<typeof shopFetch>[1]): Promise<getOwnBillResponse> => {
 
-  return shopFetch<getOwnBillResponse>(getGetOwnBillUrl(no),
+  return shopFetch<getOwnBillResponse>(getGetOwnBillUrl(no,params),
   {
     ...options,
     method: 'GET'
@@ -4595,23 +4615,25 @@ export const getOwnBill = async (no: string, options?: Parameters<typeof shopFet
 
 
 
-export const getGetOwnBillQueryKey = (no: string,) => {
+export const getGetOwnBillQueryKey = (no: string,
+    params?: GetOwnBillParams,) => {
     return [
-    `/api/own-bills/${no}`
+    `/api/own-bills/${no}`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetOwnBillQueryOptions = <TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(no: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+export const getGetOwnBillQueryOptions = <TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>>(no: string,
+    params?: GetOwnBillParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetOwnBillQueryKey(no);
+  const queryKey =  queryOptions?.queryKey ?? getGetOwnBillQueryKey(no,params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOwnBill>>> = ({ signal }) => getOwnBill(no, { signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOwnBill>>> = ({ signal }) => getOwnBill(no,params, { signal, ...requestOptions });
 
 
 
@@ -4621,11 +4643,12 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetOwnBillQueryResult = NonNullable<Awaited<ReturnType<typeof getOwnBill>>>
-export type GetOwnBillQueryError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>
+export type GetOwnBillQueryError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>
 
 
-export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
- no: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>> & Pick<
+export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ no: string,
+    params: undefined |  GetOwnBillParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getOwnBill>>,
           TError,
@@ -4634,8 +4657,9 @@ export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TE
       >, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
- no: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>> & Pick<
+export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ no: string,
+    params?: GetOwnBillParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getOwnBill>>,
           TError,
@@ -4644,20 +4668,22 @@ export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TE
       >, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
- no: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ no: string,
+    params?: GetOwnBillParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary Our bill's latest revision, its revisions and its ticket (admin)
+ * @summary Our bill's latest revision (or an earlier one), its revisions and its ticket (admin)
  */
 
-export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
- no: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ no: string,
+    params?: GetOwnBillParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetOwnBillQueryOptions(no,options)
+  const queryOptions = getGetOwnBillQueryOptions(no,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

@@ -6,10 +6,10 @@
  * OpenAPI spec version: 1.0.0
  */
 import type { BillSnapshot } from './billSnapshot.js';
-import type { OwnBillRevisionsItem } from './ownBillRevisionsItem.js';
+import type { OwnBillRevision } from './ownBillRevision.js';
 
 export interface OwnBill {
   bill: BillSnapshot;
-  revisions: OwnBillRevisionsItem[];
+  revisions: OwnBillRevision[];
   ticket_id: number;
 }

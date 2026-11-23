@@ -133,7 +133,7 @@ function changeTicket(
   id: number,
   change: Change,
 ): void {
-  const { store, accounts } = depsOf(req);
+  const { store, accounts, ownBills } = depsOf(req);
   const s = sessionIn(res);
   const role = s.role as keyof typeof WHO;
   const d: Body = { ...(req.body as Body) };
@@ -159,7 +159,12 @@ function changeTicket(
     if (t.version !== version) throw new Stale(t); // edit the copy the device saw, or not at all
     if (change === 'move') moveTicket(accounts, s, t, d);
     else if (change === 'edit') edit(t, d, WHO[role]);
-    else if (change === 'delete') markDeleted(t, `${s.role}#${s.user_id}`, nowIso());
+    else if (change === 'delete') {
+      // our own bill is an issued invoice: deleting its ticket would drop it from Bill history (own billing on or off)
+      const billed = ownBills.ofTicket(t.id);
+      if (billed !== null) throw new Refused(`this ticket has our bill #${billed}; use Fix bill to change it`);
+      markDeleted(t, `${s.role}#${s.user_id}`, nowIso());
+    }
     else restore(t);
     // R12: only the desk's edit that sent deposits (validated by edit above) replaces a stored value it can't read
     const depositsSent = change === 'edit' && s.role === 'admin' && Object.hasOwn(d, 'deposits');

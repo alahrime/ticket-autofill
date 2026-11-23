@@ -58,13 +58,34 @@ export type BillSnapshot = {
 };
 
 export type BillRevision = { revision: number; at: string; by: string };
+type StoredRevision = BillRevision & { snapshot: string };
+/** One revision's snapshot, every revision's when and who, and the bill's ticket. */
+export type OwnBill = { bill: BillSnapshot; revisions: BillRevision[]; ticket_id: number };
 
 /** InvoMax's bills from this many days back count toward the highest number used. */
 export const INVOMAX_DAYS = 400;
+/**
+ * An InvoMax number more than this far above the median of those window's 7-digit numbers is left out: a typo
+ * in InvoMax, not the run. The rule, checked once against the import data (numbers only, kept out of git): the
+ * window holds one 7-digit run that grows by about 2000 a year and spans about 2500 numbers, while the odd
+ * numbers in the history sit tens of thousands to millions away from their run. So a margin of 10000 keeps the
+ * whole run and drops a mistyped jump. The median, not the mean, so one such number can't move it.
+ */
+export const INVOMAX_OUTLIER = 10_000;
 /** Our numbers continue InvoMax's run: 7 digits, no leading zero. */
 export const OWN_NO = /^[1-9]\d{6}$/;
 // exactly 7 digits (InvoMax's run; the 8-digit outlier and odd numbers are left out)
 const SEVEN = "'[0-9][0-9][0-9][0-9][0-9][0-9][0-9]'";
+
+/** Where the highest number used came from: what the first-number dialog shows, so an odd one is caught. */
+export type HighestFrom = {
+  source: 'invomax' | 'typed' | 'ours' | 'counter' | 'none';
+  invoice_no: string | null;
+  /** An InvoMax bill's date; else null. */
+  date: string | null;
+  /** A typed final's or our bill's ticket; else null. */
+  ticket_id: number | null;
+};
 
 const ymd = (d: Date): string =>
   `${String(d.getFullYear()).padStart(4, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -145,24 +166,37 @@ export class OwnBills {
   }
 
   /**
-   * The highest number used: InvoMax's exactly-7-digit numbers on bills dated within INVOMAX_DAYS, every
-   * all-digit number of a typed final or ours, and the counter's last (next_no - 1). Numbers are text, compared
-   * as numbers. `now` dates the window (approve's own time; else the clock).
+   * The highest number used and where it came from: InvoMax's exactly-7-digit numbers on bills dated within
+   * INVOMAX_DAYS, but none more than INVOMAX_OUTLIER above their median; every all-digit number of a typed final
+   * or ours; and the counter's last (next_no - 1). Numbers are text, compared as numbers. `now` dates the window
+   * (approve's own time; else the clock). On a tie the first of InvoMax, a final, the counter names it.
    */
-  private highestUsed(now: Date = this.clock()): number {
-    const from = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - INVOMAX_DAYS));
-    const im = this.im
-      .prepare(`SELECT MAX(CAST(invoice_no AS INTEGER)) AS n FROM im_invoices WHERE invoice_no GLOB ${SEVEN} AND "date" >= ?`)
-      .get(from) as { n: number | null };
-    const finals = this.db
+  private highestUsed(now: Date = this.clock()): { n: number; from: HighestFrom } {
+    const since = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - INVOMAX_DAYS));
+    const run = this.im
       .prepare(
-        `SELECT MAX(CAST(invoice_no AS INTEGER)) AS n FROM invoice_finals
-         WHERE source IN ('typed', 'ours') AND invoice_no GLOB '[0-9]*' AND invoice_no NOT GLOB '*[^0-9]*'
-           AND length(invoice_no) <= 15`,
+        `SELECT CAST(invoice_no AS INTEGER) AS n, invoice_no, "date" AS date FROM im_invoices
+         WHERE invoice_no GLOB ${SEVEN} AND "date" >= ? ORDER BY n`,
       )
-      .get() as { n: number | null };
+      .all(since) as { n: number; invoice_no: string; date: string }[];
+    const median = run.length ? (run[Math.floor((run.length - 1) / 2)] as { n: number }).n : 0;
+    const im = run.filter((r) => r.n <= median + INVOMAX_OUTLIER).at(-1);
+    const fin = this.db
+      .prepare(
+        `SELECT CAST(invoice_no AS INTEGER) AS n, invoice_no, source, ticket_id FROM invoice_finals
+         WHERE source IN ('typed', 'ours') AND invoice_no GLOB '[0-9]*' AND invoice_no NOT GLOB '*[^0-9]*'
+           AND length(invoice_no) <= 15
+         ORDER BY n DESC LIMIT 1`,
+      )
+      .get() as { n: number; invoice_no: string; source: 'typed' | 'ours'; ticket_id: number } | undefined;
     const next = this.counter()?.next_no;
-    return Math.max(im.n ?? 0, finals.n ?? 0, next === undefined ? 0 : next - 1);
+    let best: { n: number; from: HighestFrom } = { n: 0, from: { source: 'none', invoice_no: null, date: null, ticket_id: null } };
+    if (im && im.n > best.n) best = { n: im.n, from: { source: 'invomax', invoice_no: im.invoice_no, date: im.date, ticket_id: null } };
+    if (fin && fin.n > best.n)
+      best = { n: fin.n, from: { source: fin.source, invoice_no: fin.invoice_no, date: null, ticket_id: fin.ticket_id } };
+    if (next !== undefined && next - 1 > best.n)
+      best = { n: next - 1, from: { source: 'counter', invoice_no: String(next - 1), date: null, ticket_id: null } };
+    return best;
   }
 
   /** Whether any bill anywhere (InvoMax's, of any date, or a final) already has this number. */
@@ -173,9 +207,13 @@ export class OwnBills {
     );
   }
 
-  /** Whether the first number was confirmed, and the number the next bill would get (or the one to propose). */
-  firstNumber(): { confirmed: boolean; proposed: string } {
-    return { confirmed: this.counter() !== undefined, proposed: String(this.highestUsed() + 1) };
+  /**
+   * Whether the first number was confirmed, the number the next bill would get (or the one to propose), and
+   * where the highest number used came from.
+   */
+  firstNumber(): { confirmed: boolean; proposed: string; from: HighestFrom } {
+    const high = this.highestUsed();
+    return { confirmed: this.counter() !== undefined, proposed: String(high.n + 1), from: high.from };
   }
 
   /**
@@ -186,7 +224,7 @@ export class OwnBills {
     if (typeof no !== 'string' || !OWN_NO.test(no)) throw new BadInput('invoice_no must be 7 digits');
     this.transaction(() => {
       if (this.counter()) throw new Refused('the first invoice number is already confirmed');
-      const high = this.highestUsed();
+      const high = this.highestUsed().n;
       if (Number(no) <= high) throw new BadInput(`invoice_no must be above ${high}, the highest number used`);
       this.db
         .prepare('INSERT INTO own_bill_counter (id, next_no, confirmed_at, confirmed_by) VALUES (1, ?, ?, ?)')
@@ -196,7 +234,7 @@ export class OwnBills {
 
   /** The next number free everywhere, InvoMax's window dated by `now`; call inside the transaction. */
   private takeNumber(now: Date): string {
-    let n = this.highestUsed(now) + 1;
+    let n = this.highestUsed(now).n + 1;
     while (this.taken(String(n))) n++; // an old InvoMax bill outside the window
     if (!OWN_NO.test(String(n))) throw new BadInput('no 7-digit invoice number is left');
     return String(n);
@@ -302,10 +340,10 @@ export class OwnBills {
     return row;
   }
 
-  private revisionsOf(no: string): (BillRevision & { snapshot: string })[] {
+  private revisionsOf(no: string): StoredRevision[] {
     return this.db
       .prepare('SELECT revision, at, by, snapshot FROM own_bill_revisions WHERE invoice_no = ? ORDER BY revision')
-      .all(no) as (BillRevision & { snapshot: string })[];
+      .all(no) as StoredRevision[];
   }
 
   /**
@@ -355,16 +393,28 @@ export class OwnBills {
   }
 
   /** Our bill's latest revision, every revision's when and who, and its ticket; null unless `no` is ours. */
-  latest(no: string): { bill: BillSnapshot; revisions: BillRevision[]; ticket_id: number } | null {
+  latest(no: string): OwnBill | null {
+    return this.read(no, (revs) => revs[revs.length - 1]);
+  }
+
+  /**
+   * Revision `rev` of our bill as it was stored (what that print showed: read-only), every revision's when and
+   * who, and its ticket; null unless `no` is ours and has that revision.
+   */
+  revision(no: string, rev: number): OwnBill | null {
+    return this.read(no, (revs) => revs.find((r) => r.revision === rev));
+  }
+
+  private read(no: string, pick: (revs: StoredRevision[]) => StoredRevision | undefined): OwnBill | null {
     const row = this.db.prepare("SELECT ticket_id FROM invoice_finals WHERE invoice_no = ? AND source = 'ours'").get(no) as
       | { ticket_id: number }
       | undefined;
     if (!row) return null;
     const revs = this.revisionsOf(no);
-    const last = revs[revs.length - 1];
-    if (!last) return null;
+    const got = pick(revs);
+    if (!got) return null;
     return {
-      bill: JSON.parse(last.snapshot) as BillSnapshot,
+      bill: JSON.parse(got.snapshot) as BillSnapshot,
       revisions: revs.map(({ revision, at, by }) => ({ revision, at, by })),
       ticket_id: row.ticket_id,
     };

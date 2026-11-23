@@ -51,8 +51,17 @@ export type Bill = {
   link: { source: 'invomax' | 'typed' | 'none' | 'ours'; linked_by: string; linked_at: string; version: number } | null;
   /** Our subtotal less InvoMax's parts + labor, in dollars; null unless both sides are there. */
   difference: number | null;
-  /** Our own bill's number and revisions (revised_at / revised_by: the latest, null while there is only the first); else null. */
-  own: { invoice_no: string; revisions: number; revised_at: string | null; revised_by: string | null } | null;
+  /**
+   * Our own bill's number and revisions (revised_at / revised_by: the latest, null while there is only the
+   * first; history: every revision's when and who, oldest first); else null.
+   */
+  own: {
+    invoice_no: string;
+    revisions: number;
+    revised_at: string | null;
+    revised_by: string | null;
+    history: { revision: number; at: string; by: string }[];
+  } | null;
 };
 
 export type Search = { tag?: string; name?: string; phone?: string; vin?: string; from?: string; to?: string; page?: number };
@@ -113,6 +122,12 @@ const TICKETS = `SELECT id,
 
 type Where = { im: string[]; t: string[]; args: Record<string, string> };
 
+/**
+ * A ticket-side row's date (t, with its final f): our own bill's own day (approve's time, linked_at, which a fix
+ * never changes: revision 1's date), else the day the ticket was last saved.
+ */
+const T_DAY = "(CASE WHEN f.source = 'ours' THEN substr(f.linked_at, 1, 10) ELSE t.day END)";
+
 /** The SQL conditions for a search, for the InvoMax side (i, with its linked ticket t) and the ticket side (t). */
 function conditions(q: Search & { phoneIs?: string }): Where {
   const w: Where = { im: [], t: [], args: {} };
@@ -153,12 +168,12 @@ function conditions(q: Search & { phoneIs?: string }): Where {
   if (q.from) {
     w.args['from'] = q.from;
     w.im.push('i."date" >= $from');
-    w.t.push('t.day >= $from');
+    w.t.push(`${T_DAY} >= $from`);
   }
   if (q.to) {
     w.args['to'] = q.to;
     w.im.push('i."date" <= $to');
-    w.t.push('t.day <= $to');
+    w.t.push(`${T_DAY} <= $to`);
   }
   return w;
 }
@@ -186,7 +201,7 @@ function rowsSql(w: Where): string {
     LEFT JOIN t ON t.id = f.ticket_id
     WHERE 1${and(w.im)}
     UNION ALL
-    SELECT 't' || t.id, t.day, f.invoice_no, t.id, trim(t.first || ' ' || t.last), digits(t.phone), t.vehicle, t.plate,
+    SELECT 't' || t.id, ${T_DAY}, f.invoice_no, t.id, trim(t.first || ' ' || t.last), digits(t.phone), t.vehicle, t.plate,
       CASE WHEN f.source IN ('typed', 'ours') THEN f.total END, plate_norm(t.plate), t.vin, NULL
     FROM t LEFT JOIN main.invoice_finals f ON f.ticket_id = t.id
     WHERE (f.ticket_id IS NULL OR f.source <> 'invomax'
@@ -398,9 +413,15 @@ export class History {
           };
       const newest = ours?.revisions.length && ours.revisions.length > 1 ? ours.revisions[ours.revisions.length - 1] : undefined;
       const own = ours
-        ? { invoice_no: ours.bill.invoice_no, revisions: ours.revisions.length, revised_at: newest?.at ?? null, revised_by: newest?.by ?? null }
+        ? {
+            invoice_no: ours.bill.invoice_no,
+            revisions: ours.revisions.length,
+            revised_at: newest?.at ?? null,
+            revised_by: newest?.by ?? null,
+            history: ours.revisions,
+          }
         : isOurs && fin
-          ? { invoice_no: fin.invoice_no ?? '', revisions: 0, revised_at: null, revised_by: null }
+          ? { invoice_no: fin.invoice_no ?? '', revisions: 0, revised_at: null, revised_by: null, history: [] }
           : null;
       return { key: inv ? imKey(inv.invoice_no) : `t${ticket?.id ?? ''}`, customer, before, after, link, difference, own };
     });

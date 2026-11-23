@@ -5,6 +5,7 @@
  * The JSON API behind web/admin.html (the desk) and web/tech.html (the mechanics' phones).
  * OpenAPI spec version: 1.0.0
  */
+import type { OwnBillRevision } from './ownBillRevision.js';
 
 /**
  * Our own bill's number and revisions.
@@ -23,4 +24,6 @@ export interface BillOwn {
      * @nullable
      */
   revised_by: string | null;
+  /** Every revision's number, when and who, oldest first (empty when the saved copy is missing). */
+  history: OwnBillRevision[];
 }

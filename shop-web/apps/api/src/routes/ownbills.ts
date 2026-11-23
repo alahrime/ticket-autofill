@@ -10,7 +10,7 @@ import { validRequest } from '../http/contract';
 import { depsOf } from '../http/deps';
 import { validId } from '../http/ids';
 import { jsonBody } from '../http/security';
-import { asJson, sessionIn, signedIn } from '../view';
+import { asJson, queryValues, sessionIn, signedIn } from '../view';
 import { mechanicNamed } from './tickets';
 
 type Body = Record<string, unknown>;
@@ -106,9 +106,13 @@ export function ownBillRoutes(): Router {
     res.json({ invoice_no: no });
   });
 
-  r.get('/api/own-bills/:no', ownBilling, admin, validNo, (req, res) => {
-    const got = depsOf(req).ownBills.latest(String(req.params['no']));
-    if (!got) throw new NotFound('no such bill');
+  // ?rev=N: that revision as stored (read-only, what that print showed); else the latest
+  r.get('/api/own-bills/:no', ownBilling, admin, validNo, validRequest, (req, res) => {
+    const no = String(req.params['no']);
+    const rev = queryValues(req.originalUrl, 'rev')[0];
+    const own = depsOf(req).ownBills;
+    const got = rev === undefined ? own.latest(no) : own.revision(no, Number(rev));
+    if (!got) throw new NotFound(rev === undefined ? 'no such bill' : 'no such bill or revision');
     res.json({ ...got, bill: inDollars(got.bill) });
   });
 

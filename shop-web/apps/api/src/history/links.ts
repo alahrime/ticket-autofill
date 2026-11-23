@@ -359,8 +359,19 @@ export class LinkStore {
   }
 
   /**
+   * Our own bills' next number (billing/ownbills.ts), once the first was confirmed; else undefined. Call inside
+   * the transaction.
+   */
+  private ownNext(): number | undefined {
+    const has = this.db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'own_bill_counter'").get();
+    if (!has) return undefined;
+    return (this.db.prepare('SELECT next_no FROM own_bill_counter WHERE id = 1').get() as { next_no: number } | undefined)?.next_no;
+  }
+
+  /**
    * The bill typed in by hand. `version` is the stored row's (null: no row yet); any other is
-   * Refused('changed on another device').
+   * Refused('changed on another device'). Once our own first number is confirmed InvoMax makes no new bills, so
+   * an all-digit number at or above our next one is a typo: Refused, as it would drive our numbers.
    */
   typedFinal(ticketId: number, n: TypedFinal, version: number | null, by: string): void {
     for (const k of ['parts', 'labor', 'supplies', 'tax', 'total'] as const)
@@ -369,6 +380,11 @@ export class LinkStore {
       this.filled(ticketId);
       this.checkVersion(ticketId, version);
       const no = n.invoice_no?.trim() || null;
+      const next = this.ownNext();
+      if (no && /^\d+$/.test(no) && next !== undefined && Number(no) >= next)
+        throw new Refused(
+          `#${no} is at or above our next invoice number (#${next}), so it can't be an InvoMax bill: check the number on the paper bill`,
+        );
       if (no) this.checkFree(ticketId, no);
       this.put(ticketId, no, 'typed', by, n);
     });

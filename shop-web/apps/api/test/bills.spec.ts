@@ -579,16 +579,33 @@ describe('our own bills in Bill history', () => {
       gone: false,
     });
     expect(b.link).toMatchObject({ source: 'ours' });
-    expect(b.own).toEqual({ invoice_no: '9000010', revisions: 1, revised_at: null, revised_by: null });
+    expect(b.own).toEqual({
+      invoice_no: '9000010',
+      revisions: 1,
+      revised_at: null,
+      revised_by: null,
+      history: [{ revision: 1, at: '2026-11-23T14:22:05', by: BY }],
+    });
   });
 
   it('after a fix: revision 2, who and when, and the new amounts', async () => {
     s.deps.ownBills.fix('9000010', { lines: [{ desc: 'BRAKE PADS', qty: 1, price: 100, labor: 60 }] }, 2, 'admin#2', LATER);
     const [, b] = await get(`/api/invoices/t${id}`);
-    expect(b.own).toEqual({ invoice_no: '9000010', revisions: 2, revised_at: '2026-11-24T09:05:00', revised_by: 'admin#2' });
+    expect(b.own).toEqual({
+      invoice_no: '9000010',
+      revisions: 2,
+      revised_at: '2026-11-24T09:05:00',
+      revised_by: 'admin#2',
+      history: [
+        { revision: 1, at: '2026-11-23T14:22:05', by: BY },
+        { revision: 2, at: '2026-11-24T09:05:00', by: 'admin#2' },
+      ],
+    });
     expect(b.after).toMatchObject({ date: '2026-11-23', labor: 60, source: 'ours' });
     const [, rows] = await get('/api/invoices?name=doe');
     expect(rows.rows[0].total).toBe(b.after.total);
+    expect(rows.rows[0].date).toBe('2026-11-23'); // the bill's own day, never the day it was fixed
+    expect(await keys('?from=2026-11-23&to=2026-11-23')).toEqual([`t${id}`]);
   });
 
   it.each([
@@ -600,7 +617,7 @@ describe('our own bills in Bill history', () => {
     const [code, b] = await get(`/api/invoices/t${id}`);
     expect(code).toBe(200);
     expect(b.after).toMatchObject({ source: 'ours', invoice_no: '9000010', total: 180.65, lines: [] });
-    expect(b.own).toEqual({ invoice_no: '9000010', revisions: 0, revised_at: null, revised_by: null });
+    expect(b.own).toEqual({ invoice_no: '9000010', revisions: 0, revised_at: null, revised_by: null, history: [] });
     expect(b.link).toMatchObject({ source: 'ours' });
   });
 

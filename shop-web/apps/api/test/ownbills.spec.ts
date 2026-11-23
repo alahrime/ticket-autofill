@@ -6,6 +6,7 @@ import { billAmounts, Refused, Stale, type Ticket } from '@shop/domain';
 import { OwnBills } from '../src/billing/ownbills';
 import { openDb } from '../src/db';
 import { AlreadyBilled, BadInput, NotConfirmed, NotFound } from '../src/errors';
+import { History } from '../src/history/bills';
 import { LinkStore } from '../src/history/links';
 import { openImDb } from '../src/invomax/imdb';
 import { TicketStore } from '../src/store';
@@ -95,7 +96,26 @@ afterEach(() => {
 describe('the first number', () => {
   it('is the highest 7-digit InvoMax number + 1 (the 8-digit outlier and bills over 400 days old ignored)', () => {
     imBill('9500000', '2025-10-01'); // 418 days before NOW
-    expect(own.firstNumber()).toEqual({ confirmed: false, proposed: '9000006' });
+    expect(own.firstNumber()).toEqual({
+      confirmed: false,
+      proposed: '9000006',
+      from: { source: 'invomax', invoice_no: '9000005', date: '2026-11-20', ticket_id: null },
+    });
+  });
+
+  it('leaves out an InvoMax number far above the main run (a typo in InvoMax)', () => {
+    imBill('9030316', '2026-11-21'); // more than 10000 above the median of the last 400 days
+    imBill('9010004', '2026-11-21'); // exactly the median (9000004) + 10000: still in the run
+    expect(own.firstNumber()).toMatchObject({ proposed: '9010005', from: { source: 'invomax', invoice_no: '9010004' } });
+  });
+
+  it('is 1 with nothing used at all, and says so', () => {
+    im.exec('DELETE FROM im_invoices');
+    expect(own.firstNumber()).toEqual({
+      confirmed: false,
+      proposed: '1',
+      from: { source: 'none', invoice_no: null, date: null, ticket_id: null },
+    });
   });
 
   it('is confirmed once, never at or below the highest used', () => {
@@ -104,7 +124,7 @@ describe('the first number', () => {
     expect(() => own.confirmFirst('09000010', BY)).toThrow(BadInput);
     expect(counter()).toBeUndefined();
     own.confirmFirst('9000010', BY);
-    expect(own.firstNumber()).toEqual({ confirmed: true, proposed: '9000010' });
+    expect(own.firstNumber()).toMatchObject({ confirmed: true, proposed: '9000010', from: { source: 'counter' } });
     expect(() => own.confirmFirst('9000020', BY)).toThrow(Refused); // 409
     expect(counter()).toEqual({ next_no: 9000010 });
   });
@@ -113,7 +133,10 @@ describe('the first number', () => {
     const id = ticket();
     tickets.save({ ...stored(id), status: 'filled' }, 1);
     links.typedFinal(id, { invoice_no: '9000007', parts: 0, labor: 0, supplies: 0, tax: 0, total: 0 }, null, BY);
-    expect(own.firstNumber().proposed).toBe('9000008');
+    expect(own.firstNumber()).toMatchObject({
+      proposed: '9000008',
+      from: { source: 'typed', invoice_no: '9000007', date: null, ticket_id: id },
+    });
   });
 });
 
@@ -189,11 +212,24 @@ describe('approve', () => {
     expect(own.approve(id, 2, BY, NOW).invoice_no).toBe('9000010');
   });
 
-  it('a typed final after the confirm is never reused: the next number is above it', () => {
+  it('after the confirm, a typed final at or above the next number is refused (409): InvoMax makes no new bills', () => {
+    const other = ticket();
+    tickets.save({ ...stored(other), status: 'filled' }, 1);
+    const typed = (no: string): void =>
+      links.typedFinal(other, { invoice_no: no, parts: 0, labor: 0, supplies: 0, tax: 0, total: 0 }, null, BY);
+    for (const no of ['9000010', '9000020', '9999999']) expect(() => typed(no)).toThrow(Refused);
+    expect(() => typed('9000010')).toThrow(/9000010/);
+    expect(finals()).toEqual([]);
+    typed('9000009'); // below: an old InvoMax bill typed late
+    expect(own.approve(ticket(), 1, BY, NOW).invoice_no).toBe('9000010');
+  });
+
+  it('before the confirm, a typed final of any number is taken as it is', () => {
+    db.exec('DELETE FROM own_bill_counter');
     const other = ticket();
     tickets.save({ ...stored(other), status: 'filled' }, 1);
     links.typedFinal(other, { invoice_no: '9000020', parts: 0, labor: 0, supplies: 0, tax: 0, total: 0 }, null, BY);
-    expect(own.approve(ticket(), 1, BY, NOW).invoice_no).toBe('9000021');
+    expect(own.firstNumber()).toMatchObject({ proposed: '9000021', from: { source: 'typed', ticket_id: other } });
   });
 
   it('an InvoMax bill imported after the confirm is never reused either', () => {
@@ -311,6 +347,47 @@ describe('fix', () => {
         { revision: 2, at: '2026-11-24T09:05:00', by: 'admin#2' },
       ],
     });
+  });
+
+  it('every revision stays readable as stored; Bill history lists them with when and who', () => {
+    const id = ticket();
+    const first = own.approve(id, 1, BY, NOW);
+    const fixed = own.fix('9000010', { first: 'john' }, 2, 'admin#2', LATER);
+    const list = [
+      { revision: 1, at: '2026-11-23T14:22:05', by: BY },
+      { revision: 2, at: '2026-11-24T09:05:00', by: 'admin#2' },
+    ];
+    expect(own.revision('9000010', 1)).toEqual({ bill: first, revisions: list, ticket_id: id });
+    expect(own.revision('9000010', 2)?.bill).toEqual(fixed);
+    expect(own.revision('9000010', 3)).toBeNull();
+    expect(own.revision('9000099', 1)).toBeNull();
+    const h = new History(join(tmp.dir, 'tickets.db'), join(tmp.dir, 'invomax.db'), own);
+    try {
+      expect(h.bill(`t${id}`)?.own).toEqual({
+        invoice_no: '9000010',
+        revisions: 2,
+        revised_at: '2026-11-24T09:05:00',
+        revised_by: 'admin#2',
+        history: list,
+      });
+    } finally {
+      h.close();
+    }
+  });
+
+  it("Bill history dates our bill by its own day, not the day it was fixed", () => {
+    const id = ticket();
+    own.approve(id, 1, BY, NOW);
+    own.fix('9000010', { first: 'john' }, 2, BY, LATER);
+    rawData(id, (d) => (d['updated'] = '2026-12-02T10:00:00')); // the ticket saved on a later day
+    const h = new History(join(tmp.dir, 'tickets.db'), join(tmp.dir, 'invomax.db'), own);
+    try {
+      const day = h.search({ from: '2026-11-23', to: '2026-11-23' }).rows.filter((r) => r.ticket_id === id);
+      expect(day).toMatchObject([{ key: `t${id}`, date: '2026-11-23', invoice_no: '9000010' }]);
+      expect(h.search({ from: '2026-12-02', to: '2026-12-02' }).rows.filter((r) => r.ticket_id === id)).toEqual([]);
+    } finally {
+      h.close();
+    }
   });
 
   it("keeps revision 1's shop details, even after the settings changed", () => {
@@ -477,7 +554,11 @@ describe('the /api/own-bills routes', () => {
     };
     const a = await s.admin();
     const g = await s.call('/api/own-bills/first-number', undefined, a);
-    expect([g.status, g.body]).toEqual([200, { confirmed: false, proposed: '9000008' }]);
+    expect([g.status, g.body]).toEqual([
+      200,
+      { confirmed: false, proposed: '9000008', from: { source: 'invomax', invoice_no: '9000007', date: (g.body as J).from?.date, ticket_id: null } },
+    ]);
+    expect((g.body as J).from.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     // meanwhile InvoMax made 9000008 too: the POST's own import sees it
     const low = await s.call('/api/own-bills/first-number', { invoice_no: '9000008' }, a);
     expect(low.status).toBe(400);
@@ -485,7 +566,7 @@ describe('the /api/own-bills routes', () => {
     const ok = await s.call('/api/own-bills/first-number', { invoice_no: '9000020' }, a);
     expect(ok.status).toBe(204);
     const done = imports;
-    expect((await s.call('/api/own-bills/first-number', undefined, a)).body).toEqual({ confirmed: true, proposed: '9000020' });
+    expect((await s.call('/api/own-bills/first-number', undefined, a)).body).toMatchObject({ confirmed: true, proposed: '9000020' });
     expect((await s.call('/api/own-bills/first-number', { invoice_no: '9000030' }, a)).status).toBe(409);
     expect(imports).toBe(done);
   });
@@ -528,6 +609,35 @@ describe('the /api/own-bills routes', () => {
     expect([stale.status, (stale.body as J).ticket?.version]).toEqual([409, 2]);
   });
 
+  it('a typed final at or above our next number is 409, with a plain message', async () => {
+    on();
+    const { a, id } = await desk();
+    await s.call(`/api/tickets/${id}/move`, { version: 1, to: 'approved' }, a);
+    await s.call(`/api/tickets/${id}/move`, { version: 2, to: 'filled' }, a);
+    expect((await s.call('/api/own-bills/first-number', { invoice_no: '9000010' }, a)).status).toBe(204);
+    const money = { parts: 0, labor: 0, supplies: 0, tax: 0, total: 0, version: null };
+    const high = await s.call(`/api/invoices/t${id}/final`, { ...money, invoice_no: '9000010' }, a);
+    expect(high.status).toBe(409);
+    expect((high.body as J).error).toMatch(/9000010/);
+    expect((await s.call(`/api/invoices/t${id}/final`, { ...money, invoice_no: '9000009' }, a)).status).toBe(200);
+  });
+
+  it("a ticket with our bill can't be deleted (409), for the admin or its mechanic", async () => {
+    on();
+    const { a, id } = await desk();
+    await s.call('/api/own-bills/first-number', { invoice_no: '9000010' }, a);
+    expect((await s.call(`/api/tickets/${id}/bill`, { version: 1 }, a)).status).toBe(201);
+    const del = await s.call(`/api/tickets/${id}/delete`, { version: 2 }, a);
+    expect(del.status).toBe(409);
+    expect((del.body as J).error).toMatch(/#9000010.*Fix bill/);
+    expect((del.body as J).ticket).toMatchObject({ id, status: 'filled', version: 2 });
+    s.config.ownBilling = false; // the bill stays an issued invoice even with own billing off
+    expect((await s.call(`/api/tickets/${id}/delete`, { version: 2 }, a)).status).toBe(409);
+    expect(s.deps.store.get(id)?.status).toBe('filled');
+    const other = await desk(); // a ticket with no bill of ours still deletes
+    expect((await s.call(`/api/tickets/${other.id}/delete`, { version: 1 }, a)).status).toBe(200);
+  });
+
   it('read and fix: the latest revision in dollars, its list, then a fix under the same number', async () => {
     on();
     const { a, id } = await desk();
@@ -559,5 +669,13 @@ describe('the /api/own-bills routes', () => {
     const after = (await s.call('/api/own-bills/9000010', undefined, a)).body as J;
     expect(after.revisions.map((r: J) => r.revision)).toEqual([1, 2]);
     expect(after.bill.customer.first).toBe('JOHN');
+    // an earlier revision, read-only, as it was stored
+    const was = await s.call('/api/own-bills/9000010?rev=1', undefined, a);
+    expect([was.status, (was.body as J).bill]).toEqual([200, bill]);
+    expect((was.body as J).revisions.map((r: J) => r.revision)).toEqual([1, 2]);
+    expect(((await s.call('/api/own-bills/9000010?rev=2', undefined, a)).body as J).bill.customer.first).toBe('JOHN');
+    expect((await s.call('/api/own-bills/9000010?rev=3', undefined, a)).status).toBe(404);
+    expect((await s.call('/api/own-bills/9000010?rev=0', undefined, a)).status).toBe(400);
+    expect((await s.call('/api/own-bills/9000010?rev=x', undefined, a)).status).toBe(400);
   });
 });
