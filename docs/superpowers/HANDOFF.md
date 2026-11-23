@@ -3,7 +3,7 @@
 **Updated:** 2026-11-23. **Resume here: "Own billing — where it stands" just below.** This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers. Live today: still `shop.py`; the switch to the TS server (checklist step 5) is the owner's call. Older notes follow further down.
 
 ## Own billing — where it stands (2026-11-23, for the next agent)
-- **Branch `own-billing`** (pushed to GitHub; not merged into `main`). Worktree on this PC: `.claude/worktrees/own-billing`. Plan Tasks 1–6 are built, each reviewed by two reviewers and fixed (commits d68368a..cb58c23, then the final-review fixes below).
+- **Branch `own-billing`: merged into `main` on 2026-11-23 (fc7ab80, owner's yes) and pushed.** Worktree on this PC: `.claude/worktrees/own-billing`. Plan Tasks 1–6 are built, each reviewed by two reviewers and fixed (commits d68368a..cb58c23, then the final-review fixes below).
 - **Final whole-branch review:** "ready with fixes". 0 Critical, 4 Important. Full report: `docs/superpowers/reviews/2026-11-23-own-billing-final-review.md`. Every ruling and deferred minor from the build, in order: `docs/superpowers/reviews/2026-11-23-own-billing-ledger.md`.
 - **Final-review fixes: done, pushed** (fc36447, 815c732, e9bf09c on `own-billing`). Covered:
   - **I1:** a typed final at or above our counter is refused once the first number is confirmed (409). InvoMax numbers more than 10000 above the median of the last 400 days are ignored; on the trial data nothing is excluded and the proposed first number is the highest InvoMax number + 1. The first-number dialog names where the highest number came from.
@@ -12,7 +12,7 @@
   - **I4:** our bill's date in history is the bill day.
   - Also: the stray "null" text is gone, and the grey bands print.
   - Green: run-many test/lint/typecheck, pages-e2e and switch-check.
-  - **Not done:** the scoped re-review of these 3 commits. Do it before merging. The api tests were seen red first; the admin-app/e2e tests were not.
+  - **Re-reviewed after the merge: all 6 addressed, no new Critical or Important problems.** See `docs/superpowers/reviews/2026-11-23-own-billing-fix-rereview.md`. Small leftovers are listed there: `?rev=abc` prints the latest revision, and Delete shows for a moment before the page knows the ticket has our bill (the server refuses it with a 409).
   - Known gap: typed finals entered before go-live still raise the proposed first number. The admin can type a higher number but not a lower one.
 - **Then (plan Task 7):**
   - Rebuild api and admin-app in the worktree.
@@ -25,7 +25,6 @@
   - Sub Total = parts + labor + supplies; confirm it against a real bill.
   - The rest of the minors are in the review report.
 - **Checks green at cb58c23:** `NX_DAEMON=false npx nx run-many -t test lint typecheck`, `NX_DAEMON=false npx nx e2e pages-e2e` (61 tests) and `node tools/switch-check.mjs`, all from `shop-web/`. One api test failure was seen once, in an overlapping run, and not reproduced. The reviewer blames the older free-port probes in `backup.spec.ts` and `http-core.spec.ts`.
-- **Merging into `main`:** only on the owner's yes.
 - **Standing rules:**
   - Never write in `C:hunni`.
   - No customer data in git, tests or logs. Use JANE DOE, (555)010-0000, XKS-4827 and invoices 9000001+.
