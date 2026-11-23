@@ -11,6 +11,19 @@
 
 It needs its own plan first: brainstorm, then a plan, then implementation with two reviewers per task.
 
+## Own billing (2026-11-23): our app prints the bill, InvoMax is retired for new bills
+- **Owner's decision:** no more typing into InvoMax, not even by tool. The phone-entered ticket goes straight onto our own printed bill. So the InvoMax auto-fill ("TODO: typing into InvoMax" below) is **dropped**.
+- **Design approved:** `docs/superpowers/specs/2026-11-23-own-billing-design.md`.
+  - Supplies are 5% of parts + labor, at most $20; tax is 6% of parts + supplies, always charged.
+  - No discount box; no hours, engine, used-parts mark or address.
+  - Deposits come off the balance due; payment stays with the shop's own terminal and register.
+  - Invoice numbers continue after InvoMax's.
+  - A fix is reprinted under the same number and looks exactly like the original on paper; only the app marks it "Revised".
+  - The bill copies InvoMax's printout, with all the same information. Its look gets iterated later.
+- **Plan:** `docs/superpowers/plans/2026-11-23-own-billing.md`, Tasks 1–7. Run it subagent-driven on a new branch `own-billing` in its own worktree: one implementer and two reviewers per task. **Status: waiting for the owner's OK on the plan; nothing built yet.**
+- **Order:** the TS server switch comes first (built and checked 2026-11-23; the owner does it from step 5). Billing can be built and tried on the trial copy in the meantime.
+- **Owner's photos** of 4 signed InvoMax bills (2026-11-23) hold customer data. They were used to transcribe the fixed wording and layout and are **not** kept in the repo.
+
 ## New direction from the owner (2026-11-21): replace InvoMax, and start testing
 - **The owner wants to start testing.** The full-flow test on the made-up customer (see "Not yet done by the owner" below) and the switch to the TypeScript server (checklist below) are both still to do. Testing needs no new code.
 - **The InvoMax provider is raising its prices**, so the owner wants to **replace InvoMax with our own in-house web application**. This is a new project and needs its own brainstorm and design. Nothing has been decided about how it works yet.
