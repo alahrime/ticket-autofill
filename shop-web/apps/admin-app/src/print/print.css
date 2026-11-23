@@ -1,6 +1,6 @@
 /* The bill print page: letter paper, the bill twice. Title in a bold serif, the rest in a plain sans, thin black
    rules, a light grey band behind the column headings and the Deposit / Disc. Applied rows (spec: "Look").
-   --row and --rows go with ROWS_PER_PAGE in paginate.ts: a page holds at most that many rows per column. */
+   --row (0.2in) goes with ROW_IN in paginate.ts, which budgets the lines a page holds. */
 @page {
   size: letter;
   margin: 0.4in;
@@ -8,7 +8,6 @@
 
 .bill-print {
   --row: 0.2in;
-  --rows: 20;
   --ink: #000;
   --band: #e6e6e6;
   font: 9pt/1.2 Arial, Helvetica, sans-serif;
@@ -22,6 +21,7 @@
 .bill-print p,
 .bill-print h1 {
   margin: 0;
+  overflow-wrap: anywhere; /* a long unbroken value wraps instead of widening its column */
 }
 
 .bill-print .print-heading {
@@ -67,6 +67,10 @@
   align-items: start;
 }
 
+.bill-print .head-cols > div {
+  min-width: 0;
+}
+
 .bill-print .head-cols p {
   min-height: 1.2em;
 }
@@ -91,9 +95,8 @@
 
 .bill-print .lines {
   display: grid;
-  grid-template-columns: 1fr 1.7fr;
+  grid-template-columns: 1.1fr 1fr;
   gap: 0;
-  height: calc((var(--rows) + 1) * var(--row));
   border: 1px solid var(--ink);
   margin-bottom: 0.1in;
 }
@@ -104,13 +107,34 @@
   width: 100%;
 }
 
+/* fixed columns: no value widens one; a long description wraps (never cut) and the page budget counts its lines */
+.bill-print .lines table {
+  table-layout: fixed;
+}
+
+.bill-print .labor th:last-child {
+  width: 0.7in;
+}
+
+.bill-print .parts th:nth-child(2) {
+  width: 0.45in;
+}
+
+.bill-print .parts th:nth-child(3) {
+  width: 0.65in;
+}
+
+.bill-print .parts th:nth-child(4) {
+  width: 0.7in;
+}
+
 .bill-print .lines th,
 .bill-print .lines td {
   height: var(--row);
   padding: 0 0.04in;
   text-align: left;
   vertical-align: middle;
-  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .bill-print .lines thead th {

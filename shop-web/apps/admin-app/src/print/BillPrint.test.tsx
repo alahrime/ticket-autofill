@@ -170,6 +170,42 @@ describe('BillPrint', () => {
     expect(screen.getAllByText('Page 2')).toHaveLength(2);
   });
 
+  it('long descriptions are never cut: 20 rows of 120 characters take more pages, with every character shown', async () => {
+    const desc = (i: number) => `ROW ${i} ` + 'REPLACE FRONT BRAKE PADS AND ROTORS '.repeat(4).trim();
+    const labor = Array.from({ length: 20 }, (_, i) => ({ desc: desc(i), amount: 10 }));
+    api({ ...SNAPSHOT, labor, parts: Array.from({ length: 20 }, (_, i) => ({ desc: desc(i), qty: 1, price: 5, total: 5 })) });
+    show();
+    await screen.findAllByText('INVOICE : 9000010');
+    const c = within(copies()[0]);
+    expect(c.getByText('Page 2')).toBeInTheDocument();
+    for (const l of labor) expect(c.getAllByText(l.desc)).toHaveLength(2); // labor and parts
+    expect(c.getAllByRole('row', { name: /^BALANCE DUE/ })).toHaveLength(1);
+  });
+
+  it('one description too long for a page goes over several rows, none of it lost, the price on the first', async () => {
+    const words = Array.from({ length: 300 }, (_, i) => `PART${i}`);
+    api({ ...SNAPSHOT, labor: [{ desc: words.join(' '), amount: 12.5 }] });
+    show();
+    await screen.findAllByText('INVOICE : 9000010');
+    const c = within(copies()[0]);
+    const cells = Array.from(copies()[0].querySelectorAll('.labor tbody td:first-child')).map((td) => td.textContent);
+    expect(cells.length).toBeGreaterThan(1);
+    expect(cells.join(' ')).toBe(words.join(' '));
+    expect(c.getAllByText('12.50')).toHaveLength(1);
+    expect(c.getAllByRole('row', { name: /^BALANCE DUE/ })).toHaveLength(1);
+  });
+
+  it('a failed refetch keeps showing the bill', async () => {
+    api(SNAPSHOT);
+    const { client } = show();
+    await screen.findAllByText('INVOICE : 9000010');
+    mockFetch(() => [500, { error: 'down' }]);
+    await client.invalidateQueries();
+    await wait();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getAllByText('INVOICE : 9000010')).toHaveLength(2);
+  });
+
   it('a bill that does not load says so plainly and never prints', async () => {
     const urls = api(404);
     show();

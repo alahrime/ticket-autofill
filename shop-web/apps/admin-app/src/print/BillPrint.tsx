@@ -7,7 +7,7 @@ import { errorText } from '../lib/format';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { useQueryState } from '../lib/useQueryState';
 import * as text from './billText';
-import { paginate, ROWS_PER_PAGE } from './paginate';
+import { chunks, LABOR_CPL, linesOf, PARTS_CPL, pageBudget, paginate } from './paginate';
 import './print.css';
 
 const COPIES = 2;
@@ -29,30 +29,45 @@ export function printTime(hhmm: string): string {
   return `${String(h % 12 || 12).padStart(2, '0')}:${m[2]} ${h < 12 ? 'am' : 'pm'}`;
 }
 
-function Header({ bill, page }: { bill: BillSnapshot; page: number }) {
+/** The header's three columns of lines: the customer, the shop and the vehicle (the mechanic last, no label). */
+function headerColumns(bill: BillSnapshot): [string[], string[], string[]] {
   const { shop, customer: c, vehicle: v } = bill;
+  return [
+    [`${c.first} ${c.last}`.trim().toUpperCase(), c.phone],
+    [...shop.address, shop.phone, shop.hours],
+    [
+      `Year Make. ${v.year} ${v.make} ${v.model}`,
+      `License ${v.plate}`,
+      `MLG in/out ${v.odometer} / ${v.odometer}`,
+      `Vin ${v.vin}`,
+      bill.mechanic,
+    ],
+  ];
+}
+
+function Header({ bill, page }: { bill: BillSnapshot; page: number }) {
   const date = printDate(bill.date);
+  const [who, shop, car] = headerColumns(bill);
   return (
     <header className="head">
-      <h1 className="title">{shop.name}</h1>
+      <h1 className="title">{bill.shop.name}</h1>
       <div className="head-cols">
         <div className="who">
-          <p>{`${c.first} ${c.last}`.trim().toUpperCase()}</p>
-          <p>{c.phone}</p>
-        </div>
-        <div className="shop">
-          {shop.address.map((line, i) => (
+          {who.map((line, i) => (
             <p key={i}>{line}</p>
           ))}
-          <p>{shop.phone}</p>
-          <p>{shop.hours}</p>
+        </div>
+        <div className="shop">
+          {shop.map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
         </div>
         <div className="car">
-          <p>{`Year Make. ${v.year} ${v.make} ${v.model}`}</p>
-          <p>{`License ${v.plate}`}</p>
-          <p>{`MLG in/out ${v.odometer} / ${v.odometer}`}</p>
-          <p>{`Vin ${v.vin}`}</p>
-          <p className="mechanic">{bill.mechanic}</p>
+          {car.map((line, i) => (
+            <p key={i} className={i === car.length - 1 ? 'mechanic' : undefined}>
+              {line}
+            </p>
+          ))}
         </div>
       </div>
       <div className="numbers">
@@ -124,9 +139,36 @@ function Notices() {
   );
 }
 
-function Sheet({ bill, page, last, range }: { bill: BillSnapshot; page: number; last: boolean; range: ReturnType<typeof paginate>[number] }) {
-  const labor = bill.labor.slice(...range.labor);
-  const parts = bill.parts.slice(...range.parts);
+type LaborRow = { desc: string; amount: number | null };
+type PartRow = { desc: string; qty: number | null; price: number | null; total: number | null };
+
+/** The numbers of a row, or blank (a continuation row of a description too long for one page has none). */
+const num = (n: number | null): string => (n === null ? '' : fixed(n));
+
+/** The rows to print: a description too long for a page goes over several rows, the amounts on the first. */
+function rowsOf(bill: BillSnapshot, budget: number): { labor: LaborRow[]; parts: PartRow[] } {
+  return {
+    labor: bill.labor.flatMap((l) => chunks(l.desc, budget * LABOR_CPL).map((desc, i) => ({ desc, amount: i === 0 ? l.amount : null }))),
+    parts: bill.parts.flatMap((p) =>
+      chunks(p.desc, budget * PARTS_CPL).map((desc, i) => ({
+        desc,
+        qty: i === 0 ? p.qty : null,
+        price: i === 0 ? p.price : null,
+        total: i === 0 ? p.total : null,
+      })),
+    ),
+  };
+}
+
+type SheetProps = {
+  bill: BillSnapshot;
+  page: number;
+  last: boolean;
+  labor: LaborRow[];
+  parts: PartRow[];
+};
+
+function Sheet({ bill, page, last, labor, parts }: SheetProps) {
   return (
     <article className="sheet">
       <Header bill={bill} page={page} />
@@ -144,7 +186,7 @@ function Sheet({ bill, page, last, range }: { bill: BillSnapshot; page: number; 
             {labor.map((l, i) => (
               <tr key={i}>
                 <td>{l.desc}</td>
-                <td className="num">{fixed(l.amount)}</td>
+                <td className="num">{num(l.amount)}</td>
               </tr>
             ))}
           </tbody>
@@ -168,9 +210,9 @@ function Sheet({ bill, page, last, range }: { bill: BillSnapshot; page: number; 
             {parts.map((p, i) => (
               <tr key={i}>
                 <td>{p.desc}</td>
-                <td className="num">{fixed(p.qty)}</td>
-                <td className="num">{fixed(p.price)}</td>
-                <td className="num">{fixed(p.total)}</td>
+                <td className="num">{num(p.qty)}</td>
+                <td className="num">{num(p.price)}</td>
+                <td className="num">{num(p.total)}</td>
               </tr>
             ))}
           </tbody>
@@ -189,11 +231,24 @@ function Sheet({ bill, page, last, range }: { bill: BillSnapshot; page: number; 
 }
 
 function Copy({ bill, n }: { bill: BillSnapshot; n: number }) {
-  const pages = paginate(bill.labor.length, bill.parts.length, ROWS_PER_PAGE);
+  const budget = pageBudget(bill.shop.name, headerColumns(bill));
+  const rows = rowsOf(bill, budget);
+  const pages = paginate(
+    rows.labor.map((r) => linesOf(r.desc, LABOR_CPL)),
+    rows.parts.map((r) => linesOf(r.desc, PARTS_CPL)),
+    budget,
+  );
   return (
     <section className="copy" aria-label={`Bill copy ${n} of ${COPIES}`}>
       {pages.map((range, i) => (
-        <Sheet key={i} bill={bill} page={i + 1} last={i === pages.length - 1} range={range} />
+        <Sheet
+          key={i}
+          bill={bill}
+          page={i + 1}
+          last={i === pages.length - 1}
+          labor={rows.labor.slice(...range.labor)}
+          parts={rows.parts.slice(...range.parts)}
+        />
       ))}
     </section>
   );
@@ -219,7 +274,7 @@ export function BillPrint({ no }: { no: string }) {
     return () => clearTimeout(t);
   }, [loaded, noprint]);
 
-  if (error) {
+  if (error && !data) {
     return (
       <main className="bill-print">
         <h1 className="print-heading">{`Bill ${no}`}</h1>
