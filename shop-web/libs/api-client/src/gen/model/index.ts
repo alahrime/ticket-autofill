@@ -105,6 +105,7 @@ export * from './status.js';
 export * from './suggestPrices200.js';
 export * from './suggestPricesParams.js';
 export * from './ticket.js';
+export * from './ticketOwnBill.js';
 export * from './totals.js';
 export * from './upkeep.js';
 export * from './upkeepBackup.js';

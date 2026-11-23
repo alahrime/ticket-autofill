@@ -415,6 +415,7 @@ describe('the /api/own-bills routes', () => {
       [`/api/tickets/${id}/bill`, { version: 1 }],
       ['/api/own-bills/9000010', undefined],
       ['/api/own-bills/9000010/fix', { version: 1, fields: {} }],
+      [`/api/own-bills/by-ticket/${id}`, undefined],
     ];
     for (const [path, body] of asked) {
       expect([path, (await s.call(path, body, a)).status]).toEqual([path, 404]);
@@ -430,6 +431,25 @@ describe('the /api/own-bills routes', () => {
     expect((await s.call('/api/tickets/1/bill', { version: 1 }, m)).status).toBe(403);
     expect((await s.call('/api/own-bills/9000010', undefined, m)).status).toBe(403);
     expect((await s.call('/api/own-bills/9000010/fix', { version: 1, fields: {} }, m)).status).toBe(403);
+    expect((await s.call('/api/own-bills/by-ticket/1', undefined, m)).status).toBe(403);
+  });
+
+  it("by-ticket: a ticket's own bill number (200), else 404", async () => {
+    on();
+    const { a, id } = await desk();
+    expect((await s.call(`/api/own-bills/by-ticket/${id}`, undefined, a)).status).toBe(404); // not billed yet
+    await s.call('/api/own-bills/first-number', { invoice_no: '9000010' }, a);
+    expect((await s.call(`/api/tickets/${id}/bill`, { version: 1 }, a)).status).toBe(201);
+    const got = await s.call(`/api/own-bills/by-ticket/${id}`, undefined, a);
+    expect([got.status, got.body]).toEqual([200, { invoice_no: '9000010' }]);
+    expect((await s.call('/api/own-bills/by-ticket/999', undefined, a)).status).toBe(404);
+    expect((await s.call('/api/own-bills/by-ticket/abc', undefined, a)).status).toBe(404);
+    // a filled ticket whose final is not ours (here: no bill in InvoMax) is 404 too
+    const other = await desk();
+    await s.call(`/api/tickets/${other.id}/move`, { version: 1, to: 'approved' }, a);
+    expect((await s.call(`/api/tickets/${other.id}/move`, { version: 2, to: 'filled' }, a)).status).toBe(200);
+    s.deps.links.markNone(other.id, null, BY);
+    expect((await s.call(`/api/own-bills/by-ticket/${other.id}`, undefined, a)).status).toBe(404);
   });
 
   it('a failed InvoMax import numbers nothing (503)', async () => {

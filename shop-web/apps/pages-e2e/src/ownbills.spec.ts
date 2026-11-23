@@ -11,7 +11,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { btrieveFile, detailBytes, invoiceBytes } from '@shop/invomax/testing';
 import { MAIN, REPO } from './global-setup';
-import { ADMIN, PASSWORD, PINS, car, createTicket, signIn } from './shop';
+import { ADMIN, PASSWORD, PINS, car, createTicket, moveTicket, signIn } from './shop';
 
 const SHOP = {
   name: 'TEST AUTO REPAIR',
@@ -123,6 +123,8 @@ test.describe('own billing on', () => {
     if (root) rmSync(root, { recursive: true, force: true, maxRetries: 5 });
   });
 
+  const ANY_NO = String.raw`\d{7}`; // printTab's `no` is a pattern: any bill number
+
   /** The new tab the click opens, once it shows the bill (a blank tab opened and closed before it is skipped). */
   async function printTab(context: BrowserContext, click: () => Promise<void>, no: string): Promise<Page> {
     const before = new Set(context.pages());
@@ -133,7 +135,7 @@ test.describe('own billing on', () => {
       .poll(() => (found = context.pages().find((p) => !before.has(p) && !p.isClosed() && url.test(p.url()))) !== undefined)
       .toBe(true);
     const tab = found as Page;
-    await expect(tab.locator('.copy').first().getByText(`INVOICE : ${no}`)).toBeVisible();
+    await expect(tab.locator('.copy').first().getByText(new RegExp(`INVOICE : ${no}`))).toBeVisible();
     await expect.poll(() => tab.evaluate(() => (window as unknown as { printed: number }).printed)).toBe(1);
     return tab;
   }
@@ -173,6 +175,7 @@ test.describe('own billing on', () => {
     await page.getByRole('button', { name: 'Approve & print' }).click();
     const dlg = page.getByRole('dialog', { name: 'First invoice number: 9000006. Use it?' });
     await expect(dlg).toBeVisible({ timeout: 30_000 });
+    expect(context.pages()).toHaveLength(1); // no tab in front of the question: "Use it" opens it
     await expect(dlg.getByLabel('Invoice number')).toHaveValue('9000006');
     await expect(dlg.getByLabel('Invoice number')).toBeFocused();
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
@@ -222,7 +225,7 @@ test.describe('own billing on', () => {
     await context.close();
   });
 
-  test('a ticket already billed says so and offers Reprint; the empty tab closes', async ({ browser }) => {
+  test('a ticket already billed says so and offers Reprint; no tab is left open', async ({ browser }) => {
     const context = await ownContext(browser);
     const page = await context.newPage();
     const t = await createTicket(context.request, {
@@ -236,13 +239,74 @@ test.describe('own billing on', () => {
     await page.goto('/admin');
     await page.locator('#board .card', { hasText: t.last }).click();
     await expect(page.locator('#title')).toHaveText(`Ticket #${t.id}`);
-    const [blank] = await Promise.all([
-      context.waitForEvent('page'),
-      page.getByRole('button', { name: 'Approve & print' }).click(),
-    ]);
+    await page.getByRole('button', { name: 'Approve & print' }).click();
     await expect(page.locator('#tErr')).toContainText('Already billed as #9000006');
-    await expect.poll(() => blank.isClosed()).toBe(true);
+    await expect.poll(() => context.pages().filter((p) => !p.isClosed()).length).toBe(1);
     await printTab(context, () => page.getByRole('button', { name: 'Reprint' }).click(), '9000006');
+    await context.close();
+  });
+
+  /** A waiting ticket that can be billed (mechanic, one line), made through the API. */
+  const billable = (context: BrowserContext) =>
+    createTicket(context.request, { ...car(), mechanic: 'Al Fixit', lines: [{ desc: 'TEST PART XKS', qty: 1, price: 10, labor: 5 }] });
+
+  /** The number in "Billed as #N" on the open ticket. */
+  async function billedAs(page: Page): Promise<string> {
+    await expect(page.locator('#viewTicket')).toContainText(/Billed as #\d{7}/);
+    return /Billed as #(\d{7})/.exec((await page.locator('#viewTicket').textContent()) ?? '')?.[1] ?? '';
+  }
+
+  test('an approved ticket (Ready for InvoMax) gets Approve & print beside Mark filled, and bills', async ({ browser }) => {
+    const context = await ownContext(browser);
+    const t = await moveTicket(context.request, await billable(context), 'approved');
+    const page = await context.newPage();
+    await page.goto('/admin');
+    await page.locator('#board .col.approved .card', { hasText: t.last }).click();
+    await expect(page.locator('#title')).toHaveText(`Ticket #${t.id}`);
+    await expect(page.getByRole('button', { name: 'Mark filled' })).toBeVisible();
+    const tab = await printTab(context, () => page.getByRole('button', { name: 'Approve & print' }).click(), ANY_NO);
+    const no = await billedAs(page);
+    await expect(tab.locator('.copy').first().getByText(`INVOICE : ${no}`)).toBeVisible();
+    await expect(page.locator('#viewTicket .status')).toHaveText('filled');
+    await context.close();
+  });
+
+  test('a ticket billed on another device shows Reprint and Fix bill here, from the server', async ({ browser }) => {
+    const other = await ownContext(browser);
+    const t = await billable(other);
+    const context = await ownContext(browser); // a fresh browser: nothing about the bill in its memory
+    const page = await context.newPage();
+    await page.goto('/admin');
+    await page.locator('#board .card', { hasText: t.last }).click();
+    await expect(page.locator('#title')).toHaveText(`Ticket #${t.id}`);
+    const r = await other.request.post(`/api/tickets/${t.id}/bill`, { data: { version: t.version } });
+    expect(r.status(), await r.text()).toBe(201);
+    const { invoice_no: no } = (await r.json()) as { invoice_no: string };
+    // the page's poll sees it filled; the bill number comes from GET /api/own-bills/by-ticket/:id
+    await expect(page.locator('#viewTicket .status')).toHaveText('filled', { timeout: 20_000 });
+    await expect(page.locator('#viewTicket')).toContainText(`Billed as #${no}`);
+    await expect(page.getByRole('button', { name: 'Fix bill' })).toBeVisible();
+    await printTab(context, () => page.getByRole('button', { name: 'Reprint' }).click(), no);
+    await other.close();
+    await context.close();
+  });
+
+  test('the bill made but its reply lost: the page asks the server and shows the bill', async ({ browser }) => {
+    const context = await ownContext(browser);
+    const t = await billable(context);
+    const page = await context.newPage();
+    await page.route('**/api/tickets/*/bill', async (route) => {
+      await route.fetch(); // the server bills it ...
+      await route.abort('connectionreset'); // ... and the reply never arrives
+    });
+    await page.goto('/admin');
+    await page.locator('#board .card', { hasText: t.last }).click();
+    await expect(page.locator('#title')).toHaveText(`Ticket #${t.id}`);
+    await printTab(context, () => page.getByRole('button', { name: 'Approve & print' }).click(), ANY_NO);
+    await billedAs(page);
+    await expect(page.locator('#tErr')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Reprint' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Fix bill' })).toBeVisible();
     await context.close();
   });
 });

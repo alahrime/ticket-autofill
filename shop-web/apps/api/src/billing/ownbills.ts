@@ -346,6 +346,14 @@ export class OwnBills {
     });
   }
 
+  /** The ticket's own bill number (ours, source 'ours'), or null: no bill, or one InvoMax made. */
+  ofTicket(ticketId: number): string | null {
+    const row = this.db
+      .prepare("SELECT invoice_no FROM invoice_finals WHERE ticket_id = ? AND source = 'ours' AND invoice_no IS NOT NULL")
+      .get(ticketId) as { invoice_no: string } | undefined;
+    return row ? row.invoice_no : null;
+  }
+
   /** Our bill's latest revision, every revision's when and who, and its ticket; null unless `no` is ours. */
   latest(no: string): { bill: BillSnapshot; revisions: BillRevision[]; ticket_id: number } | null {
     const row = this.db.prepare("SELECT ticket_id FROM invoice_finals WHERE invoice_no = ? AND source = 'ours'").get(no) as

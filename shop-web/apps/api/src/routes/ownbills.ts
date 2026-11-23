@@ -1,6 +1,7 @@
 // Our own bills (billing/ownbills.ts): the first invoice number, Approve (POST /api/tickets/:id/bill), a bill's
 // latest revision and Fix. Admin only, and 404 for everyone while shop-settings.json leaves ownBilling off (no
-// session: 401, as every /api/ path). Money in the replies is in dollars; the database keeps cents.
+// session: 401, as every /api/ path). by-ticket: a filled ticket's own bill number, for Reprint and Fix bill.
+// Money in the replies is in dollars; the database keeps cents.
 import { type RequestHandler, type Response, Router } from 'express';
 import { Stale } from '@shop/domain';
 import type { BillSnapshot } from '../billing/ownbills';
@@ -97,6 +98,12 @@ export function ownBillRoutes(): Router {
     } catch (e) {
       staleReply(res, e);
     }
+  });
+
+  r.get('/api/own-bills/by-ticket/:id', ownBilling, admin, validId, (req, res) => {
+    const no = depsOf(req).ownBills.ofTicket(Number(req.params['id']));
+    if (no === null) throw new NotFound('no bill of ours for this ticket');
+    res.json({ invoice_no: no });
   });
 
   r.get('/api/own-bills/:no', ownBilling, admin, validNo, (req, res) => {

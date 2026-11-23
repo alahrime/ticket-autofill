@@ -75,6 +75,7 @@ import type {
   SuggestPrices200,
   SuggestPricesParams,
   Ticket,
+  TicketOwnBill,
   Upkeep,
   User,
   UserChange,
@@ -4405,6 +4406,138 @@ export const useApproveBill = <TError = ErrorType<BadRequestResponse | SignInRes
       > => {
       return useMutation(getApproveBillMutationOptions(options), queryClient);
     }
+
+export type getOwnBillOfTicketResponse200 = {
+  data: TicketOwnBill
+  status: 200
+}
+
+export type getOwnBillOfTicketResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type getOwnBillOfTicketResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type getOwnBillOfTicketResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type getOwnBillOfTicketResponseSuccess = (getOwnBillOfTicketResponse200) & {
+  headers: Headers;
+};
+export type getOwnBillOfTicketResponseError = (getOwnBillOfTicketResponse401 | getOwnBillOfTicketResponse403 | getOwnBillOfTicketResponse404) & {
+  headers: Headers;
+};
+
+export type getOwnBillOfTicketResponse = (getOwnBillOfTicketResponseSuccess | getOwnBillOfTicketResponseError)
+
+export const getGetOwnBillOfTicketUrl = (id: number,) => {
+
+
+
+
+  return `/api/own-bills/by-ticket/${id}`
+}
+
+/**
+ * Own billing (404 while off). The desk page asks this for a filled ticket, to offer Reprint and Fix bill.
+ * No bill of ours for the ticket (none, one InvoMax made, or no such ticket): 404.
+ * @summary The ticket's own bill number, if we billed it (admin)
+ */
+export const getOwnBillOfTicket = async (id: number, options?: Parameters<typeof shopFetch>[1]): Promise<getOwnBillOfTicketResponse> => {
+
+  return shopFetch<getOwnBillOfTicketResponse>(getGetOwnBillOfTicketUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetOwnBillOfTicketQueryKey = (id: number,) => {
+    return [
+    `/api/own-bills/by-ticket/${id}`
+    ] as const;
+    }
+
+
+export const getGetOwnBillOfTicketQueryOptions = <TData = Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOwnBillOfTicketQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOwnBillOfTicket>>> = ({ signal }) => getOwnBillOfTicket(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetOwnBillOfTicketQueryResult = NonNullable<Awaited<ReturnType<typeof getOwnBillOfTicket>>>
+export type GetOwnBillOfTicketQueryError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>
+
+
+export function useGetOwnBillOfTicket<TData = Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ id: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOwnBillOfTicket>>,
+          TError,
+          Awaited<ReturnType<typeof getOwnBillOfTicket>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOwnBillOfTicket<TData = Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOwnBillOfTicket>>,
+          TError,
+          Awaited<ReturnType<typeof getOwnBillOfTicket>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOwnBillOfTicket<TData = Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The ticket's own bill number, if we billed it (admin)
+ */
+
+export function useGetOwnBillOfTicket<TData = Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ id: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBillOfTicket>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetOwnBillOfTicketQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type getOwnBillResponse200 = {
   data: OwnBill

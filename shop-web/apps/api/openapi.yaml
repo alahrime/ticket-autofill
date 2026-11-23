@@ -973,6 +973,26 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /api/own-bills/by-ticket/{id}:
+    get:
+      operationId: getOwnBillOfTicket
+      tags: [bills]
+      summary: The ticket's own bill number, if we billed it (admin)
+      description: |
+        Own billing (404 while off). The desk page asks this for a filled ticket, to offer Reprint and Fix bill.
+        No bill of ours for the ticket (none, one InvoMax made, or no such ticket): 404.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: Our bill's number.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketOwnBill' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/own-bills/{no}:
     get:
       operationId: getOwnBill
@@ -1840,6 +1860,12 @@ components:
           description: The ticket's fields to change, as Edit's (without `version`).
           x-checked-in: route
           type: object
+
+    TicketOwnBill:
+      type: object
+      required: [invoice_no]
+      properties:
+        invoice_no: { type: string, examples: ['9000006'] }
 
     AlreadyBilled:
       type: object

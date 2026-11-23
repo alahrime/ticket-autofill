@@ -247,7 +247,8 @@ const S = {
   resetting: null,  // the user whose PIN/password the reset box is for
   ownBilling: false, // /api/upkeep/status says this shop prints its own bills (never on shop.py)
   firstOk: false,   // the first invoice number is confirmed (learned from the server, never assumed)
-  bills: new Map(), // ticket id -> our bill's number, for the bills made or opened on this page
+  bills: new Map(), // ticket id -> our bill's number (made here, or asked of the server)
+  billAsked: new Set(), // filled tickets whose bill number was asked (or is being asked) of the server
   fix: null,        // {no, id}: the bill being fixed and its ticket, open for editing
 };
 
@@ -703,7 +704,11 @@ function loadTicket(t) {
         S.ownBilling ? el("button", {type: "button", class: "go", id: "btnApprovePrint", text: "Approve & print", onclick: approvePrint})
                      : el("button", {type: "button", class: "go", text: "Send to InvoMax", onclick: approve}));
     }
-    if (t.status === "approved") act.append(el("button", {type: "button", class: "go", text: "Mark filled", onclick: markFilled}));
+    if (t.status === "approved") {
+      if (S.ownBilling) act.append(el("span", {class: "spacer"}),
+        el("button", {type: "button", class: "go", id: "btnApprovePrint", text: "Approve & print", onclick: approvePrint}));
+      act.append(el("button", {type: "button", class: "go", text: "Mark filled", onclick: markFilled}));
+    }
     if (own) act.append(el("button", {type: "button", class: "light", text: "Reprint", onclick: () => reprint(own)}),
                         el("button", {type: "button", class: "warn", text: "Fix bill", onclick: () => openFix(own)}));
     if (t.id && t.status !== "deleted") act.append(el("button", {type: "button", class: "danger", id: "btnDelete", text: "Delete", onclick: deleteOpen}));
@@ -715,6 +720,7 @@ function loadTicket(t) {
   v.oninput = ed ? (ev => { if (!ev.target.closest("#tDepBox")) markDirty(); }) : null;  // deposits save on their own
   $("title").textContent = fix ? "Fix bill #" + S.fix.no : t.id ? "Ticket #" + t.id : "New ticket";
   if (ed) recalc();
+  if (S.ownBilling && t.status === "filled" && t.id && !own && !S.billAsked.has(t.id)) askBillOf(t);
 }
 
 function fmtCell(v, money2) {
@@ -1197,8 +1203,31 @@ function closeTab(w) { try { if (w && !w.closed) w.close(); } catch (e) { /* gon
 
 // The bill's print page in its tab -> true; false when there's no tab (blocked or closed): the flash links it
 function showPrint(w, no) {
-  try { if (w && !w.closed) { w.location.href = printUrl(no); return true; } } catch (e) { /* fall through */ }
+  try {
+    if (w && !w.closed) { w.location.href = printUrl(no); return true; }
+    if (!w) return !!window.open(printUrl(no), "_blank", "noopener");  // after an await this may be blocked
+  } catch (e) { /* fall through */ }
   return false;
+}
+
+// Our bill's number for ticket id, from the server -> the number; null: not ours (404); undefined: no answer
+async function ownBillOf(id) {
+  try {
+    const no = String((await api("GET", "/api/own-bills/by-ticket/" + id)).data.invoice_no || "");
+    if (!no) return undefined;
+    S.bills.set(id, no);
+    return no;
+  } catch (e) { return e.status === 404 ? null : undefined; }
+}
+
+// A filled ticket on screen (after a reload, from another device): Reprint and Fix bill once the server says it's ours.
+// A filled ticket's answer never changes, so it's asked once; no answer (offline): asked again on the next showing.
+async function askBillOf(t) {
+  S.billAsked.add(t.id);
+  const no = await ownBillOf(t.id);
+  if (no === undefined) S.billAsked.delete(t.id);
+  if (!no) return;
+  if (S.cur === t && !S.dirty && !depTyped()) loadTicket(t);
 }
 function billFlash(text, no, shown) {
   flash(text + (shown ? " It's open in a new tab to print." : ""), "ok");
@@ -1238,9 +1267,14 @@ $("numYes").addEventListener("click", ev => {  // the click (or Enter): the tab 
 
 // The first number, confirmed before the first bill: once per click, after the server's InvoMax import (slow).
 // -> {ok, tab}: ok false when it was refused, failed or cancelled (shown); tab: the one "Use it" opened.
+function waiting(on) {  // the slow InvoMax check: buttons off, and the form can't be typed in meanwhile
+  setBusy(on);
+  $("viewTicket").inert = on;
+  billNote(on ? "Checking InvoMax…" : "");
+}
+
 async function firstNumber(id) {
-  setBusy(true);
-  billNote("Checking InvoMax…");
+  waiting(true);
   let d;
   try {
     d = (await api("GET", "/api/own-bills/first-number", undefined, undefined, undefined, IMPORT_MS)).data;
@@ -1248,8 +1282,7 @@ async function firstNumber(id) {
     if (onTicket(id) && e.status !== 401) tError(cap(e.message || "Couldn't check InvoMax"));
     return {ok: false};
   } finally {
-    setBusy(false);
-    billNote("");
+    waiting(false);
   }
   if (!onTicket(id)) return {ok: false};
   if (d.confirmed) { S.firstOk = true; return {ok: true}; }
@@ -1257,8 +1290,7 @@ async function firstNumber(id) {
   const tab = numTab;
   numTab = null;
   if (!no || !onTicket(id)) { closeTab(tab); return {ok: false}; }
-  setBusy(true);
-  billNote("Checking InvoMax…");
+  waiting(true);
   try {
     await api("POST", "/api/own-bills/first-number", {invoice_no: no}, undefined, undefined, IMPORT_MS);
   } catch (e) {
@@ -1268,8 +1300,7 @@ async function firstNumber(id) {
       return {ok: false};
     }
   } finally {
-    setBusy(false);
-    billNote("");
+    waiting(false);
   }
   S.firstOk = true;
   if (!onTicket(id)) { closeTab(tab); return {ok: false}; }
@@ -1281,14 +1312,18 @@ async function showBilled(id) {
   try {
     const r = await api("GET", "/api/tickets/" + id);
     if (onTicket(id)) loadTicket(r.data);
-  } catch (e) { /* the bill is made; the next open shows it */ }
+  } catch (e) {  // the bill is made; redraw the copy on screen (a fix done: out of fix mode)
+    if (onTicket(id)) loadTicket(S.cur);
+  }
   poll();
 }
 
 // Approve & print: save, the first number if it isn't confirmed, the bill, then its print page in a new tab
 async function approvePrint() {
   if (S.busy || !S.cur || !readyToBill()) return;
-  let tab = blankTab(), done = false;
+  // A tab now, in the click; not while the first number may be asked (it would sit in front of the question):
+  // then "Use it" opens it in its own click, or it opens once the bill is made.
+  let tab = S.firstOk ? blankTab() : null, done = false;
   try {
     let t = S.cur;
     if (S.dirty || !t.id) {  // as Save ticket: the desk's typing (or the new ticket) first
@@ -1299,9 +1334,11 @@ async function approvePrint() {
     if (!S.firstOk) {
       const f = await firstNumber(id);
       if (!f.ok) return;
-      if ("tab" in f) { closeTab(tab); tab = f.tab; }  // the blank tab waited behind the question; "Use it" opened a new one
+      if ("tab" in f) tab = f.tab;
+      if (S.dirty) { tError("The ticket changed while InvoMax was checked. Press Approve & print again."); return; }
     }
     clearTicketErrors();
+    let lost = null;  // no reply, or changed meanwhile and now filled: maybe billed after all
     const b = await post("/api/tickets/" + id + "/bill", {version: t.version}, null, e => {
       if (e.status === 409 && e.data && e.data.invoice_no && !e.data.ticket) {
         const no = String(e.data.invoice_no);
@@ -1314,8 +1351,26 @@ async function approvePrint() {
         tError("Confirm the first invoice number first: press Approve & print again.");
         return true;
       }
+      if (e.status === 0 || (e.status === 409 && e.data && e.data.ticket && e.data.ticket.status === "filled")) {
+        lost = e;
+        return true;
+      }
       return false;
     });
+    if (!b && lost) {  // ask the server before showing anything: the bill may be made
+      const no = await ownBillOf(id);
+      if (!onTicket(id)) return;
+      if (no) {
+        done = true;
+        const shown = showPrint(tab, no);
+        await showBilled(id);
+        billFlash("Billed as #" + no + ".", no, shown);
+        return;
+      }
+      if (lost.data.ticket) loadTicket(lost.data.ticket);
+      tError(lost.status === 0 ? OFFLINE : (lost.message || "Changed on another device") + " — showing the current ticket.");
+      return;
+    }
     if (!b) return;
     done = true;
     const no = String(b.invoice_no);
@@ -1330,7 +1385,7 @@ async function approvePrint() {
 
 // Fix bill: our bill's ticket, open for editing (from the Fix bill button, or /admin#fix=<no> from Bill history)
 async function openFix(no) {
-  if (!/^[0-9]{1,9}$/.test(no)) return;
+  if (S.busy || !/^[0-9]{1,9}$/.test(no)) return;
   if (S.view === "ticket" && (S.dirty || depTyped()) && !confirm("Leave without saving your changes?")) return;
   const n = ++S.openSeq;
   flash("");
