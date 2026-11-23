@@ -159,6 +159,7 @@ test.describe('own billing on', () => {
     await page.locator('#t-model').fill('XT5');
     await page.locator('#t-mechanic').selectOption('Al Fixit');
     await expect(page.getByRole('button', { name: 'Send to InvoMax' })).toHaveCount(0);
+    await expect(page.locator('#viewTicket')).not.toContainText(/\bnull\b/); // no stray "null" in the action row
     for (const [desc, qty, price, labor] of [
       ['TEST PART XKS', '1', '100.00', ''],
       ['TEST LABOR XKS', '1', '', '50.00'],
@@ -178,6 +179,7 @@ test.describe('own billing on', () => {
     expect(context.pages()).toHaveLength(1); // no tab in front of the question: "Use it" opens it
     await expect(dlg.getByLabel('Invoice number')).toHaveValue('9000006');
     await expect(dlg.getByLabel('Invoice number')).toBeFocused();
+    await expect(dlg).toContainText('The highest number used is InvoMax bill #9000005 of '); // where it came from
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
     await dlg.getByLabel('Invoice number').fill('9000005'); // at or below InvoMax's highest: refused here first
     await dlg.getByRole('button', { name: 'Use it' }).click();
@@ -195,6 +197,8 @@ test.describe('own billing on', () => {
     const id = Number(/#(\d+)/.exec((await page.locator('#title').textContent()) ?? '')?.[1]);
     const t = (await (await context.request.get(`/api/tickets/${id}`)).json()) as { status: string };
     expect(t.status).toBe('filled');
+    await expect(page.getByRole('button', { name: 'Fix bill' })).toBeVisible();
+    await expect(page.locator('#btnDelete')).toHaveCount(0); // an issued invoice: never deleted (the server says 409 too)
 
     // Reprint: the same bill again
     const again = await printTab(context, () => page.getByRole('button', { name: 'Reprint' }).click(), '9000006');
@@ -222,6 +226,11 @@ test.describe('own billing on', () => {
     await page.goto('/bills?tag=XKS-4827');
     await page.getByRole('button', { name: 'Open bill 9000006' }).click();
     await expect(page.getByText(/Revised \d{4}-\d\d-\d\d/)).toBeVisible();
+    // ... lists the original, and prints it as it was stored (the total before the fix)
+    await expect(page.getByRole('list', { name: 'Earlier revisions' })).toContainText(/Revision 1: \d{4}-\d\d-\d\d \d\d:\d\d by admin#\d+ \(the original\)/);
+    const original = await printTab(context, () => page.getByRole('link', { name: 'Print revision 1' }).click(), '9000006');
+    await expect(totalOf(original)).toContainText('163.95');
+    await original.close();
     await context.close();
   });
 

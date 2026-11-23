@@ -115,6 +115,17 @@ test('printed to PDF: one description far too long for a page still prints, all 
   expect(text).toBe(desc);
 });
 
+test('the grey bands print without "Background graphics" ticked (print-color-adjust: exact)', async ({ page }) => {
+  await openBill(page, snapshot({}));
+  await page.emulateMedia({ media: 'print' });
+  const adjust = await page
+    .locator('.bill-print')
+    .evaluate((el) => getComputedStyle(el).getPropertyValue('print-color-adjust') || getComputedStyle(el).getPropertyValue('-webkit-print-color-adjust'));
+  expect(adjust).toBe('exact');
+  const band = await page.locator('.bill-print .lines thead th').first().evaluate((el) => getComputedStyle(el).getPropertyValue('print-color-adjust'));
+  expect(band).toBe('exact'); // inherited by the bands
+});
+
 async function noViolations(page: Page): Promise<void> {
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 }

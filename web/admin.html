@@ -195,6 +195,7 @@ dialog p{margin:0 0 10px;overflow-wrap:anywhere}
 <dialog id="numDlg" aria-labelledby="numTitle">
  <form method="dialog" novalidate>
   <h2 id="numTitle"></h2>
+  <p id="numFrom"></p>
   <p>Our bills start at this number. You can type a higher one. This is asked only once.</p>
   <label for="numBox">Invoice number</label>
   <input id="numBox" name="no" inputmode="numeric" maxlength="7" autocomplete="off">
@@ -700,7 +701,7 @@ function loadTicket(t) {
     if (!t.id) act.append(el("button", {type: "button", class: "light", text: "Cancel", onclick: leaveTicket}));
     if (SENDABLE.includes(t.status)) {
       act.append(el("span", {class: "spacer"}),
-        t.status === "review" ? el("button", {type: "button", class: "warn", text: "Send back", onclick: sendBack}) : null,
+        t.status === "review" ? el("button", {type: "button", class: "warn", text: "Send back", onclick: sendBack}) : "",
         S.ownBilling ? el("button", {type: "button", class: "go", id: "btnApprovePrint", text: "Approve & print", onclick: approvePrint})
                      : el("button", {type: "button", class: "go", text: "Send to InvoMax", onclick: approve}));
     }
@@ -711,7 +712,8 @@ function loadTicket(t) {
     }
     if (own) act.append(el("button", {type: "button", class: "light", text: "Reprint", onclick: () => reprint(own)}),
                         el("button", {type: "button", class: "warn", text: "Fix bill", onclick: () => openFix(own)}));
-    if (t.id && t.status !== "deleted") act.append(el("button", {type: "button", class: "danger", id: "btnDelete", text: "Delete", onclick: deleteOpen}));
+    // a ticket with our bill is an issued invoice: never deleted (the server refuses it too); Fix bill changes it
+    if (t.id && t.status !== "deleted" && !own) act.append(el("button", {type: "button", class: "danger", id: "btnDelete", text: "Delete", onclick: deleteOpen}));
   }
   if (act.children.length) parts.push(act);
 
@@ -1240,9 +1242,19 @@ function billNote(text) { const s = $("saved"); if (s) s.textContent = text; }
 
 // "First invoice number: N. Use it?" -> the number to use (N or higher), or null. "Use it" opens the print tab.
 let numMin = 0, numTab = null;
-function askFirstNumber(proposed) {
+// Where the highest number used came from (GET first-number's `from`), so an odd one is caught before it's used
+function numFromText(f) {
+  const no = f && f.invoice_no ? "#" + f.invoice_no : "";
+  if (!f || f.source === "none" || !no) return "No invoice number has been used yet.";
+  if (f.source === "invomax") return "The highest number used is InvoMax bill " + no + (f.date ? " of " + fmtDate(f.date + "T00:00:00") : "") + ".";
+  if (f.source === "typed") return "The highest number used is " + no + ", typed by hand on ticket #" + f.ticket_id + ".";
+  if (f.source === "ours") return "The highest number used is our bill " + no + " (ticket #" + f.ticket_id + ").";
+  return "The highest number used is our " + no + ".";
+}
+function askFirstNumber(proposed, from) {
   const dlg = $("numDlg");
   $("numTitle").textContent = "First invoice number: " + proposed + ". Use it?";
+  $("numFrom").textContent = numFromText(from) + " If that looks wrong, cancel and check it first.";
   $("numBox").value = proposed; $("numErr").textContent = "";
   numMin = Number(proposed); numTab = null;
   dlg.returnValue = "";
@@ -1286,7 +1298,7 @@ async function firstNumber(id) {
   }
   if (!onTicket(id)) return {ok: false};
   if (d.confirmed) { S.firstOk = true; return {ok: true}; }
-  const no = await askFirstNumber(String(d.proposed || ""));
+  const no = await askFirstNumber(String(d.proposed || ""), d.from);
   const tab = numTab;
   numTab = null;
   if (!no || !onTicket(id)) { closeTab(tab); return {ok: false}; }
