@@ -95,7 +95,7 @@ export function move(t: Ticket, to: string, mechanic?: string | null, note?: str
   return t;
 }
 
-const dec = (v: number | string): bigint => {
+export const dec = (v: number | string): bigint => {
   const d = parseDec(String(v));
   if (!d) throw new Error(`not a number: ${String(v)}`);
   return toCents(d);
@@ -125,7 +125,7 @@ export function totals(t: Pick<Ticket, 'lines' | 'deposits'>): {
 }
 
 /** round-half-up cents of qty x price, both as typed decimals */
-function mulCents(qty: number, price: number): bigint {
+export function mulCents(qty: number, price: number): bigint {
   const a = parseDec(String(qty));
   const b = parseDec(String(price));
   if (!a || !b) throw new Error(`not a number: ${String(a ? price : qty)}`);
