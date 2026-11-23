@@ -71,6 +71,7 @@ export const BILL: Bill = {
   },
   link: { source: 'invomax', linked_by: 'auto', linked_at: '2026-11-21T09:00:00', version: 3 },
   difference: -60,
+  own: null,
 };
 
 export const NEEDS: NeedsBill = {

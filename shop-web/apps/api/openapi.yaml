@@ -224,7 +224,8 @@ paths:
         The admin deletes any ticket; a mechanic, any one they may open (their own, or a waiting one nobody was
         given). Deleted from waiting, working or review with no deposit, it is removed for good 14 days later;
         a deleted approved or filled ticket, or one with any deposit, is kept until restored. Already deleted,
-        or a stale version: 409. The only 403 is the one every POST from another site gets.
+        a stale version, or a ticket that has our own bill (an issued invoice; use Fix bill): 409. The only 403
+        is the one every POST from another site gets.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -421,7 +422,8 @@ paths:
         never); `offsite_stale` when that is more than 7 days ago or the last copy failed (`offsite_failed`, its
         error class). `import.last` is the newest InvoMax import (null before any); `import.off` when
         shop-settings.json turns the import off (`"invomaxDir": null`). `needs_bill` counts the filled tickets with
-        no bill linked, typed or marked none.
+        no bill linked, typed or marked none. `ownBilling` is true when shop-settings.json turns the app's own
+        billing on (`"ownBilling": true`).
       responses:
         '200':
           description: The upkeep line.
@@ -701,7 +703,9 @@ paths:
       summary: Type a ticket's final bill by hand (admin)
       description: |
         For a bill InvoMax doesn't have. Dollars, to the cent, 0 to 1,000,000 each; `total` must be parts +
-        labor + supplies + tax (no discount). The invoice number, if given, must be no other ticket's.
+        labor + supplies + tax (no discount). The invoice number, if given, must be no other ticket's. Once our
+        own first invoice number is confirmed, an all-digit number at or above our next one is 409: InvoMax makes
+        no new bills then, so it is a typo that would drive our numbers.
       parameters:
         - $ref: '#/components/parameters/TicketKey'
       requestBody:
@@ -885,6 +889,170 @@ paths:
         '401': { $ref: '#/components/responses/SignIn' }
         '403': { $ref: '#/components/responses/NotAllowed' }
 
+  /api/own-bills/first-number:
+    get:
+      operationId: getFirstInvoiceNumber
+      tags: [bills]
+      summary: Whether our first invoice number is confirmed, and the number to propose (admin)
+      description: |
+        Own billing (404 while `ownBilling` is off in shop-settings.json). Until the first number is confirmed,
+        it runs the InvoMax import first (when the import is on) and waits for it, so InvoMax's bills from this
+        morning count: a failed import is 503 and proposes nothing. `proposed` is the highest number used + 1:
+        InvoMax's 7-digit numbers on bills of the last 400 days (none more than 10000 above their median),
+        typed finals' and our own numbers, and the counter; `from` says which. Once confirmed, it only reports
+        (`proposed` is the number the next bill gets).
+      responses:
+        '200':
+          description: Confirmed or not, and the number.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FirstNumber' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ImportFailed' }
+    post:
+      operationId: confirmFirstInvoiceNumber
+      tags: [bills]
+      summary: Confirm our first invoice number, once (admin)
+      description: |
+        Runs the InvoMax import first (when on), then refuses a number at or below the highest used (400).
+        Already confirmed: 409. A failed import: 503, nothing confirmed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FirstNumberIn' }
+            example: { invoice_no: '9000003' }
+      responses:
+        '204': { description: Confirmed. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Changed' }
+        '503': { $ref: '#/components/responses/ImportFailed' }
+
+  /api/tickets/{id}/bill:
+    post:
+      operationId: approveBill
+      tags: [bills]
+      summary: Approve & print - bill the ticket under the next invoice number (admin)
+      description: |
+        Own billing (404 while off). In one transaction: checks the version, takes the next number, saves the
+        ticket as filled, stores the bill (its invoice_finals row, source `ours`, and revision 1's snapshot) and
+        moves the counter. Before the first number is confirmed: 428. The ticket already has our bill: 409 with
+        its `invoice_no`. Another version: 409 with the stored ticket, as the ticket routes. No mechanic, no
+        line, or lines that won't bill: 400. Filled or deleted: 409.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Versioned' }
+            example: { version: 5 }
+      responses:
+        '201':
+          description: The bill as stored (money in dollars).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillSnapshot' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Already billed (`invoice_no`, to reprint), changed on another device (`ticket`), or filled or deleted.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - { $ref: '#/components/schemas/AlreadyBilled' }
+                  - { $ref: '#/components/schemas/Conflict' }
+                  - { $ref: '#/components/schemas/Error' }
+        '428':
+          description: The first invoice number isn't confirmed yet (GET, then POST /api/own-bills/first-number).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/own-bills/by-ticket/{id}:
+    get:
+      operationId: getOwnBillOfTicket
+      tags: [bills]
+      summary: The ticket's own bill number, if we billed it (admin)
+      description: |
+        Own billing (404 while off). The desk page asks this for a filled ticket, to offer Reprint and Fix bill.
+        No bill of ours for the ticket (none, one InvoMax made, or no such ticket): 404.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: Our bill's number.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketOwnBill' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/own-bills/{no}:
+    get:
+      operationId: getOwnBill
+      tags: [bills]
+      summary: Our bill's latest revision (or an earlier one), its revisions and its ticket (admin)
+      description: |
+        Own billing (404 while off). Not one of our bills, or no such revision: 404. Money in dollars. With
+        `rev`, that revision's snapshot as it was stored (read-only: what that print showed); else the latest.
+      parameters:
+        - $ref: '#/components/parameters/OwnBillNo'
+        - name: rev
+          in: query
+          description: A revision number, 1 or more.
+          schema: { type: string, pattern: '^[1-9][0-9]{0,5}$', x-error: rev must be 1 or more }
+          example: '1'
+      responses:
+        '200':
+          description: The snapshot (the latest, or that revision), every revision's when and who, the ticket id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnBill' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/own-bills/{no}/fix:
+    post:
+      operationId: fixOwnBill
+      tags: [bills]
+      summary: Fix our bill - edit its ticket and store a new revision under the same number (admin)
+      description: |
+        Own billing (404 while off). `fields` are the ticket's, as POST /api/tickets/{id} takes them (the desk's
+        rules; the filled ticket may change; it keeps a mechanic and a line); `version` is the ticket's. The new
+        revision keeps revision 1's date and time; earlier revisions are never changed. Another version: 409
+        with the stored ticket.
+      parameters:
+        - $ref: '#/components/parameters/OwnBillNo'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BillFix' }
+            example: { version: 6, fields: { notes: customer will wait } }
+      responses:
+        '200':
+          description: The new revision (money in dollars).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillSnapshot' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignIn' }
+        '403': { $ref: '#/components/responses/NotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
 components:
   securitySchemes:
     session:
@@ -916,6 +1084,14 @@ components:
       description: t<ticket id, 1 to 9 digits>; anything else (an im key too) is 404.
       schema: { type: string, pattern: '^t[1-9][0-9]{0,8}$' }
       example: t2
+
+    OwnBillNo:
+      name: no
+      in: path
+      required: true
+      description: Our invoice number (1 to 9 digits; anything else is 404).
+      schema: { type: string, pattern: '^[0-9]{1,9}$' }
+      example: '9000003'
 
   responses:
     BadRequest:
@@ -956,6 +1132,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Bill' }
+    ImportFailed:
+      description: The InvoMax import failed (or couldn't run), so no number is proposed or confirmed; try again.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     Changed:
       description: Changed on another device (the link's version), or the bill is another ticket's.
       content:
@@ -1285,7 +1466,7 @@ components:
 
     Upkeep:
       type: object
-      required: [backup, import, needs_bill]
+      required: [backup, import, needs_bill, ownBilling]
       properties:
         backup:
           type: object
@@ -1308,6 +1489,7 @@ components:
                 - type: 'null'
                 - $ref: '#/components/schemas/ImportRun'
         needs_bill: { type: integer }
+        ownBilling: { type: boolean, description: "shop-settings.json turns the app's own billing on." }
 
     ImportRun:
       type: object
@@ -1376,7 +1558,7 @@ components:
         subtotal: { type: number }
 
     BillAfter:
-      description: The bill's side, InvoMax's or typed by the admin (typed ones have no lines). Money in dollars.
+      description: The bill's side, InvoMax's, typed by the admin (no lines) or our own (the latest revision). Money in dollars.
       type: object
       required: [invoice_no, date, parts, labor, supplies, discount, deposit, tax, total, balance, lines, source, gone]
       properties:
@@ -1393,22 +1575,36 @@ components:
         lines:
           type: array
           items: { $ref: '#/components/schemas/ImLine' }
-        source: { type: string, enum: [invomax, typed] }
+        source: { type: string, enum: [invomax, typed, ours] }
         gone: { type: boolean, description: InvoMax no longer has this bill. }
 
     BillLink:
       type: object
       required: [source, linked_by, linked_at, version]
       properties:
-        source: { type: string, enum: [invomax, typed, none] }
+        source: { type: string, enum: [invomax, typed, none, ours] }
         linked_by: { type: string, description: 'auto, or admin#<id>.' }
         linked_at: { type: string }
         version: { type: integer, description: 'What link, unlink, none and final send back.' }
 
+    BillOwn:
+      description: Our own bill's number and revisions.
+      type: object
+      required: [invoice_no, revisions, revised_at, revised_by, history]
+      properties:
+        invoice_no: { type: string }
+        revisions: { type: integer, description: 1 until the bill is fixed. }
+        revised_at: { type: [string, 'null'], description: When the latest fix was made; null with one revision. }
+        revised_by: { type: [string, 'null'], description: 'Who made it (admin#<id>); null with one revision.' }
+        history:
+          description: Every revision's number, when and who, oldest first (empty when the saved copy is missing).
+          type: array
+          items: { $ref: '#/components/schemas/OwnBillRevision' }
+
     Bill:
       description: Both sides of a row. `difference` is our subtotal less the bill's parts + labor, in dollars.
       type: object
-      required: [key, customer, before, after, link, difference]
+      required: [key, customer, before, after, link, difference, own]
       properties:
         key: { type: string }
         customer: { $ref: '#/components/schemas/BillCustomer' }
@@ -1425,6 +1621,10 @@ components:
             - type: 'null'
             - $ref: '#/components/schemas/BillLink'
         difference: { type: [number, 'null'] }
+        own:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/BillOwn'
 
     Customer:
       type: object
@@ -1649,3 +1849,144 @@ components:
         mapped_lines: { type: integer }
         dollars: { type: number }
         mapped_dollars: { type: number }
+
+    FirstNumber:
+      type: object
+      required: [confirmed, proposed, from]
+      properties:
+        confirmed: { type: boolean }
+        proposed: { type: string, pattern: '^[0-9]+$', examples: ['9000006'] }
+        from: { $ref: '#/components/schemas/HighestFrom' }
+
+    HighestFrom:
+      description: |
+        Where the highest number used came from: an InvoMax bill (`invoice_no`, `date`), a final typed by hand or
+        our own bill (`invoice_no`, `ticket_id`), our counter, or nothing used yet (`none`).
+      type: object
+      required: [source, invoice_no, date, ticket_id]
+      properties:
+        source: { type: string, enum: [invomax, typed, ours, counter, none] }
+        invoice_no: { type: [string, 'null'], examples: ['9000005'] }
+        date: { type: [string, 'null'], description: "The InvoMax bill's date (YYYY-MM-DD); else null." }
+        ticket_id: { type: [integer, 'null'], description: "The typed final's or our bill's ticket; else null." }
+
+    FirstNumberIn:
+      type: object
+      required: [invoice_no]
+      properties:
+        invoice_no:
+          description: 7 digits, above the highest number used.
+          x-error: invoice_no must be 7 digits
+          type: string
+          pattern: '^[1-9][0-9]{6}$'
+
+    BillFix:
+      type: object
+      required: [version, fields]
+      properties:
+        version: { $ref: '#/components/schemas/Version' }
+        fields:
+          description: The ticket's fields to change, as Edit's (without `version`).
+          x-checked-in: route
+          type: object
+
+    TicketOwnBill:
+      type: object
+      required: [invoice_no]
+      properties:
+        invoice_no: { type: string, examples: ['9000006'] }
+
+    AlreadyBilled:
+      type: object
+      required: [error, invoice_no]
+      properties:
+        error: { type: string, examples: ['already billed as #9000006'] }
+        invoice_no: { type: string }
+
+    BillAmounts:
+      description: Dollars. supplies = 5% of parts + labor, at most 20.00; tax = 6% of parts + supplies; balance = total - deposit.
+      type: object
+      required: [parts, labor, supplies, tax, total, deposit, balance]
+      properties:
+        parts: { type: number }
+        labor: { type: number }
+        supplies: { type: number }
+        tax: { type: number }
+        total: { type: number }
+        deposit: { type: number }
+        balance: { type: number }
+
+    LaborRow:
+      type: object
+      required: [desc, amount]
+      properties:
+        desc: { type: string, description: 'A line with a part too reads "Remove & Install: <desc>".' }
+        amount: { type: number }
+
+    PartRow:
+      type: object
+      required: [desc, qty, price, total]
+      properties:
+        desc: { type: string }
+        qty: { type: number }
+        price: { type: number, description: Each. }
+        total: { type: number }
+
+    ShopInfo:
+      type: object
+      required: [name, address, phone, hours]
+      properties:
+        name: { type: string }
+        address: { type: array, items: { type: string } }
+        phone: { type: string }
+        hours: { type: string }
+
+    BillSnapshot:
+      description: Everything our bill prints, as stored for one revision (money in dollars).
+      type: object
+      required: [invoice_no, revision, date, time, customer, vehicle, mechanic, labor, parts, amounts, shop]
+      properties:
+        invoice_no: { type: string }
+        revision: { type: integer, minimum: 1 }
+        date: { type: string, description: 'YYYY-MM-DD, local: first approved (every revision keeps it).' }
+        time: { type: string, description: 'HH:MM, 24 h, local: first approved.' }
+        customer:
+          type: object
+          required: [first, last, phone]
+          properties:
+            first: { type: string }
+            last: { type: string }
+            phone: { type: string }
+        vehicle:
+          type: object
+          required: [year, make, model, plate, vin, odometer]
+          properties:
+            year: { type: string }
+            make: { type: string }
+            model: { type: string }
+            plate: { type: string }
+            vin: { type: string }
+            odometer: { type: string }
+        mechanic: { type: string }
+        labor: { type: array, items: { $ref: '#/components/schemas/LaborRow' } }
+        parts: { type: array, items: { $ref: '#/components/schemas/PartRow' } }
+        amounts: { $ref: '#/components/schemas/BillAmounts' }
+        shop: { $ref: '#/components/schemas/ShopInfo' }
+
+    OwnBill:
+      type: object
+      required: [bill, revisions, ticket_id]
+      properties:
+        bill: { $ref: '#/components/schemas/BillSnapshot' }
+        revisions:
+          type: array
+          items: { $ref: '#/components/schemas/OwnBillRevision' }
+        ticket_id: { type: integer }
+
+    OwnBillRevision:
+      type: object
+      required: [revision, at, by]
+      properties:
+        revision: { type: integer, minimum: 1 }
+        at: { type: string, description: 'YYYY-MM-DDTHH:MM:SS, local.' }
+        by: { type: string, description: 'admin#<user id>' }

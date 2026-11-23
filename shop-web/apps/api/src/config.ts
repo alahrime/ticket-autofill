@@ -20,33 +20,86 @@ export type Config = {
   backups: string;
   backupTargets: string[];
   app: string;
+  /** true when shop-settings.json has `"ownBilling": true`: the app prints its own bills (default false). */
+  ownBilling: boolean;
+  /** The shop's details for the bill header (`"shop"` in shop-settings.json); all empty until set. */
+  shopInfo: ShopInfo;
 };
+
+export type ShopInfo = { name: string; address: string[]; phone: string; hours: string };
 
 /** Where InvoMax keeps its files on the shop PC unless shop-settings.json or INVOMAX_DIR says otherwise. */
 export const DEFAULT_INVOMAX_DIR = String.raw`C:\hunni\files`;
 
-type Settings = { invomaxDir: string | null; backupTargets: string[] };
+type Settings = { invomaxDir: string | null; backupTargets: string[]; ownBilling: boolean; shopInfo: ShopInfo };
+
+/** Shop strings print on every bill: short, one line, no control characters. */
+const SHOP_TEXT_MAX = 80;
+const SHOP_ADDRESS_MAX = 5;
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\x00-\x1f\x7f]/;
+const isText = (x: unknown): x is string => typeof x === 'string' && x.length <= SHOP_TEXT_MAX && !CONTROL.test(x);
 
 /**
- * shop-settings.json: missing -> defaults; unreadable or the wrong shape -> defaults and one warning (the server
- * still starts). `"invomaxDir": null` turns the InvoMax import off.
+ * shop-settings.json: missing -> defaults; unreadable JSON or not an object -> defaults and one warning (the server
+ * still starts). Each key is checked on its own: a bad one falls back to its default and is named in the one
+ * warning, the good ones are kept. `"invomaxDir": null` turns the InvoMax import off.
  */
 function settings(file: string): Settings {
-  const defaults: Settings = { invomaxDir: DEFAULT_INVOMAX_DIR, backupTargets: [] };
+  const defaults: Settings = {
+    invomaxDir: DEFAULT_INVOMAX_DIR,
+    backupTargets: [],
+    ownBilling: false,
+    shopInfo: { name: '', address: [], phone: '', hours: '' },
+  };
+  const warn = (bad: string): void =>
+    console.warn(
+      `shop-settings.json is not valid (${bad}); using the defaults for it. Expected: invomaxDir: text or null, ` +
+        'backupTargets: list of text, ownBilling: true or false, ' +
+        `shop: {name, address (up to ${SHOP_ADDRESS_MAX} lines), phone, hours} (each up to ${SHOP_TEXT_MAX} characters, one line).`,
+    );
   if (!existsSync(file)) return defaults;
+  let o: Record<string, unknown>;
   try {
     const j: unknown = JSON.parse(readFileSync(file, 'utf8'));
     if (j === null || typeof j !== 'object' || Array.isArray(j)) throw new Error('shape');
-    const o = j as Record<string, unknown>;
-    const dir = o['invomaxDir'];
-    const targets = o['backupTargets'];
-    if (dir !== undefined && dir !== null && (typeof dir !== 'string' || dir === '')) throw new Error('shape');
-    if (targets !== undefined && (!Array.isArray(targets) || !targets.every((t) => typeof t === 'string'))) throw new Error('shape');
-    return { invomaxDir: dir === undefined ? defaults.invomaxDir : dir, backupTargets: (targets as string[] | undefined) ?? [] };
+    o = j as Record<string, unknown>;
   } catch {
-    console.warn('shop-settings.json is not valid (invomaxDir: text or null, backupTargets: list of text); using the defaults.');
+    warn('the file');
     return defaults;
   }
+  const bad: string[] = [];
+  const out: Settings = { ...defaults };
+
+  const dir = o['invomaxDir'];
+  if (dir === undefined) {
+    // default
+  } else if (dir === null || (typeof dir === 'string' && dir !== '')) out.invomaxDir = dir;
+  else bad.push('invomaxDir');
+
+  const targets = o['backupTargets'];
+  if (targets === undefined) {
+    // default
+  } else if (Array.isArray(targets) && targets.every((x) => typeof x === 'string')) out.backupTargets = targets as string[];
+  else bad.push('backupTargets');
+
+  const own = o['ownBilling'];
+  if (own === undefined) {
+    // default
+  } else if (typeof own === 'boolean') out.ownBilling = own;
+  else bad.push('ownBilling');
+
+  const shop = o['shop'];
+  if (shop !== undefined) {
+    const s = shop !== null && typeof shop === 'object' && !Array.isArray(shop) ? (shop as Record<string, unknown>) : {};
+    const { name, address, phone, hours } = s;
+    if (isText(name) && isText(phone) && isText(hours) && Array.isArray(address) && address.length <= SHOP_ADDRESS_MAX && address.every(isText)) {
+      out.shopInfo = { name, address: [...address], phone, hours };
+    } else bad.push('shop');
+  }
+
+  if (bad.length > 0) warn(bad.join(', '));
+  return out;
 }
 
 export const HOST = '127.0.0.1'; // this PC only: phones and the iPad come in through the Cloudflare tunnel
@@ -92,5 +145,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     backups: at('backups'),
     backupTargets: set.backupTargets,
     app: join(root, 'shop-web', 'apps', 'admin-app', 'dist'),
+    ownBilling: set.ownBilling,
+    shopInfo: set.shopInfo,
   };
 }

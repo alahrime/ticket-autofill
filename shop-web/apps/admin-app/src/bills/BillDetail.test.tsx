@@ -28,6 +28,15 @@ const TICKET_ONLY: Bill = {
   difference: null,
 };
 
+const OURS: Bill = {
+  ...BILL,
+  key: 't12',
+  after: { ...(BILL.after as NonNullable<Bill['after']>), invoice_no: '9000010', source: 'ours' },
+  link: { source: 'ours', linked_by: 'admin#1', linked_at: '2026-11-23T14:22:05', version: 2 },
+  difference: 0,
+  own: { invoice_no: '9000010', revisions: 1, revised_at: null, revised_by: null, history: [] },
+};
+
 describe('BillDetail', () => {
   it('shows both sides, each with its lines and totals', async () => {
     api(BILL);
@@ -68,6 +77,75 @@ describe('BillDetail', () => {
     show(billOnly);
     expect(await screen.findByText('No ticket')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Unlink' })).not.toBeInTheDocument(); // nothing of ours to change
+  });
+
+  it('our bill: Reprint and Fix bill links, no link changes, no revised note with one revision', async () => {
+    api(OURS);
+    show(OURS);
+    const reprint = await screen.findByRole('link', { name: 'Reprint' });
+    expect(reprint).toHaveAttribute('href', '/bills/9000010/print');
+    expect(screen.getByRole('link', { name: 'Fix bill' })).toHaveAttribute('href', '/admin#fix=9000010');
+    expect(screen.getByRole('region', { name: 'Our bill' })).toHaveTextContent('Bill #9000010');
+    expect(screen.queryByText(/Revised/)).not.toBeInTheDocument();
+    for (const name of ['Unlink', 'Type the final bill']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Link by bill number')).not.toBeInTheDocument();
+  });
+
+  it('our bill with no saved copy says so: no Reprint, no link controls', async () => {
+    const lost: Bill = { ...OURS, own: { invoice_no: '9000010', revisions: 0, revised_at: null, revised_by: null, history: [] } };
+    api(lost);
+    show(lost);
+    expect(await screen.findByText("This bill's saved copy is missing; it can't be reprinted.")).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Reprint' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Unlink' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Link by bill number')).not.toBeInTheDocument();
+    // even if own were missing, an ours final never offers the link controls
+    const bare: Bill = { ...lost, own: null };
+    api(bare);
+    show(bare);
+    await screen.findAllByRole('region', { name: 'Our bill' });
+    expect(screen.queryByRole('button', { name: 'Type the final bill' })).not.toBeInTheDocument();
+  });
+
+  it('our bill fixed: says when and by whom, and lists the earlier revisions to view or print', async () => {
+    const history = [
+      { revision: 1, at: '2026-11-23T14:22:05', by: 'admin#1' },
+      { revision: 2, at: '2026-11-24T09:05:00', by: 'admin#2' },
+      { revision: 3, at: '2026-11-25T10:30:00', by: 'admin#1' },
+    ];
+    const fixed: Bill = {
+      ...OURS,
+      own: { invoice_no: '9000010', revisions: 3, revised_at: '2026-11-25T10:30:00', revised_by: 'admin#1', history },
+    };
+    api(fixed);
+    show(fixed);
+    expect(await screen.findByText('Revised 2026-11-25 by admin#1')).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Earlier revisions' });
+    const items = within(list).getAllByRole('listitem');
+    expect(items.map((li) => li.firstChild?.textContent)).toEqual([
+      'Revision 1: 2026-11-23 14:22 by admin#1 (the original)',
+      'Revision 2: 2026-11-24 09:05 by admin#2',
+    ]);
+    const first = within(items[0] as HTMLElement);
+    expect(first.getByRole('link', { name: 'View revision 1' })).toHaveAttribute('href', '/bills/9000010/print?rev=1&noprint=1');
+    expect(first.getByRole('link', { name: 'Print revision 1' })).toHaveAttribute('href', '/bills/9000010/print?rev=1');
+    expect(screen.getByRole('link', { name: 'Reprint' })).toHaveAttribute('href', '/bills/9000010/print'); // the latest
+  });
+
+  it('our bill never fixed lists no earlier revisions', async () => {
+    const once: Bill = { ...OURS, own: { ...(OURS.own as NonNullable<Bill['own']>), history: [{ revision: 1, at: '2026-11-23T14:22:05', by: 'admin#1' }] } };
+    api(once);
+    show(once);
+    await screen.findByRole('link', { name: 'Reprint' });
+    expect(screen.queryByRole('list', { name: 'Earlier revisions' })).not.toBeInTheDocument();
+  });
+
+  it('an InvoMax bill has no Reprint or Fix bill', async () => {
+    api(BILL);
+    show(BILL);
+    await screen.findByRole('region', { name: 'Our ticket' });
+    expect(screen.queryByRole('link', { name: 'Reprint' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Fix bill' })).not.toBeInTheDocument();
   });
 
   it('marks a bill InvoMax no longer has', async () => {

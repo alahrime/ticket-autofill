@@ -43,6 +43,11 @@ export type Nightly = {
   stop(): void;
   /** Runs an import now, back-off or not; 'off' when shop-settings.json turned the import off. */
   importNow(): 'started' | 'running' | 'off';
+  /**
+   * Runs an import now and waits for it (after any one already running): 'ok', 'failed', or 'off' when
+   * shop-settings.json turned the import off. Own billing's first number asks for one before it proposes.
+   */
+  importWait(): Promise<'ok' | 'failed' | 'off'>;
   /** Copies the backups to the USB drive now; rejects BadInput (no target / drive not found) or Refused (one is running). */
   copyNow(): Promise<{ copied: number; skipped: number; target: string }[]>;
   running(): boolean;
@@ -125,7 +130,7 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
    * One import in the background, then auto-linking and the job index if it was good. importOnce never rejects.
    * A failure is logged once until its class changes; an automatic one (not the button's) backs off.
    */
-  const runImport = (automatic: boolean): Promise<void> => {
+  const runImport = (automatic: boolean): Promise<boolean> => {
     const run = (async () => {
       const r = await importOnce(config, { sleep: opts.sleep, now: clock, quiet: true });
       if (r.ok) {
@@ -134,19 +139,23 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
         loggedFailure = '';
         autoLink();
         rebuildJobs();
-        return;
+        return true;
       }
       if (r.failure && r.failure !== loggedFailure) {
         log(`invomax import failed ${r.failure}`);
         loggedFailure = r.failure;
       }
       if (automatic) importNotBefore = importRetryAt(clock(), ++importFails);
+      return false;
     })()
-      .catch((e: unknown) => log(`invomax import failed ${className(e)}`))
+      .catch((e: unknown) => {
+        log(`invomax import failed ${className(e)}`);
+        return false;
+      })
       .finally(() => {
         importing = null;
       });
-    importing = run;
+    importing = run.then(() => undefined);
     return run;
   };
 
@@ -238,6 +247,11 @@ export function startNightly(deps: NightlyDeps, opts: NightlyOpts = {}): Nightly
       if (importing) return 'running';
       void runImport(false);
       return 'started';
+    },
+    importWait: async () => {
+      if (!config.importInvomax) return 'off';
+      while (importing) await importing; // one already under way may have read InvoMax's files before now
+      return (await runImport(false)) ? 'ok' : 'failed';
     },
     copyNow: () =>
       oneCopy(async () => {

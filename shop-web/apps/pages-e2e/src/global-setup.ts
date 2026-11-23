@@ -22,9 +22,12 @@ function day(days = 0): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** Where config.app looks for the built admin app under a shop root. */
+export const appDist = (root: string): string => join(root, 'shop-web', 'apps', 'admin-app', 'dist');
+
 /** apps/admin-app built straight into the temp root (the repo's own dist/ is left alone). */
 function buildAdminApp(root: string): void {
-  const out = join(root, 'shop-web', 'apps', 'admin-app', 'dist');
+  const out = appDist(root);
   const r = spawnSync(process.execPath, [VITE, 'build', '--outDir', out, '--emptyOutDir', '--logLevel', 'warn'], {
     cwd: join(SHOP_WEB, 'apps', 'admin-app'),
     encoding: 'utf8',
@@ -94,6 +97,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     rmSync(root, { recursive: true, force: true, maxRetries: 5 });
     throw e;
   }
+  process.env['PAGES_E2E_APP'] = appDist(root); // the workers see it: a spec's own shop copies the built app
   cpSync(join(REPO, 'web'), join(root, 'web'), { recursive: true });
   for (const f of ['parts.csv', 'vehicles.json']) copyFileSync(join(REPO, f), join(root, f));
   // InvoMax's tables: made-up ones in a temp folder (never C:\hunni), so Check InvoMax now reads nothing real.

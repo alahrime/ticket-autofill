@@ -192,6 +192,17 @@ dialog p{margin:0 0 10px;overflow-wrap:anywhere}
   <div class="actions"><button value="delete" class="danger" id="delYes">Delete</button><button value="cancel" class="light" id="delNo" autofocus>Cancel</button></div>
  </form>
 </dialog>
+<dialog id="numDlg" aria-labelledby="numTitle">
+ <form method="dialog" novalidate>
+  <h2 id="numTitle"></h2>
+  <p id="numFrom"></p>
+  <p>Our bills start at this number. You can type a higher one. This is asked only once.</p>
+  <label for="numBox">Invoice number</label>
+  <input id="numBox" name="no" inputmode="numeric" maxlength="7" autocomplete="off">
+  <div class="ferr" id="numErr" role="status" aria-live="polite"></div>
+  <div class="actions"><button value="use" class="go" id="numYes">Use it</button><button value="cancel" class="light" id="numCancel">Cancel</button></div>
+ </form>
+</dialog>
 <datalist id="year-list"></datalist>
 <datalist id="make-list"></datalist>
 <datalist id="model-list"></datalist>
@@ -216,7 +227,8 @@ const FIELDS = [  // [key, label, extra attributes], in the order the desk types
   ["model", "Model", {...NAMEISH, list: "model-list"}],
   ["odometer", "Odometer", {inputMode: "numeric"}],
 ];
-const SENDABLE = ["new", "waiting", "working", "review"];  // Send to InvoMax is offered from these
+const SENDABLE = ["new", "waiting", "working", "review"];  // Send to InvoMax (own billing: Approve & print) is offered from these
+const IMPORT_MS = 300000;  // the first invoice number waits for a full InvoMax import
 const TEXTS = [["request", "What the customer wants done"], ["notes", "Notes"]];
 const LABELS = Object.fromEntries([...FIELDS, ...TEXTS, ["mechanic", "Mechanic"]].map(([k, l]) => [k, l]));
 
@@ -234,6 +246,11 @@ const S = {
   me: null,         // {role, name, id} from /api/me
   users: [],        // from /api/users
   resetting: null,  // the user whose PIN/password the reset box is for
+  ownBilling: false, // /api/upkeep/status says this shop prints its own bills (never on shop.py)
+  firstOk: false,   // the first invoice number is confirmed (learned from the server, never assumed)
+  bills: new Map(), // ticket id -> our bill's number (made here, or asked of the server)
+  billAsked: new Set(), // filled tickets whose bill number was asked (or is being asked) of the server
+  fix: null,        // {no, id}: the bill being fixed and its ticket, open for editing
 };
 
 const $ = id => document.getElementById(id);
@@ -330,15 +347,16 @@ function on401() {  // session gone: the reload shows the sign-in page, unless t
   setNet(false, "Sign-in needed — sign in in another tab");
 }
 
-function timeoutSignal() {
-  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) return AbortSignal.timeout(TIMEOUT_MS);
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) return AbortSignal.timeout(ms);
   const c = new AbortController();
-  setTimeout(() => c.abort(), TIMEOUT_MS);
+  setTimeout(() => c.abort(), ms);
   return c.signal;
 }
 
-async function api(method, path, body, headers, signal) {  // signal: lets the caller drop a request it no longer wants
-  let sig = timeoutSignal();
+// signal: lets the caller drop a request it no longer wants; ms: a longer wait than TIMEOUT_MS
+async function api(method, path, body, headers, signal, ms) {
+  let sig = timeoutSignal(ms || TIMEOUT_MS);
   if (signal) sig = AbortSignal.any ? AbortSignal.any([signal, sig]) : signal;
   const opt = {method, headers: {...(headers || {})}, cache: "no-store", signal: sig};
   if (body !== undefined) {
@@ -354,6 +372,7 @@ async function api(method, path, body, headers, signal) {  // signal: lets the c
     }
     const raw = await r.text();
     try { data = JSON.parse(raw); } catch (e) { data = undefined; }
+    if (r.status === 204 && !raw) data = {};  // done, nothing to say (the first invoice number)
   } catch (e) {  // offline, timed out, dropped
     throw new Http(0, {error: OFFLINE});
   }
@@ -431,7 +450,7 @@ function show(view) {
 
 function leaveTicket() {
   if (S.view === "ticket" && (S.dirty || depTyped()) && !confirm("Leave without saving your changes?")) return;
-  S.cur = null; S.dirty = false; S.newer = null;
+  S.cur = null; S.dirty = false; S.newer = null; S.fix = null;
   flash("");
   show("board");
 }
@@ -527,6 +546,7 @@ function newToken() {  // sent with the create: the same ticket again if the rep
 function newTicket() {
   flash("");
   S.openSeq++;  // a card tapped just before doesn't open over this
+  S.fix = null;
   show("ticket");
   const blank = {id: 0, status: "new", version: 0, lines: [], deposits: [], totals: {}, token: newToken()};
   loadTicket(blank);
@@ -562,7 +582,7 @@ async function openTicket(id) {
     const r = await api("GET", "/api/tickets/" + id);
     await loadMechanics();
     if (n !== S.openSeq) return;  // another card was tapped meanwhile
-    S.dirty = false;
+    S.dirty = false; S.fix = null;
     show("ticket");
     loadTicket(r.data);
   } catch (e) {
@@ -570,7 +590,10 @@ async function openTicket(id) {
   }
 }
 
-function editable(t) { return t.status !== "filled" && t.status !== "deleted"; }  // the desk owns the invoice until it's in InvoMax
+// the desk owns the invoice until it's in InvoMax, or billed; our bill's ticket opens again only to fix the bill
+function editable(t) { return (t.status !== "filled" && t.status !== "deleted") || fixing(t); }
+function fixing(t) { return !!(S.fix && t && t.id === S.fix.id && t.status === "filled"); }
+function billNo(t) { return t && t.status === "filled" ? S.bills.get(t.id) : undefined; }  // our bill, when this page knows it
 
 function markDirty() { S.dirty = true; }
 
@@ -603,7 +626,8 @@ function loadTicket(t) {
     t.id ? el("h2", {}, el("span", {text: (fullName(t) || "Ticket") + " — " + vehicle(t)}),
       el("span", {class: "status " + t.status, text: t.status})) : el("h2", {text: "New ticket"}),
     el("div", {class: "meta", text: t.id ? "#" + t.id + (t.created ? " · opened " + age(t.created) + " ago" : "")
-      : "Type the customer, the car, the mechanic and every part and labor charge. InvoMax adds the tax."})));
+      : "Type the customer, the car, the mechanic and every part and labor charge. " +
+        (S.ownBilling ? "The bill adds shop supplies and tax." : "InvoMax adds the tax.")})));
 
   if (t.back_note) parts.push(el("div", {class: "msg note"},
     el("b", {text: "Sent back: "}), el("span", {class: "ro", text: t.back_note})));
@@ -613,7 +637,10 @@ function loadTicket(t) {
           " ago). Check the lines; Save when they're right. If it's already in InvoMax, fix it there too."}));
   if (t.status === "working") parts.push(el("div", {class: "msg note",
     text: "With " + (t.mechanic || "the mechanic") + " — they can add lines on their phone too."}));
-  if (t.status === "filled") parts.push(el("div", {class: "msg ok", text: "Filled in InvoMax."}));
+  const fix = fixing(t), own = billNo(t);
+  if (fix) parts.push(el("div", {class: "msg note", text: "Fixing bill #" + S.fix.no + ". Save & reprint keeps its number and date."}));
+  else if (own) parts.push(el("div", {class: "msg ok", text: "Billed as #" + own + "."}));
+  else if (t.status === "filled") parts.push(el("div", {class: "msg ok", text: "Filled in InvoMax."}));
   if (t.status === "deleted") parts.push(el("div", {class: "msg note", text: "Deleted. Restore it from the Deleted list to change it."}));
 
   // customer + vehicle
@@ -658,29 +685,44 @@ function loadTicket(t) {
       el("span", {}, "Labor ", el("b", {id: "tLabor", text: money(tot.labor)})),
       el("span", {}, "Total (before tax) ", el("b", {id: "tTotal", text: money(tot.total)})),
       el("span", {}, "Deposits paid ", el("b", {id: "tDeps", text: money(tot.deposits)}))),
-    el("div", {class: "meta", text: "InvoMax adds tax; take deposits off InvoMax's total."})));
+    el("div", {class: "meta", text: S.ownBilling || own ? "The bill adds shop supplies and tax, and takes off the deposits."
+                                                        : "InvoMax adds tax; take deposits off InvoMax's total."})));
 
   if (t.id && (editable(t) || (t.deposits || []).length)) parts.push(depositsBox(t));  // a deposit needs a saved ticket
 
   // actions
   const act = el("div", {class: "actions"});
-  if (ed) act.append(el("button", {type: "button", id: "btnSave", text: t.id ? "Save" : "Save ticket", onclick: () => save()}),
-                     el("span", {id: "saved", role: "status", "aria-live": "polite"}));
-  if (!t.id) act.append(el("button", {type: "button", class: "light", text: "Cancel", onclick: leaveTicket}));
-  if (SENDABLE.includes(t.status)) {
-    act.append(el("span", {class: "spacer"}),
-      t.status === "review" ? el("button", {type: "button", class: "warn", text: "Send back", onclick: sendBack}) : null,
-      el("button", {type: "button", class: "go", text: "Send to InvoMax", onclick: approve}));
+  if (fix) {  // fixing our bill: only Save & reprint
+    act.append(el("button", {type: "button", class: "go", id: "btnFixSave", text: "Save & reprint", onclick: fixSave}),
+               el("span", {id: "saved", role: "status", "aria-live": "polite"}));
+  } else {
+    if (ed) act.append(el("button", {type: "button", id: "btnSave", text: t.id ? "Save" : "Save ticket", onclick: () => save()}),
+                       el("span", {id: "saved", role: "status", "aria-live": "polite"}));
+    if (!t.id) act.append(el("button", {type: "button", class: "light", text: "Cancel", onclick: leaveTicket}));
+    if (SENDABLE.includes(t.status)) {
+      act.append(el("span", {class: "spacer"}),
+        t.status === "review" ? el("button", {type: "button", class: "warn", text: "Send back", onclick: sendBack}) : "",
+        S.ownBilling ? el("button", {type: "button", class: "go", id: "btnApprovePrint", text: "Approve & print", onclick: approvePrint})
+                     : el("button", {type: "button", class: "go", text: "Send to InvoMax", onclick: approve}));
+    }
+    if (t.status === "approved") {
+      if (S.ownBilling) act.append(el("span", {class: "spacer"}),
+        el("button", {type: "button", class: "go", id: "btnApprovePrint", text: "Approve & print", onclick: approvePrint}));
+      act.append(el("button", {type: "button", class: "go", text: "Mark filled", onclick: markFilled}));
+    }
+    if (own) act.append(el("button", {type: "button", class: "light", text: "Reprint", onclick: () => reprint(own)}),
+                        el("button", {type: "button", class: "warn", text: "Fix bill", onclick: () => openFix(own)}));
+    // a ticket with our bill is an issued invoice: never deleted (the server refuses it too); Fix bill changes it
+    if (t.id && t.status !== "deleted" && !own) act.append(el("button", {type: "button", class: "danger", id: "btnDelete", text: "Delete", onclick: deleteOpen}));
   }
-  if (t.status === "approved") act.append(el("button", {type: "button", class: "go", text: "Mark filled", onclick: markFilled}));
-  if (t.id && t.status !== "deleted") act.append(el("button", {type: "button", class: "danger", id: "btnDelete", text: "Delete", onclick: deleteOpen}));
   if (act.children.length) parts.push(act);
 
   v.replaceChildren(...parts);
   if (dep) setDepForm(dep);
   v.oninput = ed ? (ev => { if (!ev.target.closest("#tDepBox")) markDirty(); }) : null;  // deposits save on their own
-  $("title").textContent = t.id ? "Ticket #" + t.id : "New ticket";
+  $("title").textContent = fix ? "Fix bill #" + S.fix.no : t.id ? "Ticket #" + t.id : "New ticket";
   if (ed) recalc();
+  if (S.ownBilling && t.status === "filled" && t.id && !own && !S.billAsked.has(t.id)) askBillOf(t);
 }
 
 function fmtCell(v, money2) {
@@ -861,7 +903,7 @@ function today() {
 }
 
 function depositsBox(t) {
-  const open = editable(t), deps = t.deposits || [];
+  const open = editable(t) && !fixing(t), deps = t.deposits || [];  // fixing a bill: deposits as billed
   const rows = deps.map(d => el("tr", {},
     el("td", {text: d.date}), el("td", {text: cap(d.method)}), el("td", {class: "note", text: d.note || ""}),
     el("td", {class: "num", text: money(d.amount)}),
@@ -1029,7 +1071,8 @@ function setBusy(on) {
 
 // Every write: sends the version the page last saw. Returns the new ticket or null (error shown, or the desk left).
 // retry(fresh) -> a body to send once more after a 409 with the server's copy, or null to show the conflict.
-async function post(path, body, retry) {
+// handled(e) -> true when the caller showed that error itself.
+async function post(path, body, retry, handled) {
   if (S.busy || !S.cur) return null;
   const base = S.cur, id = base.id, typed = S.dirty && editable(base) ? readForm() : null;
   setBusy(true);
@@ -1046,6 +1089,7 @@ async function post(path, body, retry) {
     return onTicket(id) ? r.data : null;
   } catch (e) {
     if (!onTicket(id)) return null;
+    if (handled && handled(e)) return null;
     if (e.status === 409) {
       const t = e.data && e.data.ticket;
       if (t) {
@@ -1116,18 +1160,24 @@ async function sendBack() {
   if (t) { S.dirty = false; leaveTicket(); flash("Sent back to " + (t.mechanic || "the mechanic") + ".", "ok"); }
 }
 
-async function approve() {  // Send to InvoMax: onto the shop PC's Ready for InvoMax list
+// A mechanic and a line, as InvoMax and our bill both need: false (and marked) when one is missing
+function readyToBill() {
   const v = $("viewTicket"), mech = v.querySelector("#t-mechanic");
   clearTicketErrors();
   if (!(mech && mech.value.trim())) {
     v.querySelector('.ferr[data-for="mechanic"]').textContent = "Pick the mechanic who did the work.";
     mech.focus();
-    return;
+    return false;
   }
   if (![...v.querySelectorAll("#tLines .d")].some(d => d.value.trim())) {
     v.querySelector('.ferr[data-for="lines"]').textContent = "Add the parts and labor first.";
-    return;
+    return false;
   }
+  return true;
+}
+
+async function approve() {  // Send to InvoMax: onto the shop PC's Ready for InvoMax list
+  if (!readyToBill()) return;
   const t = await move("approved");
   if (t) { loadTicket(t); flash("Sent — it's on the shop PC's Ready for InvoMax list. InvoMax adds the tax.", "ok"); }
 }
@@ -1137,6 +1187,260 @@ async function markFilled() {
                         : "Mark this ticket as filled in InvoMax?") + " It leaves the board.")) return;
   const t = await move("filled");
   if (t) { S.dirty = false; leaveTicket(); flash("Marked filled: " + fullName(t) + ".", "ok"); }
+}
+
+/* ---------- our own bills: Approve & print, the first number, Reprint, Fix bill (own billing on only) ---------- */
+
+function printUrl(no) { return "/bills/" + encodeURIComponent(no) + "/print"; }
+
+// A new tab for the print page, opened in the click itself (a tab opened after an await is a blocked pop-up);
+// its location is set once the bill is made. null when the browser blocked it anyway.
+function blankTab() {
+  const w = window.open("", "_blank");
+  if (!w) return null;
+  try { w.opener = null; w.document.title = "Bill"; w.document.body.textContent = "Getting the bill ready…"; } catch (e) { /* still usable */ }
+  return w;
+}
+function closeTab(w) { try { if (w && !w.closed) w.close(); } catch (e) { /* gone already */ } }
+
+// The bill's print page in its tab -> true; false when there's no tab (blocked or closed): the flash links it
+function showPrint(w, no) {
+  try {
+    if (w && !w.closed) { w.location.href = printUrl(no); return true; }
+    if (!w) return !!window.open(printUrl(no), "_blank", "noopener");  // after an await this may be blocked
+  } catch (e) { /* fall through */ }
+  return false;
+}
+
+// Our bill's number for ticket id, from the server -> the number; null: not ours (404); undefined: no answer
+async function ownBillOf(id) {
+  try {
+    const no = String((await api("GET", "/api/own-bills/by-ticket/" + id)).data.invoice_no || "");
+    if (!no) return undefined;
+    S.bills.set(id, no);
+    return no;
+  } catch (e) { return e.status === 404 ? null : undefined; }
+}
+
+// A filled ticket on screen (after a reload, from another device): Reprint and Fix bill once the server says it's ours.
+// A filled ticket's answer never changes, so it's asked once; no answer (offline): asked again on the next showing.
+async function askBillOf(t) {
+  S.billAsked.add(t.id);
+  const no = await ownBillOf(t.id);
+  if (no === undefined) S.billAsked.delete(t.id);
+  if (!no) return;
+  if (S.cur === t && !S.dirty && !depTyped()) loadTicket(t);
+}
+function billFlash(text, no, shown) {
+  flash(text + (shown ? " It's open in a new tab to print." : ""), "ok");
+  if (!shown) $("flash").append(" ", el("a", {href: printUrl(no), target: "_blank", rel: "noopener", text: "Print bill #" + no}));
+}
+
+function reprint(no) { window.open(printUrl(no), "_blank", "noopener"); }
+
+function billNote(text) { const s = $("saved"); if (s) s.textContent = text; }
+
+// "First invoice number: N. Use it?" -> the number to use (N or higher), or null. "Use it" opens the print tab.
+let numMin = 0, numTab = null;
+// Where the highest number used came from (GET first-number's `from`), so an odd one is caught before it's used
+function numFromText(f) {
+  const no = f && f.invoice_no ? "#" + f.invoice_no : "";
+  if (!f || f.source === "none" || !no) return "No invoice number has been used yet.";
+  if (f.source === "invomax") return "The highest number used is InvoMax bill " + no + (f.date ? " of " + fmtDate(f.date + "T00:00:00") : "") + ".";
+  if (f.source === "typed") return "The highest number used is " + no + ", typed by hand on ticket #" + f.ticket_id + ".";
+  if (f.source === "ours") return "The highest number used is our bill " + no + " (ticket #" + f.ticket_id + ").";
+  return "The highest number used is our " + no + ".";
+}
+function askFirstNumber(proposed, from) {
+  const dlg = $("numDlg");
+  $("numTitle").textContent = "First invoice number: " + proposed + ". Use it?";
+  $("numFrom").textContent = numFromText(from) + " If that looks wrong, cancel and check it first.";
+  $("numBox").value = proposed; $("numErr").textContent = "";
+  numMin = Number(proposed); numTab = null;
+  dlg.returnValue = "";
+  dlg.showModal();
+  $("numBox").focus();
+  return new Promise(ok => dlg.addEventListener("close", () => {
+    const b = $("btnApprovePrint");
+    if (b) b.focus();
+    ok(dlg.returnValue === "use" ? $("numBox").value.trim() : null);
+  }, {once: true}));
+}
+$("numYes").addEventListener("click", ev => {  // the click (or Enter): the tab must open here, not after an await
+  const v = $("numBox").value.trim();
+  if (!/^[1-9][0-9]{6}$/.test(v) || Number(v) < numMin) {
+    ev.preventDefault();
+    $("numErr").textContent = "Type 7 digits: " + numMin + " or higher.";
+    $("numBox").focus();
+    return;
+  }
+  numTab = blankTab();
+});
+
+// The first number, confirmed before the first bill: once per click, after the server's InvoMax import (slow).
+// -> {ok, tab}: ok false when it was refused, failed or cancelled (shown); tab: the one "Use it" opened.
+function waiting(on) {  // the slow InvoMax check: buttons off, and the form can't be typed in meanwhile
+  setBusy(on);
+  $("viewTicket").inert = on;
+  billNote(on ? "Checking InvoMax…" : "");
+}
+
+async function firstNumber(id) {
+  waiting(true);
+  let d;
+  try {
+    d = (await api("GET", "/api/own-bills/first-number", undefined, undefined, undefined, IMPORT_MS)).data;
+  } catch (e) {
+    if (onTicket(id) && e.status !== 401) tError(cap(e.message || "Couldn't check InvoMax"));
+    return {ok: false};
+  } finally {
+    waiting(false);
+  }
+  if (!onTicket(id)) return {ok: false};
+  if (d.confirmed) { S.firstOk = true; return {ok: true}; }
+  const no = await askFirstNumber(String(d.proposed || ""), d.from);
+  const tab = numTab;
+  numTab = null;
+  if (!no || !onTicket(id)) { closeTab(tab); return {ok: false}; }
+  waiting(true);
+  try {
+    await api("POST", "/api/own-bills/first-number", {invoice_no: no}, undefined, undefined, IMPORT_MS);
+  } catch (e) {
+    if (e.status !== 409) {  // 409: confirmed meanwhile on another device; the bill goes on with that
+      closeTab(tab);
+      if (onTicket(id) && e.status !== 401) tError(cap(e.message || "Couldn't save the first number"));
+      return {ok: false};
+    }
+  } finally {
+    waiting(false);
+  }
+  S.firstOk = true;
+  if (!onTicket(id)) { closeTab(tab); return {ok: false}; }
+  return {ok: true, tab};
+}
+
+// After a bill or a fix: the ticket as the server has it now (filled, with our bill's buttons)
+async function showBilled(id) {
+  try {
+    const r = await api("GET", "/api/tickets/" + id);
+    if (onTicket(id)) loadTicket(r.data);
+  } catch (e) {  // the bill is made; redraw the copy on screen (a fix done: out of fix mode)
+    if (onTicket(id)) loadTicket(S.cur);
+  }
+  poll();
+}
+
+// Approve & print: save, the first number if it isn't confirmed, the bill, then its print page in a new tab
+async function approvePrint() {
+  if (S.busy || !S.cur || !readyToBill()) return;
+  // A tab now, in the click; not while the first number may be asked (it would sit in front of the question):
+  // then "Use it" opens it in its own click, or it opens once the bill is made.
+  let tab = S.firstOk ? blankTab() : null, done = false;
+  try {
+    let t = S.cur;
+    if (S.dirty || !t.id) {  // as Save ticket: the desk's typing (or the new ticket) first
+      t = await save(true);
+      if (!t) return;
+    }
+    const id = t.id;
+    if (!S.firstOk) {
+      const f = await firstNumber(id);
+      if (!f.ok) return;
+      if ("tab" in f) tab = f.tab;
+      if (S.dirty) { tError("The ticket changed while InvoMax was checked. Press Approve & print again."); return; }
+    }
+    clearTicketErrors();
+    let lost = null;  // no reply, or changed meanwhile and now filled: maybe billed after all
+    const b = await post("/api/tickets/" + id + "/bill", {version: t.version}, null, e => {
+      if (e.status === 409 && e.data && e.data.invoice_no && !e.data.ticket) {
+        const no = String(e.data.invoice_no);
+        tError("Already billed as #" + no + ".");
+        $("tErr").append(" ", el("button", {type: "button", class: "light", text: "Reprint", onclick: () => reprint(no)}));
+        return true;
+      }
+      if (e.status === 428) {
+        S.firstOk = false;
+        tError("Confirm the first invoice number first: press Approve & print again.");
+        return true;
+      }
+      if (e.status === 0 || (e.status === 409 && e.data && e.data.ticket && e.data.ticket.status === "filled")) {
+        lost = e;
+        return true;
+      }
+      return false;
+    });
+    if (!b && lost) {  // ask the server before showing anything: the bill may be made
+      const no = await ownBillOf(id);
+      if (!onTicket(id)) return;
+      if (no) {
+        done = true;
+        const shown = showPrint(tab, no);
+        await showBilled(id);
+        billFlash("Billed as #" + no + ".", no, shown);
+        return;
+      }
+      if (lost.data.ticket) loadTicket(lost.data.ticket);
+      tError(lost.status === 0 ? OFFLINE : (lost.message || "Changed on another device") + " — showing the current ticket.");
+      return;
+    }
+    if (!b) return;
+    done = true;
+    const no = String(b.invoice_no);
+    S.bills.set(id, no);
+    const shown = showPrint(tab, no);
+    await showBilled(id);
+    billFlash("Billed as #" + no + ".", no, shown);
+  } finally {
+    if (!done) closeTab(tab);
+  }
+}
+
+// Fix bill: our bill's ticket, open for editing (from the Fix bill button, or /admin#fix=<no> from Bill history)
+async function openFix(no) {
+  if (S.busy || !/^[0-9]{1,9}$/.test(no)) return;
+  if (S.view === "ticket" && (S.dirty || depTyped()) && !confirm("Leave without saving your changes?")) return;
+  const n = ++S.openSeq;
+  flash("");
+  try {
+    const b = (await api("GET", "/api/own-bills/" + no)).data;
+    const r = await api("GET", "/api/tickets/" + Number(b.ticket_id));
+    await loadMechanics();
+    if (n !== S.openSeq) return;
+    if (r.data.status !== "filled") { flash("Bill #" + no + "'s ticket isn't filled, so the bill can't be fixed here."); return; }
+    S.bills.set(r.data.id, no);
+    S.fix = {no, id: r.data.id}; S.dirty = false;
+    show("ticket");
+    loadTicket(r.data);
+  } catch (e) {
+    if (n === S.openSeq && e.status !== 401) flash(e.status === 404 ? "There's no bill #" + no + "." : e.message || "Couldn't open the bill");
+  }
+}
+
+// Save & reprint: a new revision of the bill, the same number and date, then its print page in a new tab
+async function fixSave() {
+  if (S.busy || !fixing(S.cur) || !readyToBill()) return;
+  const {no, id} = S.fix;
+  let tab = blankTab(), done = false;
+  try {
+    const fields = readForm(), version = fields.version;
+    delete fields.version;
+    const b = await post("/api/own-bills/" + encodeURIComponent(no) + "/fix", {version, fields});
+    if (!b) return;
+    done = true;
+    S.fix = null; S.dirty = false;
+    const shown = showPrint(tab, no);
+    await showBilled(id);
+    billFlash("Bill #" + no + " saved.", no, shown);
+  } finally {
+    if (!done) closeTab(tab);
+  }
+}
+
+function fixFromHash() {  // /admin#fix=<no>: taken once, then the address goes back to /admin
+  const m = /^#fix=([0-9]{1,9})$/.exec(location.hash);
+  if (!m || !S.ownBilling) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  openFix(m[1]);
 }
 
 /* ---------- delete, and the Deleted list ---------- */
@@ -1546,6 +1850,12 @@ async function loadUpkeep() {
     $("linkBills").hidden = S.view !== "board";
     $("linkJobs").hidden = S.view !== "board";
     renderUpkeep(r.data);
+    const own = r.data.ownBilling === true;
+    if (own !== S.ownBilling) {
+      S.ownBilling = own;
+      if (S.view === "ticket" && S.cur && !editingNow()) loadTicket(S.cur);  // its buttons follow the switch
+    }
+    fixFromHash();
   } catch (e) {
     if (e.status === 404) {  // shop.py: no such route; hide it all, say nothing
       S.upkeepGone = true; S.upkeepOk = false;
@@ -1568,6 +1878,7 @@ $("btnCancelReset").addEventListener("click", closeReset);
 $("btnDeleted").addEventListener("click", showDeleted);
 for (const e of ["focusin", "input", "change"]) document.addEventListener(e, carField);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { poll(); loadUpkeep(); } });
+window.addEventListener("hashchange", fixFromHash);
 window.addEventListener("pageshow", e => { if (e.persisted) location.reload(); });  // from the back/forward cache: ask the server again
 
 show("board");

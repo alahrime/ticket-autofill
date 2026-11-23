@@ -13,4 +13,5 @@ export const BillLinkSource = {
   invomax: 'invomax',
   typed: 'typed',
   none: 'none',
+  ours: 'ours',
 } as const;

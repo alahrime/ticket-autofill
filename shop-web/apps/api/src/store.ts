@@ -79,6 +79,18 @@ export type SaveOpts = { depositsSent?: boolean };
 
 const SELECT = 'SELECT id, status, data FROM tickets';
 
+/** What a write stored: the ticket as written and any deposits value kept verbatim (R12). */
+type Written = { saved: Ticket; keep: { value: unknown } | undefined };
+
+/** `t` brought up to what was written: version, updated and created times, and its deposits as stored now. */
+function written(t: Ticket, { saved, keep }: Written): Ticket {
+  t.version = saved.version;
+  t.updated = saved.updated;
+  t.created = saved.created;
+  heldDeposits.set(t, holdsDeposits(keep ? keep.value : t.deposits));
+  return t;
+}
+
 export class TicketStore {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -130,28 +142,39 @@ export class TicketStore {
    */
   save(t: Ticket, version: number, opts: SaveOpts = {}): Ticket {
     this.db.exec('BEGIN IMMEDIATE'); // takes the write lock first (busy_timeout: waits up to 5 s)
-    let saved: Ticket;
-    let keep: { value: unknown } | undefined;
+    let w: Written;
     try {
-      const row = this.db.prepare(`${SELECT} WHERE id = ?`).get(t.id) as Row | undefined;
-      if (!row) throw new NotFound(`no ticket ${t.id}`);
-      const cur = fromRow(row);
-      if (cur.version !== version) throw new Stale(cur);
-      keep = opts.depositsSent ? undefined : unreadDeposits(row.data);
-      saved = { ...t, version: version + 1, updated: nowIso(), created: cur.created };
-      this.db
-        .prepare('UPDATE tickets SET status = ?, data = ? WHERE id = ?')
-        .run(saved.status, toData(saved, keep), saved.id);
+      w = this.write(t, version, opts);
       this.db.exec('COMMIT');
     } catch (e) {
       if (this.db.isTransaction) this.db.exec('ROLLBACK'); // a failed COMMIT may have ended it already
       throw e;
     }
-    t.version = saved.version;
-    t.updated = saved.updated;
-    t.created = saved.created;
-    heldDeposits.set(t, holdsDeposits(keep ? keep.value : t.deposits)); // as stored now
-    return t;
+    return written(t, w);
+  }
+
+  /**
+   * save() inside a transaction the caller opened (BEGIN IMMEDIATE on this connection) and commits or rolls
+   * back: the same check and write, no transaction of its own. `t` gets the new version, updated and created
+   * times at once, so after a rollback the caller must drop it (read the ticket again).
+   */
+  saveTx(t: Ticket, version: number, opts: SaveOpts = {}): Ticket {
+    if (!this.db.isTransaction) throw new Error('saveTx needs an open transaction');
+    return written(t, this.write(t, version, opts));
+  }
+
+  /** The check and the UPDATE, in the caller's transaction; `t` itself is left as it was. */
+  private write(t: Ticket, version: number, opts: SaveOpts): Written {
+    const row = this.db.prepare(`${SELECT} WHERE id = ?`).get(t.id) as Row | undefined;
+    if (!row) throw new NotFound(`no ticket ${t.id}`);
+    const cur = fromRow(row);
+    if (cur.version !== version) throw new Stale(cur);
+    const keep = opts.depositsSent ? undefined : unreadDeposits(row.data);
+    const saved = { ...t, version: version + 1, updated: nowIso(), created: cur.created };
+    this.db
+      .prepare('UPDATE tickets SET status = ?, data = ? WHERE id = ?')
+      .run(saved.status, toData(saved, keep), saved.id);
+    return { saved, keep };
   }
 
   /** The day the purge removes `t` (YYYY-MM-DD), or null: judged on its deposits as stored, as purge() does. */

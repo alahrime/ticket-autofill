@@ -298,3 +298,27 @@ describe('protected and unknown keys', () => {
     expect(Object.getPrototypeOf(t)).toBe(Object.prototype);
   });
 });
+
+describe('edit with billFix (a fix to our own bill)', () => {
+  const billed = (): Ticket =>
+    tk({ status: 'filled', mechanic: 'Mike', lines: [line('pads', { price: 100, labor: 50, id: 1 })] });
+
+  it('lets the desk change a filled ticket, and only the desk', () => {
+    const t = billed();
+    edit(t, { first: 'john', lines: [{ desc: 'pads', price: 90, labor: 50, id: 1 }] }, 'desk', undefined, undefined, { billFix: true });
+    expect([t.first, t.lines[0]?.price, t.status]).toEqual(['JOHN', 90, 'filled']);
+    expect(() => edit(billed(), { notes: 'x' }, 'mechanic', undefined, undefined, { billFix: true })).toThrow(Refused);
+    expect(() => edit(tk({ status: 'deleted' }), { notes: 'x' }, 'desk', undefined, undefined, { billFix: true })).toThrow(Refused);
+    refuses(billed(), { notes: 'x' }, 'desk'); // without it, filled stays closed
+  });
+
+  it('a bill keeps its mechanic and at least one line', () => {
+    const fix = (f: Record<string, unknown>): Invalid => {
+      const e = thrown(() => edit(billed(), f, 'desk', undefined, undefined, { billFix: true }));
+      expect(e).toBeInstanceOf(Invalid);
+      return e as Invalid;
+    };
+    expect(fix({ lines: [] }).errors).toHaveProperty('lines');
+    expect(fix({ mechanic: '' }).errors).toHaveProperty('mechanic');
+  });
+});

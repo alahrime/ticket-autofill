@@ -405,6 +405,18 @@ th {
   flex-basis: 100%;
   margin: 0;
 }
+.revisions h3 {
+  margin: 12px 0 4px;
+  font-size: 15px;
+}
+.revisions ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+}
+.revisions li {
+  margin: 2px 0;
+}
 .inline-form {
   display: flex;
   flex-wrap: wrap;

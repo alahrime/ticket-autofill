@@ -1,6 +1,7 @@
 // What every route needs, kept on app.locals by createApp().
 import type { Request } from 'express';
 import type { Accounts } from '../accounts';
+import type { OwnBills } from '../billing/ownbills';
 import type { Config } from '../config';
 import type { History } from '../history/bills';
 import type { LinkStore } from '../history/links';
@@ -16,6 +17,7 @@ export type Deps = {
   history: History;
   jobs: JobIndex;
   nightly: Nightly;
+  ownBills: OwnBills;
 };
 
 export const depsOf = (req: Request): Deps => req.app.locals['deps'] as Deps;

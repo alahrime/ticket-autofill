@@ -20,10 +20,13 @@ function repr(s: string): string {
   return q + s.replace(/\\/g, '\\\\').split(q).join(`\\${q}`) + q;
 }
 
+/** edit()'s options. billFix: the desk fixes our own bill, so a filled ticket may change (the desk only). */
+export type EditOpts = { billFix?: boolean };
+
 /**
- * Merge typed fields onto `t` in place. who: "desk" (any field until the ticket is filled) or "mechanic"
- * (working or approved: lines, odometer, vin, notes). Unknown keys are ignored, as in normalize.
- * Throws Refused (not allowed now / not theirs to change) or Invalid (bad values).
+ * Merge typed fields onto `t` in place. who: "desk" (any field until the ticket is filled; a filled one too with
+ * opts.billFix) or "mechanic" (working or approved: lines, odometer, vin, notes). Unknown keys are ignored, as
+ * in normalize. Throws Refused (not allowed now / not theirs to change) or Invalid (bad values).
  */
 export function edit(
   t: Ticket,
@@ -31,11 +34,13 @@ export function edit(
   who: 'desk' | 'mechanic',
   now: () => string = () => nowIso(),
   today?: Date,
+  opts: EditOpts = {},
 ): Ticket {
   const known = Object.keys(fields).filter((k) => KNOWN.has(k));
+  const billFix = who === 'desk' && opts.billFix === true && t.status === 'filled';
   if (who === 'desk') {
     if (t.status === 'deleted') throw new Refused("can't change a deleted ticket"); // restore it first
-    if (t.status === 'filled') throw new Refused(`the desk can't change a ${t.status} ticket`); // it's in InvoMax now
+    if (t.status === 'filled' && !billFix) throw new Refused(`the desk can't change a ${t.status} ticket`); // it's in InvoMax now
   } else if (who === 'mechanic') {
     if (!(MECHANIC_EDITS as readonly string[]).includes(t.status)) {
       throw new Refused(`the phone can't change a ${t.status} ticket`);
@@ -47,11 +52,11 @@ export function edit(
   }
   // stored deposits keep their dates
   const { clean, errors } = normalize(fields, { kept: new Set(t.deposits.map((x) => x.id)), today });
-  if (clean.lines && !clean.lines.length && (t.status === 'review' || t.status === 'approved')) {
+  if (clean.lines && !clean.lines.length && (t.status === 'review' || t.status === 'approved' || billFix)) {
     errors['lines'] ??= 'keep at least one line'; // finishing needed one; don't bill an empty ticket
   }
   const sent = t.status === 'approved';
-  if (sent && clean.mechanic !== undefined && !clean.mechanic) {
+  if ((sent || billFix) && clean.mechanic !== undefined && !clean.mechanic) {
     errors['mechanic'] ??= 'an invoice needs its mechanic';
   }
   if (
@@ -95,7 +100,7 @@ export function move(t: Ticket, to: string, mechanic?: string | null, note?: str
   return t;
 }
 
-const dec = (v: number | string): bigint => {
+export const dec = (v: number | string): bigint => {
   const d = parseDec(String(v));
   if (!d) throw new Error(`not a number: ${String(v)}`);
   return toCents(d);
@@ -125,7 +130,7 @@ export function totals(t: Pick<Ticket, 'lines' | 'deposits'>): {
 }
 
 /** round-half-up cents of qty x price, both as typed decimals */
-function mulCents(qty: number, price: number): bigint {
+export function mulCents(qty: number, price: number): bigint {
   const a = parseDec(String(qty));
   const b = parseDec(String(price));
   if (!a || !b) throw new Error(`not a number: ${String(a ? price : qty)}`);

@@ -9,7 +9,7 @@ import type { BillAfterSource } from './billAfterSource.js';
 import type { ImLine } from './imLine.js';
 
 /**
- * The bill's side, InvoMax's or typed by the admin (typed ones have no lines). Money in dollars.
+ * The bill's side, InvoMax's, typed by the admin (no lines) or our own (the latest revision). Money in dollars.
  */
 export interface BillAfter {
   /** @nullable */

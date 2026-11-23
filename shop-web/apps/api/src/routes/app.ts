@@ -1,6 +1,6 @@
-// The React admin app (shop-web/apps/admin-app, built into config.app): its pages /bills and /jobs for a
-// signed-in admin, and its built files under /app/assets/. Nothing outside config.app/assets is ever served,
-// folders are never listed, and an unknown file type is 404.
+// The React admin app (shop-web/apps/admin-app, built into config.app): its pages /bills, /jobs and the bill
+// print page /bills/<no>/print for a signed-in admin, and its built files under /app/assets/. Nothing outside
+// config.app/assets is ever served, folders are never listed, and an unknown file type is 404.
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { type Request, type RequestHandler, type Response, Router } from 'express';
@@ -9,7 +9,7 @@ import { noteActor } from '../http/log';
 import { page, redirect, sendHtml } from '../http/pages';
 import { sessionOf } from '../http/security';
 
-export const APP_PAGES = ['/bills', '/jobs'] as const;
+export const APP_PAGES = ['/bills', '/jobs', /^\/bills\/\d{1,7}\/print$/] as const;
 const ASSETS = '/app/assets/';
 export const ASSET_CACHE = 'public, max-age=31536000, immutable';
 
@@ -80,7 +80,7 @@ const asset: RequestHandler = async (req: Request, res: Response) => {
   res.status(200).set({ 'Content-Type': type, 'Cache-Control': ASSET_CACHE }).send(body);
 };
 
-/** /bills and /jobs: the app's index.html, read fresh, to an admin; anyone else goes to /admin (its sign-in). */
+/** /bills, /jobs and /bills/<no>/print: the app's index.html, read fresh, to an admin; anyone else goes to /admin (its sign-in). */
 const appPage: RequestHandler = async (req, res) => {
   const s = sessionOf(req);
   noteActor(res, s);

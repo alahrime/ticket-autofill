@@ -12,4 +12,5 @@ export type BillAfterSource = typeof BillAfterSource[keyof typeof BillAfterSourc
 export const BillAfterSource = {
   invomax: 'invomax',
   typed: 'typed',
+  ours: 'ours',
 } as const;
