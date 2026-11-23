@@ -34,7 +34,7 @@ const OURS: Bill = {
   after: { ...(BILL.after as NonNullable<Bill['after']>), invoice_no: '9000010', source: 'ours' },
   link: { source: 'ours', linked_by: 'admin#1', linked_at: '2026-11-23T14:22:05', version: 2 },
   difference: 0,
-  own: { invoice_no: '9000010', revisions: 1, revised_at: null, revised_by: null },
+  own: { invoice_no: '9000010', revisions: 1, revised_at: null, revised_by: null, history: [] },
 };
 
 describe('BillDetail', () => {
@@ -92,7 +92,7 @@ describe('BillDetail', () => {
   });
 
   it('our bill with no saved copy says so: no Reprint, no link controls', async () => {
-    const lost: Bill = { ...OURS, own: { invoice_no: '9000010', revisions: 0, revised_at: null, revised_by: null } };
+    const lost: Bill = { ...OURS, own: { invoice_no: '9000010', revisions: 0, revised_at: null, revised_by: null, history: [] } };
     api(lost);
     show(lost);
     expect(await screen.findByText("This bill's saved copy is missing; it can't be reprinted.")).toBeInTheDocument();
@@ -107,11 +107,37 @@ describe('BillDetail', () => {
     expect(screen.queryByRole('button', { name: 'Type the final bill' })).not.toBeInTheDocument();
   });
 
-  it('our bill fixed: says when and by whom', async () => {
-    const fixed: Bill = { ...OURS, own: { invoice_no: '9000010', revisions: 2, revised_at: '2026-11-24T09:05:00', revised_by: 'admin#2' } };
+  it('our bill fixed: says when and by whom, and lists the earlier revisions to view or print', async () => {
+    const history = [
+      { revision: 1, at: '2026-11-23T14:22:05', by: 'admin#1' },
+      { revision: 2, at: '2026-11-24T09:05:00', by: 'admin#2' },
+      { revision: 3, at: '2026-11-25T10:30:00', by: 'admin#1' },
+    ];
+    const fixed: Bill = {
+      ...OURS,
+      own: { invoice_no: '9000010', revisions: 3, revised_at: '2026-11-25T10:30:00', revised_by: 'admin#1', history },
+    };
     api(fixed);
     show(fixed);
-    expect(await screen.findByText('Revised 2026-11-24 by admin#2')).toBeInTheDocument();
+    expect(await screen.findByText('Revised 2026-11-25 by admin#1')).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Earlier revisions' });
+    const items = within(list).getAllByRole('listitem');
+    expect(items.map((li) => li.firstChild?.textContent)).toEqual([
+      'Revision 1: 2026-11-23 14:22 by admin#1 (the original)',
+      'Revision 2: 2026-11-24 09:05 by admin#2',
+    ]);
+    const first = within(items[0] as HTMLElement);
+    expect(first.getByRole('link', { name: 'View revision 1' })).toHaveAttribute('href', '/bills/9000010/print?rev=1&noprint=1');
+    expect(first.getByRole('link', { name: 'Print revision 1' })).toHaveAttribute('href', '/bills/9000010/print?rev=1');
+    expect(screen.getByRole('link', { name: 'Reprint' })).toHaveAttribute('href', '/bills/9000010/print'); // the latest
+  });
+
+  it('our bill never fixed lists no earlier revisions', async () => {
+    const once: Bill = { ...OURS, own: { ...(OURS.own as NonNullable<Bill['own']>), history: [{ revision: 1, at: '2026-11-23T14:22:05', by: 'admin#1' }] } };
+    api(once);
+    show(once);
+    await screen.findByRole('link', { name: 'Reprint' });
+    expect(screen.queryByRole('list', { name: 'Earlier revisions' })).not.toBeInTheDocument();
   });
 
   it('an InvoMax bill has no Reprint or Fix bill', async () => {

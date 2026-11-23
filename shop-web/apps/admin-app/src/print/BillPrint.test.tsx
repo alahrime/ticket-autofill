@@ -140,6 +140,22 @@ describe('BillPrint', () => {
     expect(print).not.toHaveBeenCalled();
   });
 
+  it('?rev=1 prints that earlier revision as stored, asking the server for it', async () => {
+    window.history.replaceState(null, '', '/bills/9000010/print?rev=1');
+    const urls: string[] = [];
+    mockFetch((_m, url) => {
+      urls.push(url);
+      if (url === '/api/own-bills/9000010?rev=1') return [200, own({ ...SNAPSHOT, amounts: { ...SNAPSHOT.amounts, total: 111 } })];
+      if (url === '/api/own-bills/9000010') return [200, own({ ...SNAPSHOT, revision: 2 })];
+      return undefined;
+    });
+    show();
+    const copy = (await screen.findAllByRole('region', { name: /^Bill copy/ }))[0];
+    expect(within(copy).getByRole('row', { name: 'TOTAL 111.00' })).toBeInTheDocument();
+    expect(urls).toEqual(['/api/own-bills/9000010?rev=1']);
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+  });
+
   it('never shows the revision, even for revision 2', async () => {
     api({ ...SNAPSHOT, revision: 2 });
     const { container } = show();

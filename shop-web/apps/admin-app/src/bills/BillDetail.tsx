@@ -1,7 +1,7 @@
 // One bill's two sides: our ticket (what the mechanic wrote) and InvoMax's bill (what the customer paid), each
 // with its lines and totals, how they were tied together, and the admin's changes for a ticket of ours.
 import { useEffect, useId, useRef, useState } from 'react';
-import { type Bill, type BillAfter, type BillBefore, type BillLink, useGetInvoice } from '@shop/api-client';
+import { type Bill, type BillAfter, type BillBefore, type BillLink, type BillOwn, useGetInvoice } from '@shop/api-client';
 import { errorText, money, phone } from '../lib/format';
 import { LinkByNumber } from './LinkByNumber';
 import { TypeFinalForm } from './TypeFinalForm';
@@ -209,6 +209,38 @@ function Changes({ bill, onKeyChange }: { bill: Bill & { before: BillBefore }; o
   );
 }
 
+/** 2026-11-23T14:22:05 -> 2026-11-23 14:22. */
+const when = (at: string): string => `${at.slice(0, 10)} ${at.slice(11, 16)}`.trim();
+
+/** Our bill's revisions before the latest, each with when and who, to view or print as it was stored. */
+function EarlierRevisions({ own }: { own: BillOwn }) {
+  const id = useId();
+  const earlier = own.history.slice(0, -1);
+  if (!earlier.length) return null;
+  const at = (rev: number, extra = ''): string => `/bills/${encodeURIComponent(own.invoice_no)}/print?rev=${rev}${extra}`;
+  return (
+    <div className="revisions">
+      <h3 id={id}>Earlier revisions</h3>
+      <ul aria-labelledby={id}>
+        {earlier.map((r) => (
+          <li key={r.revision}>
+            <span>
+              Revision {r.revision}: {when(r.at)} by {r.by}
+              {r.revision === 1 ? ' (the original)' : ''}
+            </span>{' '}
+            <a href={at(r.revision, '&noprint=1')} target="_blank" rel="noopener" aria-label={`View revision ${r.revision}`}>
+              View
+            </a>{' '}
+            <a href={at(r.revision)} target="_blank" rel="noopener" aria-label={`Print revision ${r.revision}`}>
+              Print
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function BillDetail({ billKey, onKeyChange, onClose, focus = false }: Props) {
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -267,6 +299,7 @@ export function BillDetail({ billKey, onKeyChange, onClose, focus = false }: Pro
               <a href={`/admin#fix=${encodeURIComponent(bill.own.invoice_no)}`}>Fix bill</a>
             </p>
           )}
+          {bill.own && <EarlierRevisions own={bill.own} />}
           {bill.before && !bill.own && bill.link?.source !== 'ours' && <Changes key={bill.key} bill={{ ...bill, before: bill.before }} onKeyChange={onKeyChange} />}
         </>
       )}

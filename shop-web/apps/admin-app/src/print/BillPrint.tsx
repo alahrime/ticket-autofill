@@ -1,6 +1,6 @@
-// The print page for one of our bills (/bills/<no>/print): the stored snapshot of its latest revision on letter
-// paper, twice (two copies), then the browser's print window. It only shows the snapshot, never recomputes it,
-// and never shows the revision: a reprint looks exactly like the original.
+// The print page for one of our bills (/bills/<no>/print): the stored snapshot of its latest revision (or, with
+// ?rev=N, of that earlier one) on letter paper, twice (two copies), then the browser's print window. It only
+// shows the snapshot, never recomputes it, and never shows the revision: a reprint looks exactly like the original.
 import { useEffect, useRef } from 'react';
 import { type BillSnapshot, type OwnBill, useGetOwnBill } from '@shop/api-client';
 import { errorText } from '../lib/format';
@@ -254,11 +254,16 @@ function Copy({ bill, n }: { bill: BillSnapshot; n: number }) {
   );
 }
 
+/** ?rev=N: an earlier revision, as stored (Bill history's View / Print); else the latest. */
+const REV = /^[1-9]\d{0,5}$/;
+
 export function BillPrint({ no }: { no: string }) {
-  useDocumentTitle(`Bill ${no}`);
   const [query] = useQueryState();
+  const asked = query.get('rev') ?? '';
+  const rev = REV.test(asked) ? asked : undefined;
+  useDocumentTitle(rev ? `Bill ${no}, revision ${rev}` : `Bill ${no}`); // the tab only: the paper never says
   const noprint = query.get('noprint') === '1';
-  const q = useGetOwnBill(no, { query: { retry: false, refetchOnWindowFocus: false } });
+  const q = useGetOwnBill(no, rev ? { rev } : undefined, { query: { retry: false, refetchOnWindowFocus: false } });
   const { error } = q;
   const data = q.data?.data as OwnBill | undefined;
   const printed = useRef(false);
