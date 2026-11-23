@@ -1,0 +1,71 @@
+# Own billing: build log (rulings and deferred minors)
+
+Copied from the git-ignored SDD ledger on 2026-11-23 so the next agent has it. Lines are in the order they happened.
+
+- Spec: docs/superpowers/specs/2026-11-23-own-billing-design.md (approved 2026-11-23)
+- Worktree: .claude/worktrees/own-billing, branch own-billing from main a14e3c0
+- Owner working style: one implementer + TWO reviewers per task (spec/correctness; security/robustness).
+- 
+- ## Pre-flight scan
+- | Pair / task | Produces vs consumes | Found |
+- |---|---|---|
+- | T1 -> T3 | billAmounts/billRows (cents) -> snapshot amounts | ok |
+- | T2 -> T3,T6 | Config.ownBilling, shopInfo, upkeep ownBilling -> routes 404 when off, admin.html flag | ok |
+- | T3 -> T4 | OwnBills.latest(), invoice_finals source 'ours' -> Bill.own | ok |
+- | T3 -> T5 | GET /api/own-bills/:no via Orval -> print page | ok |
+- | T3 -> T6 | first-number GET/POST, /bill, /fix | CONFLICT: T6 says GET runs "after the import"; T3 runs import only on POST |
+- | T4 <-> T6 | Fix link /admin#fix=<no> | ok (same) |
+- | T5 <-> T6 | /bills/<no>/print, ?noprint=1 | ok |
+- | T2 self | tests in "existing upkeep tests" | api has no upkeep spec in apps/api/test (only e2e) |
+- | T1,T3,T4,T5,T6 self | tests vs code | consistent |
+- 
+- Ruling: GET /api/own-bills/first-number runs the InvoMax import synchronously (when importInvomax and not yet confirmed) before proposing; POST runs it again before checking. — matches spec (import before numbering) and T6's text; once-ever cost ~10 s — if wrong, the admin waits twice on go-live day.
+- Ruling: T2's upkeep status test goes in a new apps/api/test/upkeep.spec.ts (or config.spec.ts). — no api upkeep spec exists — cost: none.
+- 
+- ## Tasks
+- Task 1: dispatched implementer (sonnet), BASE a14e3c0
+- Note: implementers must NOT commit .superpowers files (task 1 did with git add -f; untracked in e246923)
+- Task 1: complete (commits a14e3c0..e246923, review clean: both seats Approved)
+- Parked minors T1: no tie/boundary tests (supplies 10c tie, cap at 400.00 exactly, fractional qty); negatives give half-toward-zero and uncapped supplies on un-normalized lines -> carried to Task 3 (approve must refuse a ticket whose lines are damaged/negative); billAmounts round-trips totals() dollars via toFixed (safe under MAX_* caps).
+- Task 2: dispatched implementer (sonnet), BASE e246923
+- Note: jest flag is --testPathPatterns (plural) in this repo
+- Task 2: review — seat1 Approved; seat2 Needs fixes (2 Important: shop string caps/control chars; per-key fallback so a bad key can't revive invomaxDir). Fix round 1 sent to implementer.
+- Task 2: minor (deferred): no shop:null / bad hours test cases; no warning when ownBilling true with empty shop details (consider in Task 3/6); upkeep test sets config directly.
+- Task 2: fix round 1/5 (2 addressed, 0 open; commits 21e63b0..3ab7925). Round 2 sent: raw control bytes in config.ts regex make git treat it as binary (blocks future reviews).
+- Task 2: fix round 2/5 (1 addressed: regex escaped; 3ab7925 was also CRLF, ba1fa46 back to LF; controller compared both file versions in full: only the regex line differs). Ruling: controller's full-file comparison stands in for the scoped re-review of this one-line round — the binary diff made the package unreadable — cost if wrong: none, final review sees config.ts whole.
+- Task 2: complete (commits e246923..ba1fa46, review clean after 2 fix rounds)
+- Task 3: dispatched implementer (opus), BASE ba1fa46
+- Task 3: implementer DONE_WITH_CONCERNS 926f360. Ruling: a fix's snapshot keeps revision 1's shop details (header), like date/time — spec "reprint looks exactly like the original" — cost if wrong: a shop phone change won't show on fixed old bills. Sent with review findings.
+- Ruling: first-number import wait up to ~3 min / 503 on a foreign lock is acceptable — happens once ever, on go-live day — cost: the admin waits or retries once.
+- Note: Task 3 made link/unlink/none/typed refuse our bills (409) — good; Task 4 must type source 'ours'.
+- Task 3: review — both seats Needs fixes, same 1 Important (fix must keep revision 1's shop details). Fix round 1 sent.
+- Task 3: minor (deferred): an all-digit typed final far above the counter (typo) raises all later numbers / 9999999 stops billing — FINAL REVIEW should triage (both seats raised it); concurrency tested only in one process (add a 2nd DatabaseSync test); no DB triggers making own_bill_revisions insert-only; SQLITE_BUSY after 5 s becomes 500 (prefer 503); every unconfirmed first-number GET runs a full import (Task 6 must not poll); empty fix makes an identical revision; unguarded JSON.parse of revision 1; GET calls firstNumber twice (comment).
+- Task 3: fix round 1/5 (1 addressed, 0 open; commits 926f360..0f95613)
+- Task 3: complete (commits ba1fa46..0f95613, review clean after 1 fix round)
+- Task 4: dispatched implementer (sonnet), BASE 0f95613
+- Task 4: implementer DONE_WITH_CONCERNS 8b8e165 (revised_by raw 'admin#2'; latest() outside History read tx; row date = filled day)
+- Task 4: review — seat1 Approved; seat2 Needs fixes: missing/damaged revision rows -> 500 or link controls come back. Its Important 2 (server-side refusal on ours) already exists since Task 3 (LinkStore refuses ours) — Ruling: no change needed. Fix round 1 sent (+ make History's own arg required).
+- Task 4: minor (deferred): revised_by shows raw "admin#2" (no name lookup); latest() outside History's read tx; row date = ticket filled day, so date search uses that day; no 403 test on ours detail.
+- Task 4: fix round 1/5 (1 addressed, 0 open; commits 8b8e165..de9a27c)
+- Task 4: complete (commits 0f95613..de9a27c, review clean after 1 fix round)
+- Task 4: minor (deferred): readOurs doesn't type-check per-row numeric fields (NaN -> null).
+- Task 5: dispatched implementer (sonnet), BASE de9a27c
+- Task 5: implementer DONE_WITH_CONCERNS d81f50c (ROWS_PER_PAGE 20; bill page not axe-checked; @page in shared CSS; 'Continued on the next page' added)
+- Task 5: review — both seats Needs fixes: (1) wrapped/long descriptions overflow the fixed lines box (spill into totals / extra paper page); (2) axe not run on the bill markup. Ruling: never truncate descriptions (owner: info over looks) — paginate by estimated wrapped-line weight + table-layout fixed + overflow-wrap; committed PDF page-count e2e. Fix round 1 sent (+ minor: !data && error).
+- Task 5: minor (deferred): global @page and body rule in shared CSS (scope to named page later); "Continued on the next page" is extra wording — tell owner; X..... and ____ blanks are characters; Sub Total = parts+labor+supplies (owner to confirm vs real bill).
+- Task 5: fix round 1/5 (2 addressed + minor, 0 open; commits d81f50c..3ee496c)
+- Task 5: complete (commits de9a27c..3ee496c, review clean after 1 fix round)
+- Task 5: minor (deferred): CPL estimate assumes ordinary capitals (all-W descriptions may add an extra paper page, never overlap); trailing-space edge; header at caps leaves as few as 3 rows/page.
+- Task 6: dispatched implementer (opus), BASE 3ee496c
+- Task 6: implementer DONE_WITH_CONCERNS 4956653 (stray 'null' text in action row pre-existing; approved tickets keep only Mark filled; Reprint/Fix only where page knows it's ours; first-time tab closes during the number question)
+- Task 6: review — both seats Needs fixes: (1) Reprint/Fix rely on in-page S.bills (lost on reload/other device/lost reply); (2) approved tickets can't be billed at go-live; (3) first-number question hidden behind the pre-opened blank tab.
+- Ruling: add GET /api/own-bills/by-ticket/:id (admin, 404 when off) and use it in admin.html — the brief requires Reprint/Fix on filled tickets — cost: one small route outside the brief's file list.
+- Ruling: approved tickets get Approve & print too (Mark filled stays) — owner no longer types into InvoMax; server already allows — cost if wrong: an approved ticket already typed into InvoMax could get a second (our) bill; admin chooses the button.
+- Task 6: minor (deferred): pre-existing stray "null" text in admin.html action row; api() 204->{} change; weak waitForTimeout negative test; sparePort race; S.ownBilling set only after first upkeep result (brief Send to InvoMax flash).
+- Task 6: fix round 1 interrupted by usage limit (uncommitted WIP in tree); implementer resumed.
+- Task 6: implementer fix round 1 DONE cb58c23 (one unexplained api failure in one overlapping run; 3 later runs green -> final review: watch for flake)
+- Task 6: fix round 1/5 (3 Important + 3 minor addressed, 0 open; commits 4956653..cb58c23)
+- Task 6: minor (deferred): showBilled catch redraws pre-bill S.cur (second click gets 409 Already billed + Reprint); S.cur===t identity miss after poll delays the number; ownBillOf runs after busy released; no e2e for Stale-409-then-filled.
+- Task 6: complete (commits 3ee496c..cb58c23, review clean after 1 fix round)
+- Final review: dispatched (opus), range a14e3c0..cb58c23
+- Final review: With fixes — 0 Critical, 4 Important (I1 stray high number drives counter; I2 earlier revisions not viewable; I3 deleting billed ticket hides our bill; I4 history dates fixed bill by fix day), 10 Minor. Fix wave dispatched (opus), FIX_BASE cb58c23

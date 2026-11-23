@@ -1,15 +1,34 @@
 # Handoff — ticket-autofill
 
-**Updated:** 2026-11-22 (phase 4 built and reviewed on branch `phase4-bill-history`; not merged, not pushed — see "Phase 4 build"). Before that, 2026-11-20: **Branch:** `main`, pushed. The TypeScript shop server (`ts-shop-server`) passed its final two-seat review and was merged into `main` on 2026-11-20 as a fast-forward; see "TypeScript shop server" below. This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers.
+**Updated:** 2026-11-23. **Resume here: "Own billing — where it stands" just below.** This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers. Live today: still `shop.py`; the switch to the TS server (checklist step 5) is the owner's call. Older notes follow further down.
 
-**Live today: still `shop.py`, serving the merged pages.** Since the merge, the iPad check-in page is gone. On Python the new Delete and New customer buttons say "Not available on this server." The switch to the TypeScript server is the owner's call; follow the checklist below from step 3, since step 2 (merge) is done. `shop.py` and `shopwin.py` pick up the new `tickets.py` only when they restart.
-
-**Next task:** phase 4 of the spec, **bill history and backups**. That covers:
-- the `invoice_finals` table, written by `shopwin.py` "Record bill & mark filled" from InvoMax's final numbers;
-- `GET /api/invoices` search by tag, name, phone, VIN and dates;
-- nightly backups into `backups/` with 90 kept, plus `copy-backups <drive>`.
-
-It needs its own plan first: brainstorm, then a plan, then implementation with two reviewers per task.
+## Own billing — where it stands (2026-11-23, for the next agent)
+- **Branch `own-billing`** (pushed to GitHub; not merged into `main`). Worktree on this PC: `.claude/worktrees/own-billing`. Plan Tasks 1–6 are built, each reviewed by two reviewers and fixed (commits d68368a..cb58c23).
+- **Final whole-branch review:** "ready with fixes". 0 Critical, 4 Important. Full report: `docs/superpowers/reviews/2026-11-23-own-billing-final-review.md`. Every ruling and deferred minor from the build, in order: `docs/superpowers/reviews/2026-11-23-own-billing-ledger.md`.
+- **Fix wave for the final review: in progress when this was written.** Check `git log` and `git status` in the worktree for what landed. It covers:
+  - **I1:** refuse a typed final at or above our counter once the first number is confirmed, with a 409. Ignore InvoMax numbers far above the main run, judged from a read-only stats check of the trial `invomax.db`. The first-number dialog shows where the highest number came from.
+  - **I2:** Bill history lists earlier revisions and can view or print each one, for example `GET /api/own-bills/:no?rev=N`.
+  - **I3:** the server refuses Delete on a ticket that has our bill, with a 409, and the admin page hides the button.
+  - **I4:** the row date and the From/To search use the bill's own date (revision 1).
+  - Also: the stray "null" text in the admin.html action row, and `print-color-adjust` on the print page.
+- **Then (plan Task 7):**
+  - Rebuild api and admin-app in the worktree.
+  - Add `"ownBilling": true` and `"shop": {name, address[], phone, hours}` to `C:UsersOwnerDownloadsshop-trialshop-settings.json`. The values: JAPANESE AUTO SERVICE; 3413 WILSON BLVD / ARLINGTON, VA 22201; (703)522-3100; M-F 8.00 AM TO 7.00.
+  - Restart the trial server from the own-billing worktree: `$env:SHOP_ROOT='C:UsersOwnerDownloadsshop-trial'; $env:SHOP_PORT='18082'; node appsapidistmain.js` from `shop-web`.
+  - Run one made-up bill through it.
+  - Write the go-live steps here: switch first; set `ownBilling` and `shop` in the live settings; confirm the first number; stop using InvoMax for new bills.
+- **Tell the owner:**
+  - The print page adds "Continued on the next page", which isn't InvoMax wording.
+  - Sub Total = parts + labor + supplies; confirm it against a real bill.
+  - The rest of the minors are in the review report.
+- **Checks green at cb58c23:** `NX_DAEMON=false npx nx run-many -t test lint typecheck`, `NX_DAEMON=false npx nx e2e pages-e2e` (61 tests) and `node tools/switch-check.mjs`, all from `shop-web/`. One api test failure was seen once, in an overlapping run, and not reproduced. The reviewer blames the older free-port probes in `backup.spec.ts` and `http-core.spec.ts`.
+- **Merging into `main`:** only on the owner's yes.
+- **Standing rules:**
+  - Never write in `C:hunni`.
+  - No customer data in git, tests or logs. Use JANE DOE, (555)010-0000, XKS-4827 and invoices 9000001+.
+  - `shop.py` and `tickets.py` stay unchanged.
+  - No cloud and no CDN.
+  - Push only when the owner says so.
 
 ## Own billing (2026-11-23): our app prints the bill, InvoMax is retired for new bills
 - **Owner's decision:** no more typing into InvoMax, not even by tool. The phone-entered ticket goes straight onto our own printed bill. So the InvoMax auto-fill ("TODO: typing into InvoMax" below) is **dropped**.
@@ -20,7 +39,7 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
   - Invoice numbers continue after InvoMax's.
   - A fix is reprinted under the same number and looks exactly like the original on paper; only the app marks it "Revised".
   - The bill copies InvoMax's printout, with all the same information. Its look gets iterated later.
-- **Plan:** `docs/superpowers/plans/2026-11-23-own-billing.md`, Tasks 1–7. Run it subagent-driven on a new branch `own-billing` in its own worktree: one implementer and two reviewers per task. **Status: waiting for the owner's OK on the plan; nothing built yet.**
+- **Plan:** `docs/superpowers/plans/2026-11-23-own-billing.md`, Tasks 1–7. Run it subagent-driven on a new branch `own-billing` in its own worktree: one implementer and two reviewers per task. **Status: plan approved and built; see "where it stands" above.**
 - **Order:** the TS server switch comes first (built and checked 2026-11-23; the owner does it from step 5). Billing can be built and tried on the trial copy in the meantime.
 - **Owner's photos** of 4 signed InvoMax bills (2026-11-23) hold customer data. They were used to transcribe the fixed wording and layout and are **not** kept in the repo.
 
