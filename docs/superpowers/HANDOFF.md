@@ -79,6 +79,19 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
   - The import back-off resets when the server restarts.
   - A USB target *inside* `invomaxDir` is only refused because it is on the same drive. Add an explicit check before ever moving the shop root to another drive.
   - Some API-only edge cases: typed finals that reuse a real InvoMax number, and `markNone` over an InvoMax link not being recorded.
+- **Trial server for the owner checks (set up 2026-11-23, live shop untouched):**
+  - Phase 4 is merged into `main` but not live: the shop still runs `shop.py`. So the checks run on a **copy**: `C:\Users\Owner\Downloads\shop-trial\` (outside the repo; it holds customer data, never commit or copy it into git).
+    - It holds a SQLite online-backup copy of `tickets.db` taken 2026-11-23 09:20, `parts.csv`, `vehicles.json`, `web/`, the built admin app, and `shop-settings.json` with `backupTargets: []` (no USB copy).
+    - Its first run imported InvoMax read-only: 53,450 bills, 245,615 lines, 244 relabeled as labor.
+  - Start it from the worktree's `shop-web` (its build is at `main` 9e80457):
+    `$env:SHOP_ROOT = 'C:\Users\Owner\Downloads\shop-trial'; $env:SHOP_PORT = '18082'; node apps\api\dist\main.js`
+  - Open `http://127.0.0.1:18082/admin` on the shop PC only (no tunnel). Sign in with the usual admin account; a password change there doesn't reach the live shop.
+  - **Job mapping done on the trial lives only in the trial's `tickets.db` `job_map` table.** At the switch, copy those rows into the live `tickets.db` (server stopped), or the hour of mapping is lost.
+  - The test ticket for the price check lives only in the trial copy, so the live board never sees it.
+  - Import numbers for the 3 old bills (dollars; lines now add up on all three):
+    - #208780: parts 30.03, labor 105.00, supplies 1.50, tax 1.42, total 137.95.
+    - #213793: parts 85.99, labor 25.00, supplies 5.55, tax 4.58, total 121.12.
+    - #221558: parts 225.02, labor 26.00, supplies 12.55, tax 11.88, total 275.45.
 - **Owner checks still open (none approved yet):**
   1. The 3 bills from the 2000s listed above: compare their parts, labor and totals with InvoMax's screen. The #221558 labor question is answered.
   2. **Job mapping session (about 1 hour):** on `/jobs`, map the top groups until coverage reaches about 90% of lines. Note the coverage reached here.
