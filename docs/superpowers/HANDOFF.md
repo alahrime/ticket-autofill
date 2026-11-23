@@ -3,14 +3,17 @@
 **Updated:** 2026-11-23. **Resume here: "Own billing — where it stands" just below.** This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers. Live today: still `shop.py`; the switch to the TS server (checklist step 5) is the owner's call. Older notes follow further down.
 
 ## Own billing — where it stands (2026-11-23, for the next agent)
-- **Branch `own-billing`** (pushed to GitHub; not merged into `main`). Worktree on this PC: `.claude/worktrees/own-billing`. Plan Tasks 1–6 are built, each reviewed by two reviewers and fixed (commits d68368a..cb58c23).
+- **Branch `own-billing`** (pushed to GitHub; not merged into `main`). Worktree on this PC: `.claude/worktrees/own-billing`. Plan Tasks 1–6 are built, each reviewed by two reviewers and fixed (commits d68368a..cb58c23, then the final-review fixes below).
 - **Final whole-branch review:** "ready with fixes". 0 Critical, 4 Important. Full report: `docs/superpowers/reviews/2026-11-23-own-billing-final-review.md`. Every ruling and deferred minor from the build, in order: `docs/superpowers/reviews/2026-11-23-own-billing-ledger.md`.
-- **Fix wave for the final review: in progress when this was written.** Check `git log` and `git status` in the worktree for what landed. It covers:
-  - **I1:** refuse a typed final at or above our counter once the first number is confirmed, with a 409. Ignore InvoMax numbers far above the main run, judged from a read-only stats check of the trial `invomax.db`. The first-number dialog shows where the highest number came from.
-  - **I2:** Bill history lists earlier revisions and can view or print each one, for example `GET /api/own-bills/:no?rev=N`.
-  - **I3:** the server refuses Delete on a ticket that has our bill, with a 409, and the admin page hides the button.
-  - **I4:** the row date and the From/To search use the bill's own date (revision 1).
-  - Also: the stray "null" text in the admin.html action row, and `print-color-adjust` on the print page.
+- **Final-review fixes: done, pushed** (fc36447, 815c732, e9bf09c on `own-billing`). Covered:
+  - **I1:** a typed final at or above our counter is refused once the first number is confirmed (409). InvoMax numbers more than 10000 above the median of the last 400 days are ignored; on the trial data nothing is excluded and the proposed first number is the highest InvoMax number + 1. The first-number dialog names where the highest number came from.
+  - **I2:** Bill history lists earlier revisions, and each one can be viewed or printed (`?rev=N`).
+  - **I3:** a ticket with our bill can't be deleted.
+  - **I4:** our bill's date in history is the bill day.
+  - Also: the stray "null" text is gone, and the grey bands print.
+  - Green: run-many test/lint/typecheck, pages-e2e and switch-check.
+  - **Not done:** the scoped re-review of these 3 commits. Do it before merging. The api tests were seen red first; the admin-app/e2e tests were not.
+  - Known gap: typed finals entered before go-live still raise the proposed first number. The admin can type a higher number but not a lower one.
 - **Then (plan Task 7):**
   - Rebuild api and admin-app in the worktree.
   - Add `"ownBilling": true` and `"shop": {name, address[], phone, hours}` to `C:UsersOwnerDownloadsshop-trialshop-settings.json`. The values: JAPANESE AUTO SERVICE; 3413 WILSON BLVD / ARLINGTON, VA 22201; (703)522-3100; M-F 8.00 AM TO 7.00.
