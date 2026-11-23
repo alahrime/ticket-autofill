@@ -147,10 +147,9 @@ export class OwnBills {
   /**
    * The highest number used: InvoMax's exactly-7-digit numbers on bills dated within INVOMAX_DAYS, every
    * all-digit number of a typed final or ours, and the counter's last (next_no - 1). Numbers are text, compared
-   * as numbers.
+   * as numbers. `now` dates the window (approve's own time; else the clock).
    */
-  private highestUsed(): number {
-    const now = this.clock();
+  private highestUsed(now: Date = this.clock()): number {
     const from = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - INVOMAX_DAYS));
     const im = this.im
       .prepare(`SELECT MAX(CAST(invoice_no AS INTEGER)) AS n FROM im_invoices WHERE invoice_no GLOB ${SEVEN} AND "date" >= ?`)
@@ -195,19 +194,21 @@ export class OwnBills {
     });
   }
 
-  /** The next number free everywhere; call inside the transaction. */
-  private takeNumber(): string {
-    let n = this.highestUsed() + 1;
+  /** The next number free everywhere, InvoMax's window dated by `now`; call inside the transaction. */
+  private takeNumber(now: Date): string {
+    let n = this.highestUsed(now) + 1;
     while (this.taken(String(n))) n++; // an old InvoMax bill outside the window
     if (!OWN_NO.test(String(n))) throw new BadInput('no 7-digit invoice number is left');
     return String(n);
   }
 
+  /** `when` and `shop`: revision 1's (a fix keeps what the original printed); approve passes its own. */
   private snapshot(
     t: Ticket,
     no: string,
     revision: number,
     when: { date: string; time: string },
+    shop: Config['shopInfo'],
     lines: Line[],
     amounts: BillAmounts,
   ): BillSnapshot {
@@ -223,7 +224,7 @@ export class OwnBills {
       labor: rows.labor,
       parts: rows.parts,
       amounts,
-      shop: { ...this.config.shopInfo, address: [...this.config.shopInfo.address] },
+      shop: { ...shop, address: [...shop.address] },
     };
   }
 
@@ -261,7 +262,7 @@ export class OwnBills {
       if (t.version !== version) throw new Stale(t);
       const { lines, deposits, amounts } = billable(t, raw);
       // 2. the number
-      const no = this.takeNumber();
+      const no = this.takeNumber(now);
       // 3. the ticket, filled, holding exactly the lines billed
       t.lines = lines;
       t.deposits = deposits;
@@ -270,7 +271,15 @@ export class OwnBills {
       this.tickets.saveTx(t, version);
       // 4. the final and revision 1
       const at = nowIso(now);
-      const bill = this.snapshot(t, no, 1, { date: at.slice(0, 10), time: at.slice(11, 16) }, lines, amounts);
+      const bill = this.snapshot(
+        t,
+        no,
+        1,
+        { date: at.slice(0, 10), time: at.slice(11, 16) },
+        this.config.shopInfo,
+        lines,
+        amounts,
+      );
       this.db
         .prepare(
           `INSERT INTO invoice_finals (ticket_id, invoice_no, source, linked_at, linked_by, parts, labor, supplies, tax, total)
@@ -301,7 +310,7 @@ export class OwnBills {
 
   /**
    * A fix: the desk's edit of the billed ticket (as the edit route, a filled ticket allowed), then a new revision
-   * under the same number with revision 1's date and time, and the final's amounts updated, in one transaction.
+   * under the same number with revision 1's date, time and shop details, and the final's amounts updated, in one transaction.
    * Earlier revisions are never changed. NotFound unless `no` is ours; Stale; Invalid / BadInput as approve.
    */
   fix(no: string, fields: Record<string, unknown>, version: number, by: string, now: Date): BillSnapshot {
@@ -324,7 +333,7 @@ export class OwnBills {
       t.deposits = deposits;
       this.tickets.saveTx(t, version, { depositsSent });
       const was = JSON.parse(first.snapshot) as BillSnapshot;
-      const bill = this.snapshot(t, no, last.revision + 1, { date: was.date, time: was.time }, lines, amounts);
+      const bill = this.snapshot(t, no, last.revision + 1, { date: was.date, time: was.time }, was.shop, lines, amounts);
       const at = nowIso(now);
       this.db
         .prepare(

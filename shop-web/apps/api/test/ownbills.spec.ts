@@ -313,6 +313,17 @@ describe('fix', () => {
     });
   });
 
+  it("keeps revision 1's shop details, even after the settings changed", () => {
+    const cfg = { shopInfo: { ...SHOP.shopInfo, address: [...SHOP.shopInfo.address] } };
+    const mine = new OwnBills(db, im, cfg, () => NOW);
+    const first = mine.approve(ticket(), 1, BY, NOW);
+    cfg.shopInfo = { name: 'OTHER NAME', address: ['2 ELSEWHERE RD'], phone: '(555)010-0002', hours: 'SAT 9-1' };
+    const fixed = mine.fix(first.invoice_no, { first: 'john' }, 2, BY, LATER);
+    expect(fixed.shop).toEqual(first.shop);
+    expect(fixed.shop).toEqual(SHOP.shopInfo);
+    expect(mine.approve(ticket(), 1, BY, NOW).shop).toEqual(cfg.shopInfo); // a new bill takes the settings of now
+  });
+
   it('a stale version or a bad edit stores nothing; an unknown number is 404', () => {
     const id = ticket();
     own.approve(id, 1, BY, NOW);
