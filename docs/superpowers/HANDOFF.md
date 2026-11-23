@@ -50,7 +50,10 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
     - #208780 (2002-01-14): parts 30.03, labor 105.00, total 137.95.
     - #213793 (2005-01-18): parts 85.99, labor 25.00, total 121.12.
     - #221558 (2008-02-18): parts 225.02, labor 26.00, total 275.45.
-  - **Question on #221558:** all 5 lines are kind M (part), but the bill counts the 26.00 SAFETY INSPECTION as labor. Ask whether InvoMax shows that line as labor. Not approved until the owner says so.
+  - **#221558 answered (owner, 2026-11-23): "safety inspection is labor".** The bill's labor (@403) was right; InvoMax had marked the line M.
+    - Fix on branch `fix-labor-lines`: when a bill's part lines exceed its parts by exactly what its labor lines are short, the import relabels those lines as labor. That is either the one line of that amount, or the only set of lines that adds up to it.
+    - On the real files it relabels 244 lines, and the bills whose lines add up to their totals go from 99.11% to 99.47%.
+    - Bills already imported are corrected on the next import.
 - **Running e2e:** use `NX_DAEMON=false npx nx e2e pages-e2e`. With the nx daemon on, it hung for 15 minutes on this PC.
 - **Stage 4b done (Tasks 10–13, 2026-11-22; not merged, not pushed).**
   - **Job mapping** (`/jobs`, admin only):
@@ -77,7 +80,7 @@ It needs its own plan first: brainstorm, then a plan, then implementation with t
   - A USB target *inside* `invomaxDir` is only refused because it is on the same drive. Add an explicit check before ever moving the shop root to another drive.
   - Some API-only edge cases: typed finals that reuse a real InvoMax number, and `markNone` over an InvoMax link not being recorded.
 - **Owner checks still open (none approved yet):**
-  1. The 3 bills from the 2000s listed above, including the #221558 labor question.
+  1. The 3 bills from the 2000s listed above: compare their parts, labor and totals with InvoMax's screen. The #221558 labor question is answered.
   2. **Job mapping session (about 1 hour):** on `/jobs`, map the top groups until coverage reaches about 90% of lines. Note the coverage reached here.
   3. **Suggested prices check:** on a test ticket, enter 3–5 real jobs. See whether the suggestions and ranges look right, then delete the test ticket.
 
