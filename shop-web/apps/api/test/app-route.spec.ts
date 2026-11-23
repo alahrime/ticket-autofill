@@ -64,6 +64,35 @@ describe('the app pages', () => {
     expect(r.text).toContain('href="/admin"');
   });
 
+  it('/bills/<no>/print: 303 to /admin without a session, the app for an admin', async () => {
+    const r = await s.call('/bills/9000010/print');
+    expect([r.status, r.headers.location]).toEqual([303, '/admin']);
+    const ok = await s.call('/bills/9000010/print', undefined, a);
+    expect([ok.status, ok.text]).toEqual([200, INDEX]);
+    expect(ok.headers['cache-control']).toBe('no-store');
+    expect((await s.call('/bills/1/print?noprint=1', undefined, a)).status).toBe(200);
+  });
+
+  it('a mechanic is sent to /admin from the print page too', async () => {
+    const m = await s.tech('Al Fixit');
+    const r = await s.call('/bills/9000010/print', undefined, m);
+    expect([r.status, r.headers.location]).toEqual([303, '/admin']);
+  });
+
+  it('a print path needs a 1 to 7 digit number, and exactly /print', async () => {
+    const bad = [
+      '/bills/abc/print',
+      '/bills//print',
+      '/bills/12345678/print',
+      '/bills/9000010/print/',
+      '/bills/9000010/Print',
+      '/bills/9000010',
+      '/bills/-1/print',
+      '/bills/9000010/print/x',
+    ];
+    for (const p of bad) expect([p, (await s.call(p, undefined, a)).status]).toEqual([p, 404]);
+  });
+
   it('only the exact paths', async () => {
     for (const p of ['/bills/', '/Bills', '/bills/x']) expect([p, (await s.call(p, undefined, a)).status]).toEqual([p, 404]);
   });

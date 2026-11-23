@@ -1,0 +1,190 @@
+import { screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BillSnapshot, OwnBill } from '@shop/api-client';
+import { mockFetch, renderWithClient } from '../test-utils';
+import { BillPrint } from './BillPrint';
+import * as text from './billText';
+import { ROWS_PER_PAGE } from './paginate';
+
+const SNAPSHOT: BillSnapshot = {
+  invoice_no: '9000010',
+  revision: 1,
+  date: '2026-11-23',
+  time: '14:22',
+  customer: { first: 'Jane', last: 'Doe', phone: '(555)010-0000' },
+  vehicle: { year: '2015', make: 'Make', model: 'Model', plate: 'XKS-4827', vin: 'TESTVIN0000000001', odometer: '123456' },
+  mechanic: 'Al Fixit',
+  labor: [
+    { desc: 'DIAGNOSTIC', amount: 55 },
+    { desc: 'Remove & Install: BRAKE PADS', amount: 50 },
+  ],
+  parts: [{ desc: 'BRAKE PADS', qty: 1, price: 100, total: 100 }],
+  amounts: { parts: 100, labor: 105, supplies: 20, tax: 13.2, total: 238.2, deposit: 38.2, balance: 200 },
+  shop: { name: 'TEST SHOP', address: ['1 TEST ST', 'TESTVILLE, VA 22000'], phone: '(555)010-0001', hours: 'M-F 8.00 AM TO 5.00 PM' },
+};
+
+const own = (bill: BillSnapshot): OwnBill => ({ bill, revisions: [], ticket_id: 7 });
+
+function api(bill: BillSnapshot | number): string[] {
+  const urls: string[] = [];
+  mockFetch((_m, url) => {
+    urls.push(url);
+    if (url !== '/api/own-bills/9000010') return undefined;
+    return typeof bill === 'number' ? [bill, { error: 'nope' }] : [200, own(bill)];
+  });
+  return urls;
+}
+
+const print = vi.fn();
+beforeEach(() => {
+  print.mockReset();
+  vi.stubGlobal('print', print);
+  window.history.replaceState(null, '', '/bills/9000010/print');
+});
+afterEach(() => vi.unstubAllGlobals());
+
+const show = () => renderWithClient(<BillPrint no="9000010" />);
+const copies = () => screen.getAllByRole('region', { name: /^Bill copy/ });
+const manyLabor = (n: number) => Array.from({ length: n }, (_, i) => ({ desc: `LABOR LINE ${i + 1}`, amount: 10 }));
+const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+describe('BillPrint', () => {
+  it('prints the header, lines and totals of the snapshot, twice', async () => {
+    api(SNAPSHOT);
+    show();
+    await screen.findAllByText('INVOICE : 9000010');
+    expect(copies()).toHaveLength(2);
+    for (const copy of copies()) {
+      const c = within(copy);
+      expect(c.getByText('TEST SHOP')).toBeInTheDocument();
+      expect(c.getByText('1 TEST ST')).toBeInTheDocument();
+      expect(c.getByText('TESTVILLE, VA 22000')).toBeInTheDocument();
+      expect(c.getByText('(555)010-0001')).toBeInTheDocument();
+      expect(c.getByText('M-F 8.00 AM TO 5.00 PM')).toBeInTheDocument();
+      expect(c.getByText('JANE DOE')).toBeInTheDocument();
+      expect(c.getByText('(555)010-0000')).toBeInTheDocument();
+      expect(c.getByText('Year Make. 2015 Make Model')).toBeInTheDocument();
+      expect(c.getByText('License XKS-4827')).toBeInTheDocument();
+      expect(c.getByText('MLG in/out 123456 / 123456')).toBeInTheDocument();
+      expect(c.getByText('Vin TESTVIN0000000001')).toBeInTheDocument();
+      expect(c.getByText('Al Fixit')).toBeInTheDocument();
+      expect(c.getByText('Date 11/23/26')).toBeInTheDocument();
+      expect(c.getByText('Schedule 11/23/26')).toBeInTheDocument();
+      expect(c.getByText('INVOICE : 9000010')).toBeInTheDocument();
+      expect(c.getByText('02:22 pm')).toBeInTheDocument();
+      expect(c.getByText('Page 1')).toBeInTheDocument();
+      expect(c.getByRole('row', { name: 'DIAGNOSTIC 55.00' })).toBeInTheDocument();
+      expect(c.getByRole('row', { name: 'Remove & Install: BRAKE PADS 50.00' })).toBeInTheDocument();
+      expect(c.getByRole('row', { name: 'BRAKE PADS 1.00 100.00 100.00' })).toBeInTheDocument();
+    }
+  });
+
+  it('prints every total, the zero rows too, with 2 decimals', async () => {
+    api(SNAPSHOT);
+    show();
+    const copy = (await screen.findAllByRole('region', { name: /^Bill copy/ }))[0];
+    const rows: Array<[string, string]> = [
+      ['Parts & Lubricants', '100.00'],
+      ['Labor', '105.00'],
+      ['Sublet', '0.00'],
+      ['HAZ. DISPOSAL', '0.00'],
+      ['SHOP SUPPLY', '20.00'],
+      ['Gasoline', '0.00'],
+      ['Sub Total', '225.00'],
+      ['Sales Tax', '13.20'],
+      ['Deposit', '38.20'],
+      ['Disc. Applied', '0.00'],
+      ['TOTAL', '238.20'],
+      ['BALANCE DUE', '200.00'],
+    ];
+    for (const [label, amount] of rows) expect(within(copy).getByRole('row', { name: `${label} ${amount}` })).toBeInTheDocument();
+  });
+
+  it('prints each fixed paragraph of billText', async () => {
+    api(SNAPSHOT);
+    show();
+    const copy = (await screen.findAllByRole('region', { name: /^Bill copy/ }))[0];
+    const paragraphs = [
+      text.APPROVAL_NOTICE,
+      text.CHARGE,
+      text.PARTS_NEW,
+      text.STORAGE_NOTICE,
+      text.ACCEPTANCE_SIGNATURE,
+      text.ACCEPTANCE_TERMS,
+      text.LIABILITY,
+      text.AUTHORIZATION,
+    ];
+    expect(paragraphs.every((p) => p.length > 0)).toBe(true);
+    for (const p of paragraphs) expect(within(copy).getByText(p)).toBeInTheDocument();
+    for (const h of text.APPROVAL_COLUMNS) expect(within(copy).getByText(h)).toBeInTheDocument();
+    expect(text.STORAGE_NOTICE).toBe('DAILY STORAGE 24HRS AFTER JOB DONE $65.00. BY SIGNING I WILL NOT DISPUTE THE CHARGES.');
+    expect(text.AUTHORIZATION).toContain('labor is warranted for 90 days or 4000 miles');
+  });
+
+  it('calls print once after the data has loaded', async () => {
+    api(SNAPSHOT);
+    const { client } = show();
+    expect(print).not.toHaveBeenCalled();
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    await client.invalidateQueries(); // a refetch is not a reason to print again
+    await wait();
+    expect(print).toHaveBeenCalledTimes(1);
+  });
+
+  it('?noprint=1 shows the bill without printing', async () => {
+    window.history.replaceState(null, '', '/bills/9000010/print?noprint=1');
+    api(SNAPSHOT);
+    show();
+    await screen.findAllByText('INVOICE : 9000010');
+    await wait();
+    expect(print).not.toHaveBeenCalled();
+  });
+
+  it('never shows the revision, even for revision 2', async () => {
+    api({ ...SNAPSHOT, revision: 2 });
+    const { container } = show();
+    await screen.findAllByText('INVOICE : 9000010');
+    expect(container.textContent).not.toMatch(/revis/i);
+    expect(container.textContent).not.toMatch(/\brev\b/i);
+  });
+
+  it('a long bill continues on more pages: header repeated, Page N, totals on the last page only', async () => {
+    api({ ...SNAPSHOT, labor: manyLabor(40) });
+    show();
+    await screen.findAllByText('INVOICE : 9000010');
+    const pages = Math.ceil(40 / ROWS_PER_PAGE);
+    expect(pages).toBeGreaterThan(1);
+    for (const copy of copies()) {
+      const c = within(copy);
+      for (let n = 1; n <= pages; n++) expect(c.getByText(`Page ${n}`)).toBeInTheDocument();
+      expect(c.queryByText(`Page ${pages + 1}`)).not.toBeInTheDocument();
+      expect(c.getAllByText('INVOICE : 9000010')).toHaveLength(pages);
+      expect(c.getAllByText('JANE DOE')).toHaveLength(pages);
+      expect(c.getAllByText('TEST SHOP')).toHaveLength(pages);
+      expect(c.getAllByRole('row', { name: /^BALANCE DUE/ })).toHaveLength(1);
+      expect(c.getAllByRole('row', { name: /^TOTAL/ })).toHaveLength(1);
+      expect(c.getAllByText(text.AUTHORIZATION)).toHaveLength(1);
+      expect(c.getByText('LABOR LINE 1')).toBeInTheDocument();
+      expect(c.getByText('LABOR LINE 40')).toBeInTheDocument();
+    }
+    expect(screen.getAllByText('Page 2')).toHaveLength(2);
+  });
+
+  it('a bill that does not load says so plainly and never prints', async () => {
+    const urls = api(404);
+    show();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i);
+    await wait();
+    expect(urls).toContain('/api/own-bills/9000010');
+    expect(print).not.toHaveBeenCalled();
+    expect(screen.queryByText(/INVOICE/)).not.toBeInTheDocument();
+  });
+
+  it('signed out: tells the admin to sign in, never prints', async () => {
+    api(401);
+    show();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/sign in/i);
+    await wait();
+    expect(print).not.toHaveBeenCalled();
+  });
+});

@@ -23,6 +23,16 @@ describe('App', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Job mapping' })).toBeInTheDocument();
   });
 
+  it('routes /bills/<no>/print to the bare print page: no header', async () => {
+    mockFetch(() => undefined);
+    vi.stubGlobal('print', vi.fn());
+    window.history.replaceState(null, '', '/bills/9000010/print?noprint=1');
+    renderWithClient(<App />);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i);
+    expect(screen.queryByRole('link', { name: 'Back to tickets' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('banner')).not.toBeInTheDocument();
+  });
+
   it('anything else says so', () => {
     mockFetch(() => undefined);
     window.history.replaceState(null, '', '/app/x');

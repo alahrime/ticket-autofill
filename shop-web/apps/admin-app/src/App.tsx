@@ -1,9 +1,11 @@
 // The admin app's shell: the header (back to the tickets board, the app's pages) and the page for
-// location.pathname. /bills and /jobs are served by the shop server to a signed-in admin only.
+// location.pathname. /bills, /jobs and /bills/<no>/print are served by the shop server to a signed-in admin only.
+// The print page is bare (no header): it is what goes to the printer.
 import { BillHistory } from './bills/BillHistory';
 import { JobMapping } from './jobs/JobMapping';
 import { useDocumentTitle } from './lib/useDocumentTitle';
 import { usePathname } from './lib/useQueryState';
+import { BillPrint } from './print/BillPrint';
 
 const PAGES = [
   { path: '/bills', title: 'Bill history', Page: BillHistory },
@@ -18,8 +20,7 @@ function NotFound() {
   );
 }
 
-export function App() {
-  const path = usePathname();
+function Shell({ path }: { path: string }) {
   const page = PAGES.find((p) => p.path === path);
   const title = page?.title ?? 'Page not found';
   useDocumentTitle(title);
@@ -49,4 +50,12 @@ export function App() {
       </main>
     </>
   );
+}
+
+const PRINT = /^\/bills\/(\d{1,7})\/print$/;
+
+export function App() {
+  const path = usePathname();
+  const print = PRINT.exec(path);
+  return print ? <BillPrint no={print[1]} /> : <Shell path={path} />;
 }

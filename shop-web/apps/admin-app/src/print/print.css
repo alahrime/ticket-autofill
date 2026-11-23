@@ -1,0 +1,235 @@
+/* The bill print page: letter paper, the bill twice. Title in a bold serif, the rest in a plain sans, thin black
+   rules, a light grey band behind the column headings and the Deposit / Disc. Applied rows (spec: "Look").
+   --row and --rows go with ROWS_PER_PAGE in paginate.ts: a page holds at most that many rows per column. */
+@page {
+  size: letter;
+  margin: 0.4in;
+}
+
+.bill-print {
+  --row: 0.2in;
+  --rows: 20;
+  --ink: #000;
+  --band: #e6e6e6;
+  font: 9pt/1.2 Arial, Helvetica, sans-serif;
+  color: var(--ink);
+  background: #fff;
+  max-width: 7.7in;
+  margin: 0 auto;
+  padding: 0.4in 0;
+}
+
+.bill-print p,
+.bill-print h1 {
+  margin: 0;
+}
+
+.bill-print .print-heading {
+  font: bold 16pt/1.2 Arial, Helvetica, sans-serif;
+}
+
+.bill-print .print-message {
+  font-size: 12pt;
+  padding: 1em 0;
+}
+
+.bill-print .sheet {
+  display: flex;
+  flex-direction: column;
+  min-height: 10.1in;
+  break-inside: avoid;
+}
+
+/* every sheet after the first (the next page of a copy, and the second copy) starts a new paper page */
+.bill-print .sheet + .sheet,
+.bill-print .copy + .copy {
+  break-before: page;
+}
+
+.bill-print .copy + .copy {
+  margin-top: 0.4in;
+}
+
+.bill-print .sheet + .sheet {
+  margin-top: 0.4in;
+}
+
+.bill-print .title {
+  font: bold 20pt/1.1 'Times New Roman', Times, serif;
+  text-align: center;
+  padding-bottom: 0.08in;
+}
+
+.bill-print .head-cols {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1.5fr;
+  gap: 0.1in;
+  align-items: start;
+}
+
+.bill-print .head-cols p {
+  min-height: 1.2em;
+}
+
+.bill-print .head-cols .mechanic {
+  padding-top: 0.02in;
+}
+
+.bill-print .numbers {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.1in;
+  margin-top: 0.06in;
+  padding: 0.03in 0;
+  border-top: 1px solid var(--ink);
+  font-weight: bold;
+}
+
+.bill-print .invoice {
+  font-size: 11pt;
+}
+
+.bill-print .lines {
+  display: grid;
+  grid-template-columns: 1fr 1.7fr;
+  gap: 0;
+  height: calc((var(--rows) + 1) * var(--row));
+  border: 1px solid var(--ink);
+  margin-bottom: 0.1in;
+}
+
+.bill-print .lines table,
+.bill-print .totals {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.bill-print .lines th,
+.bill-print .lines td {
+  height: var(--row);
+  padding: 0 0.04in;
+  text-align: left;
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.bill-print .lines thead th {
+  background: var(--band);
+  border-bottom: 1px solid var(--ink);
+  font-size: 8pt;
+}
+
+.bill-print .lines .num {
+  text-align: right;
+}
+
+.bill-print .lines .labor {
+  border-right: 1px solid var(--ink);
+}
+
+.bill-print .more {
+  font-style: italic;
+  text-align: right;
+}
+
+.bill-print .bottom {
+  display: grid;
+  grid-template-columns: 1.55fr 1fr;
+  gap: 0.1in;
+  margin-top: auto;
+}
+
+.bill-print .box {
+  border: 1px solid var(--ink);
+  padding: 0.04in 0.06in;
+}
+
+.bill-print .small {
+  font-size: 8pt;
+}
+
+.bill-print .tiny {
+  font-size: 6.5pt;
+  line-height: 1.15;
+}
+
+.bill-print .notices {
+  display: grid;
+  gap: 0.06in;
+}
+
+.bill-print .approval-cols {
+  display: flex;
+  justify-content: space-between;
+  font-weight: bold;
+  border-bottom: 1px solid var(--ink);
+  min-height: 0.3in;
+  align-items: start;
+}
+
+.bill-print .charge {
+  font-weight: bold;
+}
+
+.bill-print .sign-line {
+  letter-spacing: 1px;
+  margin-top: 0.12in;
+}
+
+.bill-print .sign-title {
+  letter-spacing: 0.35em;
+  font-weight: bold;
+  font-size: 8pt;
+}
+
+.bill-print .initial {
+  letter-spacing: 1px;
+}
+
+.bill-print .totals th,
+.bill-print .totals td {
+  padding: 0.015in 0.06in;
+  border-bottom: 1px solid var(--ink);
+}
+
+.bill-print .totals th {
+  color: inherit;
+  text-align: left;
+  font-weight: normal;
+}
+
+.bill-print .totals td {
+  text-align: right;
+}
+
+.bill-print .totals .band th,
+.bill-print .totals .band td {
+  background: var(--band);
+}
+
+.bill-print .totals .strong th,
+.bill-print .totals .strong td {
+  font-weight: bold;
+  font-size: 10pt;
+}
+
+/* On paper: nothing but the bill (the page is bare already; this just drops the screen's grey and padding). */
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .bill-print {
+    max-width: none;
+    padding: 0;
+  }
+
+  .bill-print .sheet {
+    min-height: 10.1in;
+  }
+
+  .bill-print .sheet + .sheet,
+  .bill-print .copy + .copy {
+    margin-top: 0;
+  }
+}
