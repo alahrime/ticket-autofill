@@ -12,4 +12,6 @@ export interface Upkeep {
   backup: UpkeepBackup;
   import: UpkeepImport;
   needs_bill: number;
+  /** shop-settings.json turns the app's own billing on. */
+  ownBilling: boolean;
 }

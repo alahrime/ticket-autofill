@@ -18,6 +18,7 @@ export function upkeepRoutes(): Router {
       backup: backupHealth(config.backups, new Date(), config.invomaxDb),
       import: { running: nightly.running(), last: history.lastImport(), off: !config.importInvomax },
       needs_bill: links.needsBillCount(),
+      ownBilling: config.ownBilling,
     });
   });
 

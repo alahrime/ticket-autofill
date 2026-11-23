@@ -1949,7 +1949,8 @@ export const getUpkeepStatusUrl = () => {
  * never); `offsite_stale` when that is more than 7 days ago or the last copy failed (`offsite_failed`, its
  * error class). `import.last` is the newest InvoMax import (null before any); `import.off` when
  * shop-settings.json turns the import off (`"invomaxDir": null`). `needs_bill` counts the filled tickets with
- * no bill linked, typed or marked none.
+ * no bill linked, typed or marked none. `ownBilling` is true when shop-settings.json turns the app's own
+ * billing on (`"ownBilling": true`).
  * @summary How the backups and the InvoMax import stand (admin)
  */
 export const upkeepStatus = async ( options?: Parameters<typeof shopFetch>[1]): Promise<upkeepStatusResponse> => {

@@ -421,7 +421,8 @@ paths:
         never); `offsite_stale` when that is more than 7 days ago or the last copy failed (`offsite_failed`, its
         error class). `import.last` is the newest InvoMax import (null before any); `import.off` when
         shop-settings.json turns the import off (`"invomaxDir": null`). `needs_bill` counts the filled tickets with
-        no bill linked, typed or marked none.
+        no bill linked, typed or marked none. `ownBilling` is true when shop-settings.json turns the app's own
+        billing on (`"ownBilling": true`).
       responses:
         '200':
           description: The upkeep line.
@@ -1285,7 +1286,7 @@ components:
 
     Upkeep:
       type: object
-      required: [backup, import, needs_bill]
+      required: [backup, import, needs_bill, ownBilling]
       properties:
         backup:
           type: object
@@ -1308,6 +1309,7 @@ components:
                 - type: 'null'
                 - $ref: '#/components/schemas/ImportRun'
         needs_bill: { type: integer }
+        ownBilling: { type: boolean, description: "shop-settings.json turns the app's own billing on." }
 
     ImportRun:
       type: object

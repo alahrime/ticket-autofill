@@ -382,6 +382,8 @@ describe('config', () => {
       backups: join('C:\\shop', 'backups'),
       backupTargets: [],
       app: join('C:\\shop', 'shop-web', 'apps', 'admin-app', 'dist'),
+      ownBilling: false,
+      shopInfo: { name: '', address: [], phone: '', hours: '' },
     });
     expect(loadConfig({}).port).toBe(8081);
     expect(readFileSync(join(loadConfig({}).root, 'shop.py'), 'utf8')).toContain('HOST, PORT');

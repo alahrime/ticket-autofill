@@ -349,6 +349,7 @@ describe('upkeep', () => {
       backup: { last: null, stale: true, invomax: null, offsite: null, offsite_stale: false, offsite_failed: null },
       import: { running: false, last: null, off: false },
       needs_bill: 1,
+      ownBilling: false,
     });
   });
 
