@@ -19,6 +19,7 @@ export * from './billFixFields.js';
 export * from './billLink.js';
 export * from './billLinkSource.js';
 export * from './billNowResponse.js';
+export * from './billOwn.js';
 export * from './billRow.js';
 export * from './billSnapshot.js';
 export * from './billSnapshotCustomer.js';

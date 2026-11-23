@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { type Line, type Ticket, totals } from '@shop/domain';
 import { normalPlate, phoneDigits } from '@shop/invomax';
+import type { BillSnapshot, OwnBills } from '../billing/ownbills';
 import { openImDb } from '../invomax/imdb';
 import { TicketStore } from '../store';
 
@@ -44,12 +45,14 @@ export type Bill = {
     total: number;
     balance: number;
     lines: ImLineOut[];
-    source: 'invomax' | 'typed';
+    source: 'invomax' | 'typed' | 'ours';
     gone: boolean;
   } | null;
-  link: { source: 'invomax' | 'typed' | 'none'; linked_by: string; linked_at: string; version: number } | null;
+  link: { source: 'invomax' | 'typed' | 'none' | 'ours'; linked_by: string; linked_at: string; version: number } | null;
   /** Our subtotal less InvoMax's parts + labor, in dollars; null unless both sides are there. */
   difference: number | null;
+  /** Our own bill's number and revisions (revised_at / revised_by: the latest, null while there is only the first); else null. */
+  own: { invoice_no: string; revisions: number; revised_at: string | null; revised_by: string | null } | null;
 };
 
 export type Search = { tag?: string; name?: string; phone?: string; vin?: string; from?: string; to?: string; page?: number };
@@ -61,7 +64,7 @@ type Row = BillRow & { pn: string; vin: string; im_no: string | null };
 type Final = {
   ticket_id: number;
   invoice_no: string | null;
-  source: 'invomax' | 'typed' | 'none';
+  source: 'invomax' | 'typed' | 'none' | 'ours';
   linked_at: string;
   linked_by: string;
   parts: number | null;
@@ -184,7 +187,7 @@ function rowsSql(w: Where): string {
     WHERE 1${and(w.im)}
     UNION ALL
     SELECT 't' || t.id, t.day, f.invoice_no, t.id, trim(t.first || ' ' || t.last), digits(t.phone), t.vehicle, t.plate,
-      CASE WHEN f.source = 'typed' THEN f.total END, plate_norm(t.plate), t.vin, NULL
+      CASE WHEN f.source IN ('typed', 'ours') THEN f.total END, plate_norm(t.plate), t.vin, NULL
     FROM t LEFT JOIN main.invoice_finals f ON f.ticket_id = t.id
     WHERE (f.ticket_id IS NULL OR f.source <> 'invomax'
       OR NOT EXISTS (SELECT 1 FROM im.im_invoices x WHERE x.invoice_no = f.invoice_no))${and(w.t)}
@@ -197,8 +200,15 @@ export class History {
   private readonly db: Db;
   private readonly tickets: TicketStore;
 
-  /** tickets.db must exist (with invoice_finals: LinkStore makes it); an empty invomax.db is made if missing. */
-  constructor(ticketsDb: string, invomaxDb: string) {
+  /**
+   * tickets.db must exist (with invoice_finals: LinkStore makes it); an empty invomax.db is made if missing.
+   * `own` gives the lines and revisions of our own bills.
+   */
+  constructor(
+    ticketsDb: string,
+    invomaxDb: string,
+    private readonly own?: OwnBills,
+  ) {
     if (!existsSync(invomaxDb)) openImDb(invomaxDb).close();
     this.db = new DatabaseSync(ticketsDb, { readOnly: true });
     try {
@@ -343,7 +353,10 @@ export class History {
       } else return null;
 
       const before = ticket ? History.before(ticket) : null;
-      const after = inv
+      const ours = fin?.source === 'ours' && fin.invoice_no ? (this.own?.latest(fin.invoice_no) ?? null) : null;
+      const after = ours
+        ? History.ours(ours.bill)
+        : inv
         ? {
             invoice_no: inv.invoice_no,
             date: inv.date,
@@ -380,7 +393,11 @@ export class History {
             vehicle: inv ? this.firstVehicle(inv.invoice_no) : '',
             plate: inv?.plate ?? '',
           };
-      return { key: inv ? imKey(inv.invoice_no) : `t${ticket?.id ?? ''}`, customer, before, after, link, difference };
+      const newest = ours?.revisions.length && ours.revisions.length > 1 ? ours.revisions[ours.revisions.length - 1] : undefined;
+      const own = ours
+        ? { invoice_no: ours.bill.invoice_no, revisions: ours.revisions.length, revised_at: newest?.at ?? null, revised_by: newest?.by ?? null }
+        : null;
+      return { key: inv ? imKey(inv.invoice_no) : `t${ticket?.id ?? ''}`, customer, before, after, link, difference, own };
     });
   }
 
@@ -395,6 +412,28 @@ export class History {
     const tot = totals(t);
     const lines = t.lines.map((l) => ({ desc: l.desc, qty: l.qty, price: l.price, labor: l.labor, code: l.code, id: l.id }));
     return { ticket_id: t.id, lines, parts: tot.parts, labor: tot.labor, subtotal: tot.total };
+  }
+
+  /** Our own bill's latest snapshot as the after side: parts, then labor, as lines (money in dollars). */
+  private static ours(b: BillSnapshot): NonNullable<Bill['after']> {
+    const a = b.amounts;
+    const parts = b.parts.map((p) => ({ code: '', description: p.desc, kind: 'part' as const, qty: p.qty, unit: dollars(p.price), amount: dollars(p.total) }));
+    const labor = b.labor.map((l) => ({ code: '', description: l.desc, kind: 'labor' as const, qty: 1, unit: dollars(l.amount), amount: dollars(l.amount) }));
+    return {
+      invoice_no: b.invoice_no,
+      date: b.date,
+      parts: dollars(a.parts),
+      labor: dollars(a.labor),
+      supplies: dollars(a.supplies),
+      discount: 0,
+      deposit: dollars(a.deposit),
+      tax: dollars(a.tax),
+      total: dollars(a.total),
+      balance: dollars(a.balance),
+      lines: [...parts, ...labor],
+      source: 'ours',
+      gone: false,
+    };
   }
 
   /** A typed final as the after side: no lines; the deposits are the ticket's, the balance what is left. */

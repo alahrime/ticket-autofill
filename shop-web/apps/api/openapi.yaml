@@ -1526,7 +1526,7 @@ components:
         subtotal: { type: number }
 
     BillAfter:
-      description: The bill's side, InvoMax's or typed by the admin (typed ones have no lines). Money in dollars.
+      description: The bill's side, InvoMax's, typed by the admin (no lines) or our own (the latest revision). Money in dollars.
       type: object
       required: [invoice_no, date, parts, labor, supplies, discount, deposit, tax, total, balance, lines, source, gone]
       properties:
@@ -1543,22 +1543,32 @@ components:
         lines:
           type: array
           items: { $ref: '#/components/schemas/ImLine' }
-        source: { type: string, enum: [invomax, typed] }
+        source: { type: string, enum: [invomax, typed, ours] }
         gone: { type: boolean, description: InvoMax no longer has this bill. }
 
     BillLink:
       type: object
       required: [source, linked_by, linked_at, version]
       properties:
-        source: { type: string, enum: [invomax, typed, none] }
+        source: { type: string, enum: [invomax, typed, none, ours] }
         linked_by: { type: string, description: 'auto, or admin#<id>.' }
         linked_at: { type: string }
         version: { type: integer, description: 'What link, unlink, none and final send back.' }
 
+    BillOwn:
+      description: Our own bill's number and revisions.
+      type: object
+      required: [invoice_no, revisions, revised_at, revised_by]
+      properties:
+        invoice_no: { type: string }
+        revisions: { type: integer, description: 1 until the bill is fixed. }
+        revised_at: { type: [string, 'null'], description: When the latest fix was made; null with one revision. }
+        revised_by: { type: [string, 'null'], description: 'Who made it (admin#<id>); null with one revision.' }
+
     Bill:
       description: Both sides of a row. `difference` is our subtotal less the bill's parts + labor, in dollars.
       type: object
-      required: [key, customer, before, after, link, difference]
+      required: [key, customer, before, after, link, difference, own]
       properties:
         key: { type: string }
         customer: { $ref: '#/components/schemas/BillCustomer' }
@@ -1575,6 +1585,10 @@ components:
             - type: 'null'
             - $ref: '#/components/schemas/BillLink'
         difference: { type: [number, 'null'] }
+        own:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/BillOwn'
 
     Customer:
       type: object

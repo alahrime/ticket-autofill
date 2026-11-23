@@ -67,7 +67,7 @@ export function openHistory(config: Config, db: DatabaseSync): HistoryParts {
     const links = new LinkStore(db, im); // makes invoice_finals before the read-only connection looks for it
     const ownBills = new OwnBills(db, im, config); // makes own_bill_revisions and own_bill_counter
     const jobs = new JobIndex(new JobMap(db), im, config.catalog); // makes job_map; built on first use
-    const history = new History(config.db, config.invomaxDb);
+    const history = new History(config.db, config.invomaxDb, ownBills);
     return {
       im,
       links,

@@ -516,3 +516,83 @@ describe('search speed', () => {
     expect(performance.now() - t0).toBeLessThan(300);
   });
 });
+
+describe('our own bills in Bill history', () => {
+  const BY = 'admin#1';
+  const NOW = new Date(2026, 10, 23, 14, 22, 5);
+  const LATER = new Date(2026, 10, 24, 9, 5, 0);
+  let id: number;
+  beforeEach(async () => {
+    s = await makeServer();
+    a = await s.admin();
+    s.deps.ownBills.confirmFirst('9000010', BY);
+    id = s.store.create({
+      first: 'Jane',
+      last: 'Doe',
+      phone: '(555)010-0000',
+      year: '2015',
+      make: 'Honda',
+      model: 'Civic',
+      plate: 'xks-4827',
+      vin: '1TESTVIN000000009',
+      mechanic: 'Al Fixit',
+      lines: [{ desc: 'BRAKE PADS', qty: 1, price: 100, labor: 50 }, { desc: 'OIL FILTER', qty: 2, price: 7.5 }],
+    }).id;
+    s.deps.ownBills.approve(id, 1, BY, NOW);
+  });
+  afterEach(() => s.close());
+
+  it("the ticket's row has the bill's number and total", async () => {
+    const [code, body] = await get('/api/invoices?name=doe');
+    expect(code).toBe(200);
+    expect(body.rows).toEqual([
+      expect.objectContaining({ key: `t${id}`, invoice_no: '9000010', ticket_id: id, total: 180.65 }),
+    ]);
+  });
+
+  it('is found by tag, name, phone, VIN and date', async () => {
+    for (const q of ['tag=xks4827', 'name=jane', 'phone=5550100000', 'vin=1TESTVIN000000009']) expect([q, await keys(`?${q}`)]).toEqual([q, [`t${id}`]]);
+    const day = s.deps.history.search({ name: 'jane' }).rows[0]?.date;
+    expect(await keys(`?from=${day}&to=${day}`)).toEqual([`t${id}`]);
+  });
+
+  it("the detail's after side is the latest snapshot, from our own bill", async () => {
+    const [code, b] = await get(`/api/invoices/t${id}`);
+    expect(code).toBe(200);
+    expect(b.after).toEqual({
+      invoice_no: '9000010',
+      date: '2026-11-23',
+      parts: 115,
+      labor: 50,
+      supplies: 8.25,
+      discount: 0,
+      deposit: 0,
+      tax: 7.4,
+      total: 180.65,
+      balance: 180.65,
+      lines: [
+        { code: '', description: 'BRAKE PADS', kind: 'part', qty: 1, unit: 100, amount: 100 },
+        { code: '', description: 'OIL FILTER', kind: 'part', qty: 2, unit: 7.5, amount: 15 },
+        { code: '', description: 'Remove & Install: BRAKE PADS', kind: 'labor', qty: 1, unit: 50, amount: 50 },
+      ],
+      source: 'ours',
+      gone: false,
+    });
+    expect(b.link).toMatchObject({ source: 'ours' });
+    expect(b.own).toEqual({ invoice_no: '9000010', revisions: 1, revised_at: null, revised_by: null });
+  });
+
+  it('after a fix: revision 2, who and when, and the new amounts', async () => {
+    s.deps.ownBills.fix('9000010', { lines: [{ desc: 'BRAKE PADS', qty: 1, price: 100, labor: 60 }] }, 2, 'admin#2', LATER);
+    const [, b] = await get(`/api/invoices/t${id}`);
+    expect(b.own).toEqual({ invoice_no: '9000010', revisions: 2, revised_at: '2026-11-24T09:05:00', revised_by: 'admin#2' });
+    expect(b.after).toMatchObject({ date: '2026-11-23', labor: 60, source: 'ours' });
+    const [, rows] = await get('/api/invoices?name=doe');
+    expect(rows.rows[0].total).toBe(b.after.total);
+  });
+
+  it('other bills have own: null', async () => {
+    const other = filled('2026-11-15', { first: 'Ann', last: 'Sample', plate: 'qqq-111', phone: '(555) 010-0003' });
+    expect((await get(`/api/invoices/t${other}`))[1].own).toBeNull();
+  });
+});

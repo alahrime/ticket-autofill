@@ -9,6 +9,7 @@ import type { BillAfter } from './billAfter.js';
 import type { BillBefore } from './billBefore.js';
 import type { BillCustomer } from './billCustomer.js';
 import type { BillLink } from './billLink.js';
+import type { BillOwn } from './billOwn.js';
 
 /**
  * Both sides of a row. `difference` is our subtotal less the bill's parts + labor, in dollars.
@@ -21,4 +22,5 @@ export interface Bill {
   link: null | BillLink;
   /** @nullable */
   difference: number | null;
+  own: null | BillOwn;
 }

@@ -28,6 +28,15 @@ const TICKET_ONLY: Bill = {
   difference: null,
 };
 
+const OURS: Bill = {
+  ...BILL,
+  key: 't12',
+  after: { ...(BILL.after as NonNullable<Bill['after']>), invoice_no: '9000010', source: 'ours' },
+  link: { source: 'ours', linked_by: 'admin#1', linked_at: '2026-11-23T14:22:05', version: 2 },
+  difference: 0,
+  own: { invoice_no: '9000010', revisions: 1, revised_at: null, revised_by: null },
+};
+
 describe('BillDetail', () => {
   it('shows both sides, each with its lines and totals', async () => {
     api(BILL);
@@ -68,6 +77,33 @@ describe('BillDetail', () => {
     show(billOnly);
     expect(await screen.findByText('No ticket')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Unlink' })).not.toBeInTheDocument(); // nothing of ours to change
+  });
+
+  it('our bill: Reprint and Fix bill links, no link changes, no revised note with one revision', async () => {
+    api(OURS);
+    show(OURS);
+    const reprint = await screen.findByRole('link', { name: 'Reprint' });
+    expect(reprint).toHaveAttribute('href', '/bills/9000010/print');
+    expect(screen.getByRole('link', { name: 'Fix bill' })).toHaveAttribute('href', '/admin#fix=9000010');
+    expect(screen.getByRole('region', { name: 'Our bill' })).toHaveTextContent('Bill #9000010');
+    expect(screen.queryByText(/Revised/)).not.toBeInTheDocument();
+    for (const name of ['Unlink', 'Type the final bill']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Link by bill number')).not.toBeInTheDocument();
+  });
+
+  it('our bill fixed: says when and by whom', async () => {
+    const fixed: Bill = { ...OURS, own: { invoice_no: '9000010', revisions: 2, revised_at: '2026-11-24T09:05:00', revised_by: 'admin#2' } };
+    api(fixed);
+    show(fixed);
+    expect(await screen.findByText('Revised 2026-11-24 by admin#2')).toBeInTheDocument();
+  });
+
+  it('an InvoMax bill has no Reprint or Fix bill', async () => {
+    api(BILL);
+    show(BILL);
+    await screen.findByRole('region', { name: 'Our ticket' });
+    expect(screen.queryByRole('link', { name: 'Reprint' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Fix bill' })).not.toBeInTheDocument();
   });
 
   it('marks a bill InvoMax no longer has', async () => {

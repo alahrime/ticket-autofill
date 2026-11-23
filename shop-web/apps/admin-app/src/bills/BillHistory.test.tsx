@@ -158,6 +158,7 @@ describe('BillHistory', () => {
       after: null,
       link: null,
       difference: null,
+      own: null,
     });
     calls = mockFetch((method, url) => {
       if (method === 'POST') return [409, { error: 'changed on another device' }];
