@@ -3,6 +3,7 @@ import { createServer, type RequestListener, type Server } from 'node:http';
 import type { Socket } from 'node:net';
 import type { DatabaseSync } from 'node:sqlite';
 import { Accounts } from './accounts';
+import { OwnBills } from './billing/ownbills';
 import { createApp } from './app';
 import { className, logLine } from './http/log';
 import type { Config } from './config';
@@ -53,19 +54,24 @@ export function listen(app: RequestListener, where: { host: string; port: number
   });
 }
 
-/** invomax.db (made if missing), the links between tickets and bills, Bill history's read-only connection and the job index. */
-export type HistoryParts = { im: DatabaseSync; links: LinkStore; history: History; jobs: JobIndex; close(): void };
+/**
+ * invomax.db (made if missing), the links between tickets and bills, our own bills, Bill history's read-only
+ * connection and the job index.
+ */
+export type HistoryParts = { im: DatabaseSync; links: LinkStore; ownBills: OwnBills; history: History; jobs: JobIndex; close(): void };
 
 /** Opens what Bill history needs next to tickets.db (`db`); close() closes what it opened, never `db`. */
 export function openHistory(config: Config, db: DatabaseSync): HistoryParts {
   const im = openImDb(config.invomaxDb);
   try {
     const links = new LinkStore(db, im); // makes invoice_finals before the read-only connection looks for it
+    const ownBills = new OwnBills(db, im, config); // makes own_bill_revisions and own_bill_counter
     const jobs = new JobIndex(new JobMap(db), im, config.catalog); // makes job_map; built on first use
     const history = new History(config.db, config.invomaxDb);
     return {
       im,
       links,
+      ownBills,
       history,
       jobs,
       close: () => {
@@ -98,9 +104,9 @@ export async function startServer(
     const store = new TicketStore(db);
     const accounts = new Accounts(db);
     parts = openHistory(config, db);
-    const { im, links, history, jobs } = parts;
+    const { im, links, ownBills, history, jobs } = parts;
     // the nightly run starts after the purge, below: nothing reads deps.nightly before then (no request yet)
-    const deps: Deps = { store, accounts, config, links, history, jobs, nightly: NOT_STARTED };
+    const deps: Deps = { store, accounts, config, links, history, jobs, nightly: NOT_STARTED, ownBills };
     server = await listen(createApp(deps), config, { log: config.log, ...listenOpts });
     // straight after listening, before any request is read: a second copy that failed above changed nothing
     try {
@@ -138,6 +144,7 @@ export async function startServer(
 const NOT_STARTED: Nightly = {
   stop: () => undefined,
   importNow: () => 'running',
+  importWait: () => Promise.resolve('failed'),
   copyNow: () => Promise.resolve([]),
   running: () => false,
   settled: () => Promise.resolve(),

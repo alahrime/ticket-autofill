@@ -5,7 +5,7 @@ import { Invalid, Refused, Stale } from '@shop/domain';
 import { Locked, LoginFailed } from './accounts';
 import type { Config } from './config';
 import { contract } from './http/contract';
-import { BadInput, Gone, NotFound } from './errors';
+import { AlreadyBilled, BadInput, Gone, NotConfirmed, NotFound } from './errors';
 import type { Deps } from './http/deps';
 import { className, requestLog, writeLog } from './http/log';
 import { refuseCrossSite, refuseHugeBody, securityHeaders, sessionOf } from './http/security';
@@ -13,6 +13,7 @@ import { appRoutes } from './routes/app';
 import { authRoutes } from './routes/auth';
 import { billRoutes } from './routes/bills';
 import { catalogRoutes } from './routes/catalog';
+import { ownBillRoutes } from './routes/ownbills';
 import { jobMapRoutes } from './routes/jobmap';
 import { suggestRoutes } from './routes/suggest';
 import { ticketRoutes } from './routes/tickets';
@@ -32,6 +33,8 @@ function mapError(e: unknown): Mapped | null {
   if (e instanceof Locked)
     return { status: 429, body: { error: e.message }, headers: { 'Retry-After': String(e.retryAfter) } };
   if (e instanceof NotFound) return { status: 404, body: { error: 'not found' } };
+  if (e instanceof NotConfirmed) return { status: 428, body: { error: e.message } };
+  if (e instanceof AlreadyBilled) return { status: 409, body: { error: e.message, invoice_no: e.invoice_no } };
   if (e instanceof Stale || e instanceof Refused) return { status: 409, body: { error: e.message } };
   // body-parser / Express client errors (http-errors: a 4xx status and a type): Python's 400s, never their text
   if (e && typeof e === 'object') {
@@ -89,6 +92,7 @@ export function createApp(deps: Deps): Express {
   app.use(userRoutes());
   app.use(upkeepRoutes());
   app.use(billRoutes());
+  app.use(ownBillRoutes());
   app.use(jobMapRoutes());
   app.use(suggestRoutes());
   app.use(appRoutes());

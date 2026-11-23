@@ -23,3 +23,19 @@ export class Gone extends Error {
     this.name = 'Gone';
   }
 }
+
+/** Our own bills: nothing is numbered until the first invoice number is confirmed (428). */
+export class NotConfirmed extends Error {
+  constructor(message = 'confirm the first invoice number first') {
+    super(message);
+    this.name = 'NotConfirmed';
+  }
+}
+
+/** The ticket already has our bill: 409 with that bill's number, so the page can offer a reprint. */
+export class AlreadyBilled extends Error {
+  constructor(readonly invoice_no: string) {
+    super(`already billed as #${invoice_no}`);
+    this.name = 'AlreadyBilled';
+  }
+}

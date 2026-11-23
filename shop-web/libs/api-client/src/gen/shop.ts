@@ -25,11 +25,15 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AlreadyBilled,
   BadRequestResponse,
   Bill,
+  BillFix,
   BillNowResponse,
+  BillSnapshot,
   ChangedResponse,
   CheckIn,
+  Conflict,
   ConflictResponse,
   CopyBackups200,
   Customer,
@@ -37,9 +41,12 @@ import type {
   Edit,
   Error,
   FinalIn,
+  FirstNumber,
+  FirstNumberIn,
   GetCatalogParams,
   GoneResponse,
   Hint,
+  ImportFailedResponse,
   JobRuleIn,
   JobRuleKey,
   LinkIn,
@@ -61,6 +68,7 @@ import type {
   NotAllowedResponse,
   NotFoundResponse,
   Nothing,
+  OwnBill,
   PutJobRule200,
   SignInResponse,
   StartImport202,
@@ -3979,3 +3987,684 @@ export function useSuggestPrices<TData = Awaited<ReturnType<typeof suggestPrices
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
+export type getFirstInvoiceNumberResponse200 = {
+  data: FirstNumber
+  status: 200
+}
+
+export type getFirstInvoiceNumberResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type getFirstInvoiceNumberResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type getFirstInvoiceNumberResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type getFirstInvoiceNumberResponse503 = {
+  data: ImportFailedResponse
+  status: 503
+}
+
+export type getFirstInvoiceNumberResponseSuccess = (getFirstInvoiceNumberResponse200) & {
+  headers: Headers;
+};
+export type getFirstInvoiceNumberResponseError = (getFirstInvoiceNumberResponse401 | getFirstInvoiceNumberResponse403 | getFirstInvoiceNumberResponse404 | getFirstInvoiceNumberResponse503) & {
+  headers: Headers;
+};
+
+export type getFirstInvoiceNumberResponse = (getFirstInvoiceNumberResponseSuccess | getFirstInvoiceNumberResponseError)
+
+export const getGetFirstInvoiceNumberUrl = () => {
+
+
+
+
+  return `/api/own-bills/first-number`
+}
+
+/**
+ * Own billing (404 while `ownBilling` is off in shop-settings.json). Until the first number is confirmed,
+ * it runs the InvoMax import first (when the import is on) and waits for it, so InvoMax's bills from this
+ * morning count: a failed import is 503 and proposes nothing. `proposed` is the highest number used + 1:
+ * InvoMax's 7-digit numbers on bills of the last 400 days, typed finals' and our own numbers, and the
+ * counter. Once confirmed, it only reports (`proposed` is the number the next bill gets).
+ * @summary Whether our first invoice number is confirmed, and the number to propose (admin)
+ */
+export const getFirstInvoiceNumber = async ( options?: Parameters<typeof shopFetch>[1]): Promise<getFirstInvoiceNumberResponse> => {
+
+  return shopFetch<getFirstInvoiceNumberResponse>(getGetFirstInvoiceNumberUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFirstInvoiceNumberQueryKey = () => {
+    return [
+    `/api/own-bills/first-number`
+    ] as const;
+    }
+
+
+export const getGetFirstInvoiceNumberQueryOptions = <TData = Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | ImportFailedResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFirstInvoiceNumberQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFirstInvoiceNumber>>> = ({ signal }) => getFirstInvoiceNumber({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetFirstInvoiceNumberQueryResult = NonNullable<Awaited<ReturnType<typeof getFirstInvoiceNumber>>>
+export type GetFirstInvoiceNumberQueryError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | ImportFailedResponse>
+
+
+export function useGetFirstInvoiceNumber<TData = Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | ImportFailedResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getFirstInvoiceNumber>>,
+          TError,
+          Awaited<ReturnType<typeof getFirstInvoiceNumber>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetFirstInvoiceNumber<TData = Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | ImportFailedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getFirstInvoiceNumber>>,
+          TError,
+          Awaited<ReturnType<typeof getFirstInvoiceNumber>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetFirstInvoiceNumber<TData = Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | ImportFailedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether our first invoice number is confirmed, and the number to propose (admin)
+ */
+
+export function useGetFirstInvoiceNumber<TData = Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse | ImportFailedResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFirstInvoiceNumber>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetFirstInvoiceNumberQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type confirmFirstInvoiceNumberResponse204 = {
+  data: void
+  status: 204
+}
+
+export type confirmFirstInvoiceNumberResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type confirmFirstInvoiceNumberResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type confirmFirstInvoiceNumberResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type confirmFirstInvoiceNumberResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type confirmFirstInvoiceNumberResponse409 = {
+  data: ChangedResponse
+  status: 409
+}
+
+export type confirmFirstInvoiceNumberResponse503 = {
+  data: ImportFailedResponse
+  status: 503
+}
+
+export type confirmFirstInvoiceNumberResponseSuccess = (confirmFirstInvoiceNumberResponse204) & {
+  headers: Headers;
+};
+export type confirmFirstInvoiceNumberResponseError = (confirmFirstInvoiceNumberResponse400 | confirmFirstInvoiceNumberResponse401 | confirmFirstInvoiceNumberResponse403 | confirmFirstInvoiceNumberResponse404 | confirmFirstInvoiceNumberResponse409 | confirmFirstInvoiceNumberResponse503) & {
+  headers: Headers;
+};
+
+export type confirmFirstInvoiceNumberResponse = (confirmFirstInvoiceNumberResponseSuccess | confirmFirstInvoiceNumberResponseError)
+
+export const getConfirmFirstInvoiceNumberUrl = () => {
+
+
+
+
+  return `/api/own-bills/first-number`
+}
+
+/**
+ * Runs the InvoMax import first (when on), then refuses a number at or below the highest used (400).
+ * Already confirmed: 409. A failed import: 503, nothing confirmed.
+ * @summary Confirm our first invoice number, once (admin)
+ */
+export const confirmFirstInvoiceNumber = async (firstNumberIn: FirstNumberIn, options?: Parameters<typeof shopFetch>[1]): Promise<confirmFirstInvoiceNumberResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<confirmFirstInvoiceNumberResponse>(getConfirmFirstInvoiceNumberUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(firstNumberIn)
+  }
+);}
+
+
+
+
+
+export const getConfirmFirstInvoiceNumberMutationKey = () => ['confirmFirstInvoiceNumber'] as const;
+
+export const getConfirmFirstInvoiceNumberMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse | ImportFailedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmFirstInvoiceNumber>>, TError,ConfirmFirstInvoiceNumberMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmFirstInvoiceNumber>>, TError,ConfirmFirstInvoiceNumberMutationVariables, TContext> => {
+
+const mutationKey = getConfirmFirstInvoiceNumberMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmFirstInvoiceNumber>>, ConfirmFirstInvoiceNumberMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  confirmFirstInvoiceNumber(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmFirstInvoiceNumberMutationResult = NonNullable<Awaited<ReturnType<typeof confirmFirstInvoiceNumber>>>
+    export type ConfirmFirstInvoiceNumberMutationBody = BodyType<FirstNumberIn>
+    export type ConfirmFirstInvoiceNumberMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse | ImportFailedResponse>
+    export type ConfirmFirstInvoiceNumberMutationVariables = {data: BodyType<FirstNumberIn>}
+
+    /**
+ * @summary Confirm our first invoice number, once (admin)
+ */
+export const useConfirmFirstInvoiceNumber = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ChangedResponse | ImportFailedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmFirstInvoiceNumber>>, TError,ConfirmFirstInvoiceNumberMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmFirstInvoiceNumber>>,
+        TError,
+        ConfirmFirstInvoiceNumberMutationVariables,
+        TContext
+      > => {
+      return useMutation(getConfirmFirstInvoiceNumberMutationOptions(options), queryClient);
+    }
+
+export type approveBillResponse201 = {
+  data: BillSnapshot
+  status: 201
+}
+
+export type approveBillResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type approveBillResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type approveBillResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type approveBillResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type approveBillResponse409 = {
+  data: AlreadyBilled | Conflict | Error
+  status: 409
+}
+
+export type approveBillResponse428 = {
+  data: Error
+  status: 428
+}
+
+export type approveBillResponseSuccess = (approveBillResponse201) & {
+  headers: Headers;
+};
+export type approveBillResponseError = (approveBillResponse400 | approveBillResponse401 | approveBillResponse403 | approveBillResponse404 | approveBillResponse409 | approveBillResponse428) & {
+  headers: Headers;
+};
+
+export type approveBillResponse = (approveBillResponseSuccess | approveBillResponseError)
+
+export const getApproveBillUrl = (id: number,) => {
+
+
+
+
+  return `/api/tickets/${id}/bill`
+}
+
+/**
+ * Own billing (404 while off). In one transaction: checks the version, takes the next number, saves the
+ * ticket as filled, stores the bill (its invoice_finals row, source `ours`, and revision 1's snapshot) and
+ * moves the counter. Before the first number is confirmed: 428. The ticket already has our bill: 409 with
+ * its `invoice_no`. Another version: 409 with the stored ticket, as the ticket routes. No mechanic, no
+ * line, or lines that won't bill: 400. Filled or deleted: 409.
+ * @summary Approve & print - bill the ticket under the next invoice number (admin)
+ */
+export const approveBill = async (id: number,
+    versioned: Versioned, options?: Parameters<typeof shopFetch>[1]): Promise<approveBillResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<approveBillResponse>(getApproveBillUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(versioned)
+  }
+);}
+
+
+
+
+
+export const getApproveBillMutationKey = () => ['approveBill'] as const;
+
+export const getApproveBillMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | AlreadyBilled | Conflict | Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveBill>>, TError,ApproveBillMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof approveBill>>, TError,ApproveBillMutationVariables, TContext> => {
+
+const mutationKey = getApproveBillMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveBill>>, ApproveBillMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  approveBill(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveBillMutationResult = NonNullable<Awaited<ReturnType<typeof approveBill>>>
+    export type ApproveBillMutationBody = BodyType<Versioned>
+    export type ApproveBillMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | AlreadyBilled | Conflict | Error>
+    export type ApproveBillMutationVariables = {id: number;data: BodyType<Versioned>}
+
+    /**
+ * @summary Approve & print - bill the ticket under the next invoice number (admin)
+ */
+export const useApproveBill = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | AlreadyBilled | Conflict | Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveBill>>, TError,ApproveBillMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof approveBill>>,
+        TError,
+        ApproveBillMutationVariables,
+        TContext
+      > => {
+      return useMutation(getApproveBillMutationOptions(options), queryClient);
+    }
+
+export type getOwnBillResponse200 = {
+  data: OwnBill
+  status: 200
+}
+
+export type getOwnBillResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type getOwnBillResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type getOwnBillResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type getOwnBillResponseSuccess = (getOwnBillResponse200) & {
+  headers: Headers;
+};
+export type getOwnBillResponseError = (getOwnBillResponse401 | getOwnBillResponse403 | getOwnBillResponse404) & {
+  headers: Headers;
+};
+
+export type getOwnBillResponse = (getOwnBillResponseSuccess | getOwnBillResponseError)
+
+export const getGetOwnBillUrl = (no: string,) => {
+
+
+
+
+  return `/api/own-bills/${no}`
+}
+
+/**
+ * Own billing (404 while off). Not one of our bills, 404. Money in dollars.
+ * @summary Our bill's latest revision, its revisions and its ticket (admin)
+ */
+export const getOwnBill = async (no: string, options?: Parameters<typeof shopFetch>[1]): Promise<getOwnBillResponse> => {
+
+  return shopFetch<getOwnBillResponse>(getGetOwnBillUrl(no),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetOwnBillQueryKey = (no: string,) => {
+    return [
+    `/api/own-bills/${no}`
+    ] as const;
+    }
+
+
+export const getGetOwnBillQueryOptions = <TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(no: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOwnBillQueryKey(no);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOwnBill>>> = ({ signal }) => getOwnBill(no, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: no !== null && no !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetOwnBillQueryResult = NonNullable<Awaited<ReturnType<typeof getOwnBill>>>
+export type GetOwnBillQueryError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>
+
+
+export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ no: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOwnBill>>,
+          TError,
+          Awaited<ReturnType<typeof getOwnBill>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ no: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOwnBill>>,
+          TError,
+          Awaited<ReturnType<typeof getOwnBill>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ no: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Our bill's latest revision, its revisions and its ticket (admin)
+ */
+
+export function useGetOwnBill<TData = Awaited<ReturnType<typeof getOwnBill>>, TError = ErrorType<SignInResponse | NotAllowedResponse | NotFoundResponse>>(
+ no: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOwnBill>>, TError, TData>>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetOwnBillQueryOptions(no,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type fixOwnBillResponse200 = {
+  data: BillSnapshot
+  status: 200
+}
+
+export type fixOwnBillResponse400 = {
+  data: BadRequestResponse
+  status: 400
+}
+
+export type fixOwnBillResponse401 = {
+  data: SignInResponse
+  status: 401
+}
+
+export type fixOwnBillResponse403 = {
+  data: NotAllowedResponse
+  status: 403
+}
+
+export type fixOwnBillResponse404 = {
+  data: NotFoundResponse
+  status: 404
+}
+
+export type fixOwnBillResponse409 = {
+  data: ConflictResponse
+  status: 409
+}
+
+export type fixOwnBillResponseSuccess = (fixOwnBillResponse200) & {
+  headers: Headers;
+};
+export type fixOwnBillResponseError = (fixOwnBillResponse400 | fixOwnBillResponse401 | fixOwnBillResponse403 | fixOwnBillResponse404 | fixOwnBillResponse409) & {
+  headers: Headers;
+};
+
+export type fixOwnBillResponse = (fixOwnBillResponseSuccess | fixOwnBillResponseError)
+
+export const getFixOwnBillUrl = (no: string,) => {
+
+
+
+
+  return `/api/own-bills/${no}/fix`
+}
+
+/**
+ * Own billing (404 while off). `fields` are the ticket's, as POST /api/tickets/{id} takes them (the desk's
+ * rules; the filled ticket may change; it keeps a mechanic and a line); `version` is the ticket's. The new
+ * revision keeps revision 1's date and time; earlier revisions are never changed. Another version: 409
+ * with the stored ticket.
+ * @summary Fix our bill - edit its ticket and store a new revision under the same number (admin)
+ */
+export const fixOwnBill = async (no: string,
+    billFix: BillFix, options?: Parameters<typeof shopFetch>[1]): Promise<fixOwnBillResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return shopFetch<fixOwnBillResponse>(getFixOwnBillUrl(no),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(billFix)
+  }
+);}
+
+
+
+
+
+export const getFixOwnBillMutationKey = () => ['fixOwnBill'] as const;
+
+export const getFixOwnBillMutationOptions = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof fixOwnBill>>, TError,FixOwnBillMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof fixOwnBill>>, TError,FixOwnBillMutationVariables, TContext> => {
+
+const mutationKey = getFixOwnBillMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof fixOwnBill>>, FixOwnBillMutationVariables> = (props) => {
+          const {no,data} = props ?? {};
+
+          return  fixOwnBill(no,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type FixOwnBillMutationResult = NonNullable<Awaited<ReturnType<typeof fixOwnBill>>>
+    export type FixOwnBillMutationBody = BodyType<BillFix>
+    export type FixOwnBillMutationError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>
+    export type FixOwnBillMutationVariables = {no: string;data: BodyType<BillFix>}
+
+    /**
+ * @summary Fix our bill - edit its ticket and store a new revision under the same number (admin)
+ */
+export const useFixOwnBill = <TError = ErrorType<BadRequestResponse | SignInResponse | NotAllowedResponse | NotFoundResponse | ConflictResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof fixOwnBill>>, TError,FixOwnBillMutationVariables, TContext>, request?: SecondParameter<typeof shopFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof fixOwnBill>>,
+        TError,
+        FixOwnBillMutationVariables,
+        TContext
+      > => {
+      return useMutation(getFixOwnBillMutationOptions(options), queryClient);
+    }

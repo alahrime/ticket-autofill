@@ -133,7 +133,16 @@ export async function makeServer(opts: { admin?: boolean; stallMs?: number; nigh
       ...opts.nightly,
     },
   );
-  const deps: Deps = { store, accounts, config, links: parts.links, history: parts.history, jobs: parts.jobs, nightly };
+  const deps: Deps = {
+    store,
+    accounts,
+    config,
+    links: parts.links,
+    history: parts.history,
+    jobs: parts.jobs,
+    nightly,
+    ownBills: parts.ownBills,
+  };
   const server = await listen(createApp(deps), config, { stallMs: opts.stallMs });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 

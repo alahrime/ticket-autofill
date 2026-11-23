@@ -6,16 +6,19 @@ import { normalPlate, phoneDigits } from '@shop/invomax';
 import { BadInput, NotFound } from '../errors';
 import { TicketStore } from '../store';
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS invoice_finals (
+/** invoice_finals' columns, in order. source 'ours': a bill this app made (billing/ownbills.ts). */
+const FINALS_COLUMNS = `(
   ticket_id INTEGER PRIMARY KEY,
   invoice_no TEXT UNIQUE,
-  source TEXT NOT NULL CHECK (source IN ('invomax','typed','none')),
+  source TEXT NOT NULL CHECK (source IN ('invomax','typed','none','ours')),
   linked_at TEXT NOT NULL,
   linked_by TEXT NOT NULL,
   parts INTEGER, labor INTEGER, supplies INTEGER, tax INTEGER, total INTEGER,
   version INTEGER NOT NULL DEFAULT 1
-);
+)`;
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS invoice_finals ${FINALS_COLUMNS};
 CREATE TABLE IF NOT EXISTS invoice_unlinked (
   ticket_id INTEGER,
   invoice_no TEXT,
@@ -53,7 +56,7 @@ export type TypedFinal = {
 };
 
 export type Final = {
-  source: 'invomax' | 'typed' | 'none';
+  source: 'invomax' | 'typed' | 'none' | 'ours';
   invoice_no: string | null;
   version: number;
   parts: number | null;
@@ -84,6 +87,33 @@ function addDays(day: string, n: number): string {
 
 const filledDay = (t: Ticket): string => t.updated.slice(0, 10);
 
+/**
+ * Makes invoice_finals and invoice_unlinked if missing. A table made before 'ours' was a source (its stored SQL
+ * lacks it) is rebuilt with the wider CHECK in one transaction, every row and the UNIQUE invoice_no kept.
+ */
+export function ensureFinals(db: DatabaseSync): void {
+  db.exec(SCHEMA);
+  const sqlOf = (): string =>
+    (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'invoice_finals'").get() as { sql: string }).sql;
+  if (sqlOf().includes("'ours'")) return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (!sqlOf().includes("'ours'")) {
+      // another process may have rebuilt it while this one waited for the lock
+      const cols = (db.prepare('PRAGMA table_info(invoice_finals)').all() as { name: string }[]).map((c) => `"${c.name}"`).join(', ');
+      db.exec('DROP TABLE IF EXISTS invoice_finals_new');
+      db.exec(`CREATE TABLE invoice_finals_new ${FINALS_COLUMNS}`);
+      db.exec(`INSERT INTO invoice_finals_new (${cols}) SELECT ${cols} FROM invoice_finals`);
+      db.exec('DROP TABLE invoice_finals');
+      db.exec('ALTER TABLE invoice_finals_new RENAME TO invoice_finals');
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw e;
+  }
+}
+
 export class LinkStore {
   private readonly tickets: TicketStore;
 
@@ -91,7 +121,7 @@ export class LinkStore {
     private readonly db: DatabaseSync,
     private readonly im: DatabaseSync,
   ) {
-    this.db.exec(SCHEMA);
+    ensureFinals(db);
     this.tickets = new TicketStore(db);
   }
 
@@ -242,9 +272,14 @@ export class LinkStore {
     );
   }
 
-  /** Refused unless the stored row's version is `version` (null: no row). Call inside the transaction. */
+  /**
+   * Refused unless the stored row's version is `version` (null: no row), and for our own bill, which only a fix
+   * changes (billing/ownbills.ts). Call inside the transaction.
+   */
   private checkVersion(ticketId: number, version: number | null): void {
-    if ((this.final(ticketId)?.version ?? null) !== version) throw new Refused('changed on another device');
+    const f = this.final(ticketId);
+    if (f?.source === 'ours') throw new Refused(`this ticket has our own bill #${f.invoice_no ?? ''}: use Fix bill`);
+    if ((f?.version ?? null) !== version) throw new Refused('changed on another device');
   }
 
   private filled(ticketId: number): void {

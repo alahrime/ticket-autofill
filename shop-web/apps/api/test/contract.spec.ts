@@ -56,6 +56,8 @@ function responseChecker(): (schema: J, value: unknown) => unknown {
 const EXPECT: Record<string, number> = {
   'POST /api/upkeep/import': 202, // started in the background (it fails at once: the temp InvoMax folder is empty)
   'POST /api/upkeep/copy-backups': 400, // no USB drive is set up in a test (and a copy must go to another drive)
+  'POST /api/own-bills/first-number': 204, // confirmed: nothing to say
+  'POST /api/tickets/{id}/bill': 201, // a new bill
 };
 
 /** Ticket 2 filled on 2026-11-20 with Jane Testcase's phone, and InvoMax bill 9000001 of the same day. */
@@ -112,6 +114,10 @@ describe('the OpenAPI contract', () => {
     const a = await s.admin();
     expect((await s.call('/api/tickets', CAR, a)).body).toMatchObject({ id: 1 }); // the examples' ticket 1
     seedBillHistory(); // the Bill history examples' filled ticket 2 and bill 9000001
+    // own billing on, its import a stand-in (the temp InvoMax folder is empty): the first number is then 9000003,
+    // above InvoMax's 9000001 and the final example's typed 9000002, and ticket 1 (working, version 5) is billed
+    s.config.ownBilling = true;
+    s.nightly.importWait = () => Promise.resolve('ok');
     const check = responseChecker();
     for (const [method, path, op] of operations()) {
       const params: J[] = (op.parameters ?? []).map((p: J) =>
