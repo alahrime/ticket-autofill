@@ -260,13 +260,14 @@ export function BillDetail({ billKey, onKeyChange, onClose, focus = false }: Pro
             <OurTicket before={bill.before} />
             <InvoMaxBill after={bill.after} />
           </div>
-          {bill.own && (
+          {bill.own?.revisions === 0 && <p className="warn">This bill's saved copy is missing; it can't be reprinted.</p>}
+          {bill.own && bill.own.revisions > 0 && (
             <p className="changes">
               <a href={`/bills/${encodeURIComponent(bill.own.invoice_no)}/print`}>Reprint</a>{' '}
               <a href={`/admin#fix=${encodeURIComponent(bill.own.invoice_no)}`}>Fix bill</a>
             </p>
           )}
-          {bill.before && !bill.own && <Changes key={bill.key} bill={{ ...bill, before: bill.before }} onKeyChange={onKeyChange} />}
+          {bill.before && !bill.own && bill.link?.source !== 'ours' && <Changes key={bill.key} bill={{ ...bill, before: bill.before }} onKeyChange={onKeyChange} />}
         </>
       )}
     </section>

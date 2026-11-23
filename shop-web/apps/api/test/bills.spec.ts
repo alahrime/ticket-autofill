@@ -591,6 +591,19 @@ describe('our own bills in Bill history', () => {
     expect(rows.rows[0].total).toBe(b.after.total);
   });
 
+  it.each([
+    ['revision rows are missing', () => s.db.prepare('DELETE FROM own_bill_revisions').run()],
+    ['a snapshot is damaged', () => s.db.prepare("UPDATE own_bill_revisions SET snapshot = '{\"amounts\":5'").run()],
+    ['a snapshot has the wrong shape', () => s.db.prepare("UPDATE own_bill_revisions SET snapshot = '{\"parts\":1}'").run()],
+  ])('when %s: 200, from the final, own.revisions 0', async (_n, damage) => {
+    damage();
+    const [code, b] = await get(`/api/invoices/t${id}`);
+    expect(code).toBe(200);
+    expect(b.after).toMatchObject({ source: 'ours', invoice_no: '9000010', total: 180.65, lines: [] });
+    expect(b.own).toEqual({ invoice_no: '9000010', revisions: 0, revised_at: null, revised_by: null });
+    expect(b.link).toMatchObject({ source: 'ours' });
+  });
+
   it('other bills have own: null', async () => {
     const other = filled('2026-11-15', { first: 'Ann', last: 'Sample', plate: 'qqq-111', phone: '(555) 010-0003' });
     expect((await get(`/api/invoices/t${other}`))[1].own).toBeNull();

@@ -207,7 +207,7 @@ export class History {
   constructor(
     ticketsDb: string,
     invomaxDb: string,
-    private readonly own?: OwnBills,
+    private readonly own: OwnBills,
   ) {
     if (!existsSync(invomaxDb)) openImDb(invomaxDb).close();
     this.db = new DatabaseSync(ticketsDb, { readOnly: true });
@@ -353,9 +353,12 @@ export class History {
       } else return null;
 
       const before = ticket ? History.before(ticket) : null;
-      const ours = fin?.source === 'ours' && fin.invoice_no ? (this.own?.latest(fin.invoice_no) ?? null) : null;
+      const isOurs = fin?.source === 'ours';
+      const ours = isOurs && fin?.invoice_no ? this.readOurs(fin.invoice_no) : null;
       const after = ours
         ? History.ours(ours.bill)
+        : isOurs && fin
+          ? { ...History.typed(fin, ticket), source: 'ours' as const } // the saved copy is missing: the final's amounts, no lines
         : inv
         ? {
             invoice_no: inv.invoice_no,
@@ -396,7 +399,9 @@ export class History {
       const newest = ours?.revisions.length && ours.revisions.length > 1 ? ours.revisions[ours.revisions.length - 1] : undefined;
       const own = ours
         ? { invoice_no: ours.bill.invoice_no, revisions: ours.revisions.length, revised_at: newest?.at ?? null, revised_by: newest?.by ?? null }
-        : null;
+        : isOurs && fin
+          ? { invoice_no: fin.invoice_no ?? '', revisions: 0, revised_at: null, revised_by: null }
+          : null;
       return { key: inv ? imKey(inv.invoice_no) : `t${ticket?.id ?? ''}`, customer, before, after, link, difference, own };
     });
   }
@@ -412,6 +417,23 @@ export class History {
     const tot = totals(t);
     const lines = t.lines.map((l) => ({ desc: l.desc, qty: l.qty, price: l.price, labor: l.labor, code: l.code, id: l.id }));
     return { ticket_id: t.id, lines, parts: tot.parts, labor: tot.labor, subtotal: tot.total };
+  }
+
+  /** Our bill's latest snapshot and revisions; null when they are missing or damaged (never throws). */
+  private readOurs(no: string): ReturnType<OwnBills['latest']> {
+    try {
+      const got = this.own.latest(no);
+      const b = got?.bill as Partial<BillSnapshot> | undefined;
+      const a = b?.amounts as Record<string, unknown> | undefined;
+      if (!got || !b || typeof b !== 'object' || !a || typeof a !== 'object' || !Array.isArray(b.parts) || !Array.isArray(b.labor)) return null;
+      if (!['parts', 'labor', 'supplies', 'tax', 'total', 'deposit', 'balance'].every((k) => Number.isFinite(a[k]))) return null;
+      const rows = [...b.parts, ...b.labor] as unknown[];
+      if (!rows.every((r) => r !== null && typeof r === 'object' && typeof (r as { desc?: unknown }).desc === 'string')) return null;
+      if (typeof b.invoice_no !== 'string' || typeof b.date !== 'string' || !got.revisions.length) return null;
+      return got;
+    } catch {
+      return null;
+    }
   }
 
   /** Our own bill's latest snapshot as the after side: parts, then labor, as lines (money in dollars). */

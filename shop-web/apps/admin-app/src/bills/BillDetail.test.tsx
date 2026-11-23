@@ -91,6 +91,22 @@ describe('BillDetail', () => {
     expect(screen.queryByLabelText('Link by bill number')).not.toBeInTheDocument();
   });
 
+  it('our bill with no saved copy says so: no Reprint, no link controls', async () => {
+    const lost: Bill = { ...OURS, own: { invoice_no: '9000010', revisions: 0, revised_at: null, revised_by: null } };
+    api(lost);
+    show(lost);
+    expect(await screen.findByText("This bill's saved copy is missing; it can't be reprinted.")).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Reprint' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Unlink' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Link by bill number')).not.toBeInTheDocument();
+    // even if own were missing, an ours final never offers the link controls
+    const bare: Bill = { ...lost, own: null };
+    api(bare);
+    show(bare);
+    await screen.findAllByRole('region', { name: 'Our bill' });
+    expect(screen.queryByRole('button', { name: 'Type the final bill' })).not.toBeInTheDocument();
+  });
+
   it('our bill fixed: says when and by whom', async () => {
     const fixed: Bill = { ...OURS, own: { invoice_no: '9000010', revisions: 2, revised_at: '2026-11-24T09:05:00', revised_by: 'admin#2' } };
     api(fixed);
