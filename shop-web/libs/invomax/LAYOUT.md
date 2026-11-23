@@ -108,6 +108,7 @@ A fragment runs from its start offset to the next larger offset among the live o
 - `M` is part and `L` is labor.
 - `*`, any other kind, and **payment lines** are `other`. A payment line is one whose @96 holds a word, or whose code is `DEPOSIT`, as on older bills.
 - With payments excluded, the part lines sum to INVOICE parts and the labor lines to INVOICE labor (@403). This holds on 98.7% of bills since 2020 and 98.5–99.4% in earlier decades.
+- On about 0.4% of bills (mostly 2008) InvoMax marked labor lines `M` (STATE INSPECTION, LABOR, INSTALL-). When the part lines exceed INVOICE parts by D > 0 and the labor lines fall short of INVOICE labor by exactly D, the part line of amount D (else the one unique set of up to 12 part lines summing to D) is read as labor; a tie goes to code LABOR or INSTALL-, or an INSPECT description, then the first line. Bill fields never change; `relabeled` counts these lines.
 
 **`GENERIC_CODES`** (exported from `@shop/invomax`) are the codes whose job is named only in the description: `LABOR` (about 4,100 different descriptions since 2022) and `INSTALL-` (about 3,400). `NOTE`/`NOTEP` are note lines (`*`), not jobs.
 

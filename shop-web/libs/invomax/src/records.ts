@@ -202,7 +202,34 @@ export type InvoiceFiles = {
   oddSamples: string[];
   /** INVOICE records whose number was already seen; the last record wins. */
   duplicates: number;
+  /** Part lines read as labor because the bill's sums say InvoMax marked them wrong (LAYOUT.md). */
+  relabeled: number;
 };
+
+const MAX_SUBSET_LINES = 12;
+
+/** Which part lines (indexes into `parts`) to relabel as labor on a bill with a part excess of `d`, if the sums say so. */
+function laborMarkedAsPart(parts: ImLine[], d: number): number[] {
+  const single = parts.flatMap((l, i) => (l.amount === d ? [i] : []));
+  if (single.length > 0) {
+    const preferred = single.find((i) => {
+      const l = parts[i];
+      return l.code === 'LABOR' || l.code === 'INSTALL-' || l.description.toUpperCase().includes('INSPECT');
+    });
+    return [preferred ?? single[0]];
+  }
+  if (parts.length > MAX_SUBSET_LINES) return [];
+  let found: number[] = [];
+  let n = 0;
+  for (let mask = 1; mask < 1 << parts.length && n < 2; mask++) {
+    let sum = 0;
+    for (let i = 0; i < parts.length; i++) if (mask & (1 << i)) sum += parts[i].amount;
+    if (sum !== d) continue;
+    n++;
+    found = parts.flatMap((_, i) => (mask & (1 << i) ? [i] : []));
+  }
+  return n === 1 ? found : [];
+}
 
 export function readInvoiceFiles(invoiceFile: Buffer, detailFile: Buffer): InvoiceFiles {
   const inv = readBtrieve(invoiceFile);
@@ -260,6 +287,7 @@ export function readInvoiceFiles(invoiceFile: Buffer, detailFile: Buffer): Invoi
   }
 
   const lines: ImLine[] = [];
+  let relabeled = 0;
   const firstDate = new Map<string, string>();
   for (const [no, g] of groups) {
     g.sort((a, b) => a.d.order - b.d.order || a.seq - b.seq);
@@ -269,6 +297,26 @@ export function readInvoiceFiles(invoiceFile: Buffer, detailFile: Buffer): Invoi
       delete line.date;
       lines.push(line);
     });
+  }
+  // InvoMax marked some labor lines (inspections, LABOR, INSTALL-) as parts. The signature: the part lines
+  // exceed INVOICE parts by D while the labor lines fall short of INVOICE labor by the same D.
+  const byLine = new Map<string, ImLine[]>();
+  for (const l of lines) {
+    const list = byLine.get(l.invoice_no);
+    if (list) list.push(l);
+    else byLine.set(l.invoice_no, [l]);
+  }
+  for (const x of invoices) {
+    const mine = byLine.get(x.invoice_no);
+    if (!mine) continue;
+    const partLines = mine.filter((l) => l.kind === 'part');
+    const d = partLines.reduce((a, l) => a + l.amount, 0) - x.parts;
+    const laborSum = mine.reduce((a, l) => a + (l.kind === 'labor' ? l.amount : 0), 0);
+    if (d <= 0 || laborSum + d !== x.labor) continue;
+    for (const i of laborMarkedAsPart(partLines, d)) {
+      partLines[i].kind = 'labor';
+      relabeled++;
+    }
   }
   for (const x of invoices) if (!x.date) x.date = firstDate.get(x.invoice_no) ?? '';
 
@@ -280,5 +328,6 @@ export function readInvoiceFiles(invoiceFile: Buffer, detailFile: Buffer): Invoi
     oddNumbers: oddInvoice + oddDetail,
     oddSamples,
     duplicates,
+    relabeled,
   };
 }

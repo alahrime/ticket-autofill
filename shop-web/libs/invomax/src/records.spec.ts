@@ -193,3 +193,65 @@ test('a quantity outside 0..10000 is 0 and counted', () => {
   expect(r.lines[0]).toMatchObject({ qty: 0, amount: 0 });
   expect(r.badNumbers).toBe(1);
 });
+
+// ---- labor lines InvoMax marked as parts ----
+type L = { code: string; description: string; kind: 'part' | 'labor'; amount: number };
+const bill = (inv: { parts: number; labor: number }, lines: L[]) =>
+  readInvoiceFiles(
+    invFile([invoiceBytes({ invoice_no: '9000001', date: '2026-11-20', name: 'JANE DOE', phone: '(555)010-0000', plate: 'XKS-4827', ...inv })]),
+    detFile(
+      lines.map((l, i) =>
+        detailBytes({ invoice_no: '9000001', order: i, code: l.code, description: l.description, kind: l.kind, qty: 1, unit: l.amount }),
+      ),
+    ),
+  );
+const part = (code: string, amount: number, description = `ITEM ${code}`): L => ({ code, description, kind: 'part', amount });
+const labor = (code: string, amount: number, description = `JOB ${code}`): L => ({ code, description, kind: 'labor', amount });
+const kinds = (r: ReturnType<typeof bill>): string[] => r.lines.map((l) => l.kind);
+
+test('a part line InvoMax marked M for an inspection becomes labor', () => {
+  const r = bill({ parts: 5000, labor: 2600 }, [part('A1', 5000), part('INSP', 2600, 'SAFETY INSPECTION')]);
+  expect(kinds(r)).toEqual(['part', 'labor']);
+  expect(r.relabeled).toBe(1);
+  expect(r.invoices[0]).toMatchObject({ parts: 5000, labor: 2600 });
+});
+
+test('of two part lines of amount D, the LABOR one is relabeled', () => {
+  const r = bill({ parts: 5000, labor: 2000 }, [part('A1', 2000), part('LABOR', 2000, 'SOMETHING'), part('B2', 3000)]);
+  expect(kinds(r)).toEqual(['part', 'labor', 'part']);
+  expect(r.relabeled).toBe(1);
+});
+
+test('with two lines of amount D and no preferred one, the first is relabeled', () => {
+  const r = bill({ parts: 5000, labor: 2000 }, [part('A1', 2000), part('A2', 2000), part('B2', 3000)]);
+  expect(kinds(r)).toEqual(['labor', 'part', 'part']);
+});
+
+test('a unique two-line subset summing to D is relabeled', () => {
+  const r = bill({ parts: 10000, labor: 3300 }, [part('A1', 10000), part('A2', 1000), part('A3', 2300)]);
+  expect(kinds(r)).toEqual(['part', 'labor', 'labor']);
+  expect(r.relabeled).toBe(2);
+});
+
+test('several subsets summing to D leave the bill as it is', () => {
+  const r = bill({ parts: 10000, labor: 3000 }, [part('A1', 10000), part('A2', 1000), part('A3', 2000), part('A4', 1500), part('A5', 1500)]);
+  expect(kinds(r)).toEqual(['part', 'part', 'part', 'part', 'part']);
+  expect(r.relabeled).toBe(0);
+});
+
+test('no subset summing to D leaves the bill as it is', () => {
+  const r = bill({ parts: 10000, labor: 3000 }, [part('A1', 10000), part('A2', 1100), part('A3', 1100), part('A4', 1100)]);
+  expect(r.relabeled).toBe(0);
+});
+
+test('a bill whose sums already match is untouched', () => {
+  const r = bill({ parts: 5000, labor: 2600 }, [part('A1', 5000), labor('L1', 2600)]);
+  expect(kinds(r)).toEqual(['part', 'labor']);
+  expect(r.relabeled).toBe(0);
+});
+
+test('a part excess with a labor gap that is not D is untouched', () => {
+  const r = bill({ parts: 5000, labor: 2700 }, [part('A1', 5000), part('INSP', 2600, 'SAFETY INSPECTION')]);
+  expect(kinds(r)).toEqual(['part', 'part']);
+  expect(r.relabeled).toBe(0);
+});

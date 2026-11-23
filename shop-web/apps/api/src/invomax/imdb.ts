@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS im_imports (
   odd INTEGER NOT NULL DEFAULT 0,
   bad INTEGER NOT NULL DEFAULT 0,
   duplicates INTEGER NOT NULL DEFAULT 0,
+  relabeled INTEGER NOT NULL DEFAULT 0,
   ms INTEGER NOT NULL DEFAULT 0,
   error TEXT NOT NULL DEFAULT '',
   vehicles_hash TEXT NOT NULL DEFAULT ''
@@ -83,5 +84,7 @@ export function openImDb(path: string): DatabaseSync {
   const cols = db.prepare('PRAGMA table_info(im_imports)').all() as { name: string }[];
   if (!cols.some((c) => c.name === 'vehicles_hash'))
     db.exec("ALTER TABLE im_imports ADD COLUMN vehicles_hash TEXT NOT NULL DEFAULT ''"); // a db made before the column
+  if (!cols.some((c) => c.name === 'relabeled'))
+    db.exec('ALTER TABLE im_imports ADD COLUMN relabeled INTEGER NOT NULL DEFAULT 0'); // a db made before the column
   return db;
 }

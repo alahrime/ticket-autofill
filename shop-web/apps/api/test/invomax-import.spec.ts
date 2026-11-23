@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -78,17 +79,17 @@ test('first import stores everything and logs counts only', async () => {
   const r = await importOnce(cfg, { sleep });
   expect(r).toMatchObject({ ok: true, tries: 1, invoices: 3, lines: 5, added: 3, changed: 0, gone: 0, error: '' });
   expect(log()).toMatch(/invomax import ok 3\/5 \+3 ~0 -0/);
-  expect(log()).toMatch(/invomax import notes odd 0 bad 0 dup 0 \d+ms/);
+  expect(log()).toMatch(/invomax import notes odd 0 bad 0 dup 0 relabeled 0 \d+ms/);
   expect(log()).not.toMatch(/DOE|5550100000|XKS4827/);
   expect(count('im_invoices')).toBe(3);
   expect(count('im_lines')).toBe(5);
   expect(q<{ year: number }>('SELECT year FROM im_lines LIMIT 1')[0].year).toBe(2019);
   expect(q<{ journal_mode: string }>('PRAGMA journal_mode')[0].journal_mode).toBe('wal');
-  const rows = q<{ ok: number; invoices: number; lines: number; odd: number; bad: number; duplicates: number; started: string }>(
+  const rows = q<{ ok: number; invoices: number; lines: number; odd: number; bad: number; duplicates: number; relabeled: number; started: string }>(
     'SELECT * FROM im_imports',
   );
   expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({ ok: 1, invoices: 3, lines: 5, odd: 0, bad: 0, duplicates: 0 });
+  expect(rows[0]).toMatchObject({ ok: 1, invoices: 3, lines: 5, odd: 0, bad: 0, duplicates: 0, relabeled: 0 });
   expect(rows[0].started).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$/);
 });
 
@@ -133,6 +134,35 @@ test('an invoice whose lines alone changed counts as changed', async () => {
     [line('9000001', 1), line('9000001', 2), line('9000002', 1, { description: 'X' }), line('9000003', 1), line('9000003', 2)],
   );
   expect(await importOnce(cfg, { sleep })).toMatchObject({ changed: 1, added: 0 });
+});
+
+test('a bill already imported with a part line that is really labor gets the kind updated on re-import', async () => {
+  // InvoMax typed the inspection M, but the bill's own sums (parts 10.00, labor 26.00) say labor
+  put(
+    [inv('9000004', { parts: 1000, labor: 2600 })],
+    [line('9000004', 1, { unit: 1000, amount: 1000 }), line('9000004', 2, { code: 'INSP', description: 'SAFETY INSPECTION', unit: 2600, amount: 2600 })],
+  );
+  const r = await importOnce(cfg, { sleep });
+  expect(r).toMatchObject({ ok: true, added: 1, changed: 0 });
+  expect(q<{ kind: string }>("SELECT kind FROM im_lines WHERE invoice_no = '9000004' ORDER BY line_no").map((x) => x.kind)).toEqual(['part', 'labor']);
+  expect(q<{ relabeled: number }>('SELECT relabeled FROM im_imports')[0].relabeled).toBe(1);
+  expect(log()).toMatch(/relabeled 1 /);
+
+  // put the row back as an import before this fix stored it: kind part, and the hash of the lines as read then
+  const stored = q<{ line_no: number; code: string; description: string; kind: string; qty: number; unit: number; amount: number; vehicle: string; invoice_no: string }>(
+    "SELECT * FROM im_lines WHERE invoice_no = '9000004' ORDER BY line_no",
+  );
+  const before = stored.map((x) => ({
+    invoice_no: x.invoice_no, line_no: x.line_no, code: x.code, description: x.description, kind: x.code === 'INSP' ? 'part' : x.kind,
+    qty: x.qty, unit: x.unit, amount: x.amount, vehicle: x.vehicle,
+  }));
+  const db = new DatabaseSync(cfg.invomaxDb);
+  db.prepare("UPDATE im_lines SET kind = 'part' WHERE code = 'INSP'").run();
+  db.prepare("UPDATE im_invoices SET lines_hash = ? WHERE invoice_no = '9000004'").run(createHash('sha256').update(JSON.stringify(before)).digest('hex'));
+  db.close();
+  const again = await importOnce(cfg, { sleep });
+  expect(again).toMatchObject({ ok: true, added: 0, changed: 1 });
+  expect(q<{ kind: string }>("SELECT kind FROM im_lines WHERE code = 'INSP'")).toEqual([{ kind: 'labor' }]);
 });
 
 test('lines of no invoice are stored too', async () => {

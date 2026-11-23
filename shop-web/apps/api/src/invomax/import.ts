@@ -309,11 +309,11 @@ export async function importOnce(config: Config, opts: ImportOpts = {}): Promise
         const c = upsert(db, d, vehicles, vhash, now());
         const ms = Date.now() - t0;
         db.prepare(
-          `INSERT INTO im_imports (started, finished, ok, tries, invoices, lines, added, changed, gone, odd, bad, duplicates, ms, vehicles_hash)
-           VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(started, now(), tries, c.invoices, c.lines, c.added, c.changed, c.gone, d.oddNumbers, d.badNumbers, d.duplicates, ms, vhash);
+          `INSERT INTO im_imports (started, finished, ok, tries, invoices, lines, added, changed, gone, odd, bad, duplicates, relabeled, ms, vehicles_hash)
+           VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(started, now(), tries, c.invoices, c.lines, c.added, c.changed, c.gone, d.oddNumbers, d.badNumbers, d.duplicates, d.relabeled, ms, vhash);
         logLine(config.log, `invomax import ok ${c.invoices}/${c.lines} +${c.added} ~${c.changed} -${c.gone}`);
-        logLine(config.log, `invomax import notes odd ${d.oddNumbers} bad ${d.badNumbers} dup ${d.duplicates} ${ms}ms`);
+        logLine(config.log, `invomax import notes odd ${d.oddNumbers} bad ${d.badNumbers} dup ${d.duplicates} relabeled ${d.relabeled} ${ms}ms`);
         return { ok: true, tries, ...c, error: '', failure: '' };
       } catch (e) {
         rmSync(invoiceTry, { force: true });
