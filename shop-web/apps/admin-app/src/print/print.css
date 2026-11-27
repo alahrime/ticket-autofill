@@ -1,6 +1,7 @@
-/* The bill print page: letter paper, the bill twice. Title in a bold serif, the rest in a plain sans, thin black
-   rules, a light grey band behind the column headings and the Deposit / Disc. Applied rows (spec: "Look").
-   --row (0.2in) goes with ROW_IN in paginate.ts, which budgets the lines a page holds. */
+/* The bill print page: letter paper, the bill twice (spec 2026-11-27-bill-print-design.md, layout A "classic,
+   cleaned up"). The shop name in a bold serif, the rest in Arial; thin black rules; grey heading bands; every
+   other line shaded. --row (0.2in) goes with ROW_IN in paginate.ts, and the header and bottom heights with its
+   head constants and BOTTOM_IN: change them together. */
 @page {
   size: letter;
   margin: 0.4in;
@@ -9,11 +10,13 @@
 .bill-print {
   --row: 0.2in;
   --ink: #000;
-  --band: #e6e6e6;
-  font: 9pt/1.2 Arial, Helvetica, sans-serif;
+  --band: #e8e8e8;
+  --shade: #e9e9e9;
+  --soft: #444;
+  font: 9pt/1.3 Arial, Helvetica, sans-serif;
   color: var(--ink);
   background: #fff;
-  /* the grey bands print even with the browser's "Background graphics" unticked (Chrome and Edge leave it off) */
+  /* the grey bands and shading print even with the browser's "Background graphics" unticked */
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
   max-width: 7.7in;
@@ -22,9 +25,11 @@
 }
 
 .bill-print p,
-.bill-print h1 {
+.bill-print h1,
+.bill-print dl,
+.bill-print dd {
   margin: 0;
-  overflow-wrap: anywhere; /* a long unbroken value wraps instead of widening its column */
+  overflow-wrap: anywhere; /* a long unbroken value wraps instead of widening its box */
 }
 
 .bill-print .print-heading {
@@ -49,94 +54,168 @@
   break-before: page;
 }
 
-.bill-print .copy + .copy {
-  margin-top: 0.4in;
-}
-
+.bill-print .copy + .copy,
 .bill-print .sheet + .sheet {
   margin-top: 0.4in;
 }
 
-.bill-print .title {
-  font: bold 20pt/1.1 'Times New Roman', Times, serif;
-  text-align: center;
-  padding-bottom: 0.08in;
-}
-
-.bill-print .head-cols {
+/* ---- header ---- */
+.bill-print .top {
   display: grid;
-  grid-template-columns: 1fr 1.4fr 1.5fr;
-  gap: 0.1in;
+  grid-template-columns: 1fr 2.4in;
+  gap: 0.2in;
   align-items: start;
 }
 
-.bill-print .head-cols > div {
+.bill-print .shop {
   min-width: 0;
 }
 
-.bill-print .head-cols p {
-  min-height: 1.2em;
+.bill-print .title {
+  display: inline-block;
+  font: bold 22pt/1.05 'Times New Roman', Times, serif;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.06in;
+  padding-bottom: 0.05in;
+  border-bottom: 1.5px solid var(--ink);
 }
 
-.bill-print .head-cols .mechanic {
-  padding-top: 0.02in;
+.bill-print .addr {
+  font-size: 10pt;
+  letter-spacing: 0.12em;
+  margin-bottom: 0.03in;
 }
 
-.bill-print .numbers {
+.bill-print .contact {
+  font-size: 10pt;
+  letter-spacing: 0.05em;
+}
+
+.bill-print .contact .k {
+  font-size: 7.5pt;
+  font-weight: bold;
+  letter-spacing: 0.14em;
+  color: #666;
+}
+
+.bill-print .contact .sep {
+  display: inline-block;
+  width: 1px;
+  height: 9pt;
+  background: #999;
+  margin: 0 0.12in;
+  vertical-align: -1px;
+}
+
+/* the logo spot: blank space until the shop has a logo file; a logo is scaled to fit, never cropped */
+.bill-print .logo {
+  height: 0.8in;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.bill-print .logo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.bill-print .info {
+  display: grid;
+  grid-template-columns: 1fr 2.1fr;
+  border: 1px solid var(--ink);
+  margin-top: 0.1in;
+}
+
+.bill-print .info > * {
+  min-width: 0;
+  padding: 0.05in 0.11in;
+}
+
+.bill-print .info > * + * {
+  border-left: 1px solid var(--ink);
+}
+
+.bill-print .vcols {
+  display: grid;
+  grid-template-columns: 0.8fr 1.5fr;
+  gap: 0.22in;
+}
+
+.bill-print .kv > div {
   display: flex;
   justify-content: space-between;
+  gap: 0.14in;
+  border-bottom: 1px dotted #bbb;
+  padding: 1px 0;
+}
+
+.bill-print .vcols .kv > div:last-child,
+.bill-print .info > .kv > div:last-child {
+  border-bottom: 0;
+}
+
+.bill-print .kv dt {
+  color: var(--soft);
+  white-space: nowrap;
+}
+
+.bill-print .kv dd {
+  font-weight: bold;
+  text-align: right;
+  min-width: 0;
+}
+
+.bill-print .bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
   gap: 0.1in;
-  margin-top: 0.06in;
-  padding: 0.03in 0;
-  border-top: 1px solid var(--ink);
+  background: var(--band);
+  border: 1px solid var(--ink);
+  border-top: 0;
+  padding: 0.05in 0.11in;
   font-weight: bold;
 }
 
 .bill-print .invoice {
-  font-size: 11pt;
+  font-size: 13pt;
+}
+
+/* ---- lines: labor N beside parts N, one row ---- */
+.bill-print .lines-box {
+  flex: 1;
+  border: 1px solid var(--ink);
+  margin-top: 0.1in;
 }
 
 .bill-print .lines {
-  display: grid;
-  grid-template-columns: 1.1fr 1fr;
-  gap: 0;
-  border: 1px solid var(--ink);
-  margin-bottom: 0.1in;
-}
-
-.bill-print .lines table,
-.bill-print .totals {
   border-collapse: collapse;
   width: 100%;
+  table-layout: fixed; /* fixed columns: no value widens one; a long description wraps and the budget counts it */
 }
 
-/* fixed columns: no value widens one; a long description wraps (never cut) and the page budget counts its lines */
-.bill-print .lines table {
-  table-layout: fixed;
-}
-
-.bill-print .labor th:last-child {
+/* the cell widths LABOR_CPL / PARTS_CPL were measured for: labor description 3.3in, parts description 1.9in */
+.bill-print .lines .w-price {
   width: 0.7in;
 }
 
-.bill-print .parts th:nth-child(2) {
+.bill-print .lines .w-pdesc {
+  width: 1.9in;
+}
+
+.bill-print .lines .w-qty {
   width: 0.45in;
-}
-
-.bill-print .parts th:nth-child(3) {
-  width: 0.65in;
-}
-
-.bill-print .parts th:nth-child(4) {
-  width: 0.7in;
 }
 
 .bill-print .lines th,
 .bill-print .lines td {
+  padding: 0 0.06in;
+  line-height: var(--row);
   height: var(--row);
-  padding: 0 0.04in;
   text-align: left;
-  vertical-align: middle;
+  vertical-align: top;
   overflow-wrap: anywhere;
 }
 
@@ -144,78 +223,125 @@
   background: var(--band);
   border-bottom: 1px solid var(--ink);
   font-size: 8pt;
+  line-height: 0.26in;
+  height: 0.26in;
+  vertical-align: middle;
+}
+
+.bill-print .lines tbody tr:nth-child(even) td {
+  background: var(--shade);
 }
 
 .bill-print .lines .num {
   text-align: right;
 }
 
-.bill-print .lines .labor {
+.bill-print .lines .split {
   border-right: 1px solid var(--ink);
 }
 
 .bill-print .more {
   font-style: italic;
   text-align: right;
+  margin-top: 0.05in;
 }
 
+/* ---- bottom: approval, notes, signature | fine print | totals ---- */
 .bill-print .bottom {
   display: grid;
-  grid-template-columns: 1.55fr 1fr;
-  gap: 0.1in;
-  margin-top: auto;
+  grid-template-columns: 1.2fr 1fr 0.92fr;
+  gap: 0.14in;
+  margin-top: 0.1in;
+}
+
+.bill-print .bottom > * {
+  min-width: 0;
+}
+
+.bill-print .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.06in;
 }
 
 .bill-print .box {
   border: 1px solid var(--ink);
-  padding: 0.04in 0.06in;
+  padding: 0.05in 0.11in;
 }
 
 .bill-print .small {
-  font-size: 8pt;
-}
-
-.bill-print .tiny {
-  font-size: 6.5pt;
-  line-height: 1.15;
-}
-
-.bill-print .notices {
-  display: grid;
-  gap: 0.06in;
+  font-size: 7.5pt;
+  line-height: 1.3;
 }
 
 .bill-print .approval-cols {
   display: flex;
   justify-content: space-between;
   font-weight: bold;
+  font-size: 8pt;
   border-bottom: 1px solid var(--ink);
-  min-height: 0.3in;
-  align-items: start;
+  padding-bottom: 0.13in;
+  margin-bottom: 0.03in;
 }
 
-.bill-print .charge {
-  font-weight: bold;
+.bill-print .notes {
+  font-size: 8.2pt;
+  line-height: 1.35;
 }
 
-.bill-print .sign-line {
-  letter-spacing: 1px;
-  margin-top: 0.12in;
+.bill-print .notes span::before {
+  content: '· ';
+}
+
+.bill-print .sig {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0.9in;
+  border: 1.5px solid var(--ink);
+  padding: 0.07in 0.14in;
 }
 
 .bill-print .sign-title {
-  letter-spacing: 0.35em;
-  font-weight: bold;
   font-size: 8pt;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+}
+
+/* the signing line: a bold X at its left, about 2.5in wide, at the bottom of the box */
+.bill-print .sign-line {
+  margin-top: auto;
+  padding-top: 0.5in;
+  border-bottom: 1px solid var(--ink);
+}
+
+.bill-print .sign-x {
+  font: bold 14pt/1 Arial, Helvetica, sans-serif;
+}
+
+.bill-print .fine {
+  font-size: 7.1pt;
+  line-height: 1.3;
+}
+
+.bill-print .fine p + p {
+  margin-top: 0.05in;
 }
 
 .bill-print .initial {
   letter-spacing: 1px;
 }
 
+.bill-print .totals {
+  border-collapse: collapse;
+  width: 100%;
+  align-self: start;
+  border: 1px solid var(--ink);
+}
+
 .bill-print .totals th,
 .bill-print .totals td {
-  padding: 0.015in 0.06in;
+  padding: 0.018in 0.08in;
   border-bottom: 1px solid var(--ink);
 }
 
@@ -237,10 +363,22 @@
 .bill-print .totals .strong th,
 .bill-print .totals .strong td {
   font-weight: bold;
-  font-size: 10pt;
+  font-size: 12pt;
+  padding: 0.04in 0.08in;
 }
 
-/* On paper: nothing but the bill (the page is bare already; this just drops the screen's grey and padding). */
+.bill-print .totals .due th,
+.bill-print .totals .due td {
+  font-weight: bold;
+  font-size: 12pt;
+  padding: 0.06in 0.08in;
+  background: var(--ink);
+  color: #fff;
+  white-space: nowrap;
+  border-bottom: 0;
+}
+
+/* On paper: nothing but the bill (the page is bare already; this just drops the screen's padding). */
 @media print {
   body {
     background: #fff;
@@ -249,10 +387,6 @@
   .bill-print {
     max-width: none;
     padding: 0;
-  }
-
-  .bill-print .sheet {
-    min-height: 10.1in;
   }
 
   .bill-print .sheet + .sheet,

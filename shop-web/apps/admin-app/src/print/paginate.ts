@@ -23,7 +23,7 @@ export const PARTS_CPL = 18;
  * estimated from its text: each piece's width is summed from rough per-letter widths (W and M widest), so long
  * or wide values add lines and take rows from the page, never the other way round.
  */
-export const SHEET_IN = 10.2;
+export const SHEET_IN = 10.1; // the .sheet min-height in print.css (the paper holds 10.2)
 export const ROW_IN = 0.2;
 export const BOTTOM_IN = 2.95;
 export const MIN_ROWS = 3;
@@ -93,8 +93,6 @@ export function pageBudget(title: string, h: HeaderText): number {
 /** A half-open range of row numbers: [from, to). */
 export type Slice = [number, number];
 
-export type PageSlice = { labor: Slice; parts: Slice };
-
 /** Printed lines a description takes in a column `cpl` characters wide (at least 1). */
 export const linesOf = (desc: string, cpl: number): number => Math.max(1, Math.ceil(desc.length / cpl));
 
@@ -141,24 +139,4 @@ function column(weights: number[], perPage: number): Slice[] {
 export function paginatePairs(weights: number[], perPage: number): Slice[] {
   if (!Number.isInteger(perPage) || perPage < 1) throw new RangeError('perPage must be a whole number of at least 1');
   return column(weights, perPage);
-}
-
-/**
- * Each page's slice of the rows. `labor` and `parts` are the lines each row takes (an array), or just a row count
- * (every row one line). The first and middle pages hold up to `perPage` lines per column; the bill has as many
- * pages as its longer column needs (at least one). The totals go on the last page only (the caller's job).
- */
-export function paginate(labor: number | number[], parts: number | number[], perPage: number): PageSlice[] {
-  if (!Number.isInteger(perPage) || perPage < 1) throw new RangeError('perPage must be a whole number of at least 1');
-  const ones = (n: number | number[]): number[] => (typeof n === 'number' ? Array<number>(n).fill(1) : n);
-  const l = column(ones(labor), perPage);
-  const p = column(ones(parts), perPage);
-  const end = (cols: Slice[], page: number, count: number): Slice =>
-    page < cols.length ? cols[page] : [count, count];
-  const lCount = l[l.length - 1][1];
-  const pCount = p[p.length - 1][1];
-  return Array.from({ length: Math.max(l.length, p.length) }, (_, page) => ({
-    labor: end(l, page, lCount),
-    parts: end(p, page, pCount),
-  }));
 }

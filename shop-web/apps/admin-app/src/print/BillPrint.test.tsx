@@ -56,27 +56,71 @@ describe('BillPrint', () => {
     expect(copies()).toHaveLength(2);
     for (const copy of copies()) {
       const c = within(copy);
+      const value = (label: string) => c.getByText(label, { selector: 'dt' }).nextElementSibling?.textContent;
       expect(c.getByText('TEST SHOP')).toBeInTheDocument();
-      expect(c.getByText('1 TEST ST')).toBeInTheDocument();
-      expect(c.getByText('TESTVILLE, VA 22000')).toBeInTheDocument();
-      expect(c.getByText('(555)010-0001')).toBeInTheDocument();
+      expect(c.getByText('1 TEST ST | TESTVILLE, VA 22000')).toBeInTheDocument();
+      expect(c.getByText('(555) 010-0001')).toBeInTheDocument(); // the shop's phone, spaced
       expect(c.getByText('M-F 8.00 AM TO 5.00 PM')).toBeInTheDocument();
-      expect(c.getByText('JANE DOE')).toBeInTheDocument();
-      expect(c.getByText('(555)010-0000')).toBeInTheDocument();
-      expect(c.getByText('Year Make. 2015 Make Model')).toBeInTheDocument();
-      expect(c.getByText('License XKS-4827')).toBeInTheDocument();
-      expect(c.getByText('MLG in/out 123456 / 123456')).toBeInTheDocument();
-      expect(c.getByText('Vin TESTVIN0000000001')).toBeInTheDocument();
-      expect(c.getByText('Al Fixit')).toBeInTheDocument();
+      expect(value('Name')).toBe('JANE DOE');
+      expect(value('Phone')).toBe('(555) 010-0000');
+      expect(value('Year / Make / Model')).toBe('2015 Make Model');
+      expect(value('License')).toBe('XKS-4827');
+      expect(value('Mechanic')).toBe('Al Fixit');
+      expect(value('Odometer')).toBe('123456');
+      expect(value('VIN')).toBe('TESTVIN0000000001');
       expect(c.getByText('Date 11/23/26')).toBeInTheDocument();
       expect(c.getByText('Schedule 11/23/26')).toBeInTheDocument();
       expect(c.getByText('INVOICE : 9000010')).toBeInTheDocument();
-      expect(c.getByText('02:22 pm')).toBeInTheDocument();
-      expect(c.getByText('Page 1')).toBeInTheDocument();
-      expect(c.getByRole('row', { name: 'DIAGNOSTIC 55.00' })).toBeInTheDocument();
+      expect(c.getByText('Page 1 of 1')).toBeInTheDocument();
+      expect(c.queryByText(/02:22|14:22/)).not.toBeInTheDocument(); // the time is kept, never printed
+      // labor line N and parts line N share a row
+      expect(c.getByRole('row', { name: 'DIAGNOSTIC 55.00 BRAKE PADS 1.00 100.00 100.00' })).toBeInTheDocument();
       expect(c.getByRole('row', { name: 'Remove & Install: BRAKE PADS 50.00' })).toBeInTheDocument();
-      expect(c.getByRole('row', { name: 'BRAKE PADS 1.00 100.00 100.00' })).toBeInTheDocument();
     }
+  });
+
+  it('a description wrapped on one side keeps the next lines level on both sides', async () => {
+    const wrapped = 'REPLACE FRONT BRAKE PADS AND ROTORS, CLEAN AND LUBE SLIDES, BLEED THE BRAKES, ROAD TEST AFTERWARD';
+    api({
+      ...SNAPSHOT,
+      labor: [{ desc: wrapped, amount: 300 }, { desc: 'TIRE ROTATION', amount: 25 }],
+      parts: [
+        { desc: 'PADS', qty: 1, price: 100, total: 100 },
+        { desc: 'ROTORS', qty: 2, price: 70, total: 140 },
+      ],
+    });
+    show();
+    await screen.findAllByText('INVOICE : 9000010');
+    const c = within(copies()[0]);
+    const row = c.getByText('TIRE ROTATION').closest('tr');
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText('ROTORS')).toBeInTheDocument();
+  });
+
+  it('the signature box has an X and no date line; the date is in the bar', async () => {
+    api(SNAPSHOT);
+    const { container } = show();
+    await screen.findAllByText('INVOICE : 9000010');
+    const sig = container.querySelector('.sig') as HTMLElement;
+    expect(within(sig).getByText('X')).toBeInTheDocument();
+    expect(sig.textContent).not.toMatch(/DATE/);
+  });
+
+  it('the logo spot: /shop-logo, hidden until it loads, gone when there is none; printing never waits for it', async () => {
+    api(SNAPSHOT);
+    const { container } = show();
+    await screen.findAllByText('INVOICE : 9000010');
+    const imgs = container.querySelectorAll<HTMLImageElement>('.logo img');
+    expect(imgs).toHaveLength(2); // one per copy
+    expect(imgs[0].getAttribute('src')).toBe('/shop-logo');
+    expect(imgs[0].getAttribute('alt')).toBe('');
+    expect(imgs[0].style.visibility).toBe('hidden');
+    imgs[0].dispatchEvent(new Event('load'));
+    await waitFor(() => expect(container.querySelectorAll<HTMLImageElement>('.logo img')[0].style.visibility).toBe(''));
+    container.querySelectorAll<HTMLImageElement>('.logo img').forEach((i) => i.dispatchEvent(new Event('error')));
+    await waitFor(() => expect(container.querySelectorAll('.logo img')).toHaveLength(0));
+    expect(container.querySelectorAll('.logo')).toHaveLength(2); // the space stays
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
   });
 
   it('prints every total, the zero rows too, with 2 decimals', async () => {
@@ -172,8 +216,8 @@ describe('BillPrint', () => {
     expect(pages).toBeGreaterThan(1);
     for (const copy of copies()) {
       const c = within(copy);
-      for (let n = 1; n <= pages; n++) expect(c.getByText(`Page ${n}`)).toBeInTheDocument();
-      expect(c.queryByText(`Page ${pages + 1}`)).not.toBeInTheDocument();
+      for (let n = 1; n <= pages; n++) expect(c.getByText(`Page ${n} of ${pages}`)).toBeInTheDocument();
+      expect(c.queryByText(`Page ${pages + 1} of ${pages}`)).not.toBeInTheDocument();
       expect(c.getAllByText('INVOICE : 9000010')).toHaveLength(pages);
       expect(c.getAllByText('JANE DOE')).toHaveLength(pages);
       expect(c.getAllByText('TEST SHOP')).toHaveLength(pages);
@@ -183,7 +227,7 @@ describe('BillPrint', () => {
       expect(c.getByText('LABOR LINE 1')).toBeInTheDocument();
       expect(c.getByText('LABOR LINE 40')).toBeInTheDocument();
     }
-    expect(screen.getAllByText('Page 2')).toHaveLength(2);
+    expect(screen.getAllByText(`Page 2 of ${pages}`)).toHaveLength(2);
   });
 
   it('long descriptions are never cut: 20 rows of 120 characters take more pages, with every character shown', async () => {
@@ -193,7 +237,7 @@ describe('BillPrint', () => {
     show();
     await screen.findAllByText('INVOICE : 9000010');
     const c = within(copies()[0]);
-    expect(c.getByText('Page 2')).toBeInTheDocument();
+    expect(c.getByText(/^Page 2 of \d+$/)).toBeInTheDocument();
     for (const l of labor) expect(c.getAllByText(l.desc)).toHaveLength(2); // labor and parts
     expect(c.getAllByRole('row', { name: /^BALANCE DUE/ })).toHaveLength(1);
   });
@@ -204,7 +248,7 @@ describe('BillPrint', () => {
     show();
     await screen.findAllByText('INVOICE : 9000010');
     const c = within(copies()[0]);
-    const cells = Array.from(copies()[0].querySelectorAll('.labor tbody td:first-child')).map((td) => td.textContent);
+    const cells = Array.from(copies()[0].querySelectorAll('td.ld')).map((td) => td.textContent);
     expect(cells.length).toBeGreaterThan(1);
     expect(cells.join(' ')).toBe(words.join(' '));
     expect(c.getAllByText('12.50')).toHaveLength(1);
