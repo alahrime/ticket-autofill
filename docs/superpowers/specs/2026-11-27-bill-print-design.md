@@ -38,13 +38,14 @@ Our app prints the shop's bills since 2026-11-27 (own billing went live). The fi
 2. **Customer and vehicle**, one bordered box split in two (vehicle side wider, about 1 : 2.1):
    - **Layout:** each side is a list with the field name on the left in grey and the value on the right in bold. A faint dotted line separates rows. There are no "Customer"/"Vehicle" titles.
    - **Customer side:** Name, Phone.
-   - **Vehicle side:** first a full-width row, "Year / Make / Model", with the value "2019 CADILLAC XT5". Under it, two columns: License and Mechanic | Odometer and VIN. A 17-character VIN must fit on one line. Our tickets keep one odometer reading, so it is one "Odometer" row, not in/out.
+   - **Vehicle side:** first a full-width row, "Year / Make / Model", with the value "2019 CADILLAC XT5". Under it, two columns: License and Mechanic | Odometer and VIN. A 17-character VIN must fit on one line. **Odometer** is one row showing the ticket's single (final) reading (owner, 2026-11-27).
 3. **Invoice bar:** grey and bordered. It holds Date, Schedule, **INVOICE : number** (bold and larger), and "Page N of M". **The time is not printed** (owner). It stays in the bill's record (`BillSnapshot.time`) and wherever the app shows it.
 4. **Lines:**
    - Labor on the left ("REMARKS AND LABOR DESCRIPTIONS", PRICE) and parts on the right ("PARTS & LUBRICANTS", QTY, PRICE, TOTAL).
    - Grey heading band.
    - **Alternating row shading** in both tables: every other row light grey (about #e9e9e9), starting with the second line, continuing through the empty rows to the bottom of the box.
    - Rows are 0.2 in, as today. The tables fill all the height left between the bar and the bottom block.
+   - **Rows stay aligned across both sides (owner, 2026-11-27).** When a long description wraps on one side, that row is just as tall on the other side, so every following line stays level. Labor line N and parts line N always sit on the same row, and the shading stays even. The simplest way to build this is one table whose rows each pair labor N with parts N, with the thick rule between the two halves. The builder may choose another way that gives the same result.
 5. **Bottom block, three columns** (about 1.2 : 1 : 0.92):
    - **Left:**
      - The price-increase approval box (DATE TIME PHONE APPROVED AMOUNT, with a write-in line and its sentence).
@@ -54,15 +55,18 @@ Our app prints the shop's bills since 2026-11-27 (own billing went live). The fi
    - **Right:** all of today's total rows, unchanged (Parts & Lubricants, Labor, Sublet, Haz. Disposal, Shop Supply, Gasoline, Sub Total, Sales Tax, Deposit, Disc. Applied). Deposit and Disc. Applied keep the grey band. TOTAL is bold. **BALANCE DUE** is a black bar with white text, kept on one line.
 6. **Phone numbers:** printed as `(703) 522-3100`, with a space after the area code. This applies to the shop's phone and the customer's, whatever way they were typed. A number that isn't 10 digits (or 11 starting with 1) prints as typed.
 
+## Owner's answers (2026-11-27)
+- **Logo:** for now the top-right spot prints as **blank space**, with no outline and no text. The owner adds a logo later.
+  - Claude's call: build the logo support now so adding it later is only a file drop. The admin puts `logo.png`, `logo.jpg` or `logo.svg` in the shop root, next to `shop-settings.json`. The server serves it to signed-in admins only. The print page shows it scaled to fit about 2.4 × 0.8 in, keeping its proportions and never cropped.
+  - A wide logo (about 3 : 1) fits best.
+- **Odometer:** one reading, the final one.
+- **Hours:** the shop closes at **6 PM**. The settings text becomes `MON–FRI 8:00 AM – 6:00 PM`, set in `shop-settings.json` on 2026-11-27. The bill prints `shop.hours` as written.
+- **Long descriptions:** they wrap rather than being cut off, and the other side's row grows to match, so rows stay aligned (see Layout 4).
+- **Two-page bills:** the owner expects them to be very rare now that 24 lines fit. Keep today's continuation behavior as a safety net ("Page N of M", "Continued on the next page"), but don't build anything more for it.
+
 ## Decided by Claude (the owner can overrule)
-- **The logo file:**
-  - The admin puts `logo.png`, `logo.jpg` or `logo.svg` in the shop root, next to `shop-settings.json`. The server serves it to signed-in admins.
-  - The print page shows it scaled to fit the box, keeping its proportions and never cropped.
-  - With no file, the box prints as **blank space**: no dashed outline and no "YOUR LOGO" text.
-  - A wide logo (about 3 : 1) fits best; tell the owner this.
-- **Hours wording:** the bill prints `shop.hours` from the settings as written. The mockup shows "MON–FRI 8:00 AM – 7:00 PM". At go-live, ask the owner to confirm the closing time (the stored text says "7.00" without AM/PM) and update `shop-settings.json`. That's a settings change, not code.
-- **Long descriptions** still wrap onto a second line rather than being cut off. A wrapped line takes the height of two rows, so the two tables' rows may not line up side by side. Pagination budgets for the wraps, as it does today.
 - **Shading in print:** keep `print-color-adjust: exact`, so the grey rows and bands print with the browser's "Background graphics" setting off.
+- **Pagination:** with paired rows, a page budgets rows by the taller side of each pair (a wrapped line counts double on both sides).
 
 ## Constraints
 - Letter paper, 0.4 in margins, two copies per print. Each copy's pages start on a new sheet, as today.
@@ -74,4 +78,3 @@ Our app prints the shop's bills since 2026-11-27 (own billing went live). The fi
 ## Left to the builder
 - Exact CSS values, as long as the measured results hold: 24 rows on page 1, the signature line about 2.5 in with about 0.7 in of space, fine print at 7 pt or more, nothing overflowing.
 - How the logo is served (route name, caching) within the existing admin-only rules.
-- Whether "Continued on the next page" stays. It is not InvoMax wording; the owner was told on 2026-11-23. It is fine to keep it next to "Page N of M".
