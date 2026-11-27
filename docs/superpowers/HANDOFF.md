@@ -10,6 +10,7 @@
   - Made-up bill: JANE DOE, XKS-4827, part 100.00 + labor 50.00. The first-number dialog proposed **8003185** (InvoMax's highest is #8003184 of Nov 24, from the trial's import). The bill came out as supplies 7.50, tax 6.45, **total 163.95**, all correct. The owner saw the print page and the print dialog.
   - The first-number check took 15 s because it imports InvoMax first. Expect that wait on the first Approve & print.
   - **When testing, don't trigger printing** (owner, 2026-11-27). Read the print page as text, or the owner cancels the print dialog.
+- **LIVE since 2026-11-27 08:46 (owner's yes).** Steps 2–3 are done: `shop-settings.json` was written and the shop restarted. `/api/own-bills/first-number` answers 401, not 404, so own billing is on. Step 4, confirming the first number on the first real ticket, is the owner's.
 - **Go-live steps (the owner's call):**
   1. Make sure InvoMax has every bill up to now. Our first number is InvoMax's highest + 1, read when the first Approve & print is pressed.
   2. Create `C:\Users\Owner\Downloads\ticket-autofill\shop-settings.json` (git-ignored; it doesn't exist yet, so everything else stays at its default):
