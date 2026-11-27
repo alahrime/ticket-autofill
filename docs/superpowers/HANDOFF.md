@@ -2,6 +2,23 @@
 
 **Updated:** 2026-11-23. **Resume here: "Own billing — where it stands" just below.** This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers. Live today: still `shop.py`; the switch to the TS server (checklist step 5) is the owner's call. Older notes follow further down.
 
+## Own billing — trial done, go-live steps (2026-11-27)
+- **The live shop already runs the TS server** (from `shop-web\apps\api\dist\main.js` on `main`, via `start-shop.bat` → `run-shop.cmd`; seen 2026-11-27). Its build dated from Nov 23 09:35, before own billing merged. **Rebuilt on `main` on 2026-11-27 08:41.** The running server keeps the old code until it restarts. Tests: `nx run-many -t test` green.
+- **Trial (plan Task 7) done on `C:\Users\Owner\Downloads\shop-trial`, port 18082:**
+  - The trial root serves its **own** `web\` and `shop-web\apps\admin-app\dist`. Both were stale (no Approve & print) and were refreshed from the worktree. The old ones were kept as `*.before-own-billing`, and so was `shop-settings.json`.
+  - The trial settings got `ownBilling: true` and the shop details. There's a test admin `trialadmin` on the trial copy only.
+  - Made-up bill: JANE DOE, XKS-4827, part 100.00 + labor 50.00. The first-number dialog proposed **8003185** (InvoMax's highest is #8003184 of Nov 24, from the trial's import). The bill came out as supplies 7.50, tax 6.45, **total 163.95**, all correct. The owner saw the print page and the print dialog.
+  - The first-number check took 15 s because it imports InvoMax first. Expect that wait on the first Approve & print.
+  - **When testing, don't trigger printing** (owner, 2026-11-27). Read the print page as text, or the owner cancels the print dialog.
+- **Go-live steps (the owner's call):**
+  1. Make sure InvoMax has every bill up to now. Our first number is InvoMax's highest + 1, read when the first Approve & print is pressed.
+  2. Create `C:\Users\Owner\Downloads\ticket-autofill\shop-settings.json` (git-ignored; it doesn't exist yet, so everything else stays at its default):
+     `{"ownBilling":true,"shop":{"name":"JAPANESE AUTO SERVICE","address":["3413 WILSON BLVD","ARLINGTON, VA 22201"],"phone":"(703)522-3100","hours":"M-F 8.00 AM TO 7.00"}}`
+  3. Run `start-shop.bat` to restart on the new build. Phones drop for a few seconds.
+  4. Press Approve & print on the first real ticket. Check that the proposed number is right, then Use it. This is asked only once.
+  5. From then on, new bills come from our app only, not InvoMax.
+  - **Rollback:** delete `shop-settings.json` (or set `"ownBilling": false`) and run `start-shop.bat`. Bills already issued stay in tickets.db.
+
 ## Own billing — where it stands (2026-11-23, for the next agent)
 - **Branch `own-billing`: merged into `main` on 2026-11-23 (fc7ab80, owner's yes) and pushed.** Worktree on this PC: `.claude/worktrees/own-billing`. Plan Tasks 1–6 are built, each reviewed by two reviewers and fixed (commits d68368a..cb58c23, then the final-review fixes below).
 - **Final whole-branch review:** "ready with fixes". 0 Critical, 4 Important. Full report: `docs/superpowers/reviews/2026-11-23-own-billing-final-review.md`. Every ruling and deferred minor from the build, in order: `docs/superpowers/reviews/2026-11-23-own-billing-ledger.md`.
