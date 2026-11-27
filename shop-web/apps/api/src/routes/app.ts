@@ -94,8 +94,36 @@ const appPage: RequestHandler = async (req, res) => {
   sendHtml(res, 200, html);
 };
 
+/** The shop's optional logo in the shop root, first found wins. */
+const LOGOS: ReadonlyArray<[string, string]> = [
+  ['logo.png', 'image/png'],
+  ['logo.jpg', 'image/jpeg'],
+  ['logo.jpeg', 'image/jpeg'],
+  ['logo.svg', 'image/svg+xml'],
+];
+
+/** /shop-logo: the logo for the bill's print page, to an admin; 404 when the shop has none. An SVG never runs script. */
+const shopLogo: RequestHandler = async (req, res) => {
+  const s = sessionOf(req);
+  noteActor(res, s);
+  if (s?.role !== 'admin') return redirect(res, 303, '/admin');
+  for (const [name, type] of LOGOS) {
+    let body: Buffer;
+    try {
+      body = await readFile(join(depsOf(req).config.root, name));
+    } catch {
+      continue; // not there (or unreadable): try the next
+    }
+    // nosniff comes from securityHeaders, and so does an SVG's no-script CSP (it strips any other on non-HTML)
+    res.set({ 'Content-Type': type, 'Cache-Control': 'no-cache' });
+    return void res.status(200).send(body);
+  }
+  notFound(res);
+};
+
 export function appRoutes(): Router {
   const r = Router({ caseSensitive: true, strict: true });
+  r.get('/shop-logo', shopLogo);
   for (const p of APP_PAGES) r.get(p, appPage);
   r.get(/^\/app\/assets\/./, asset);
   return r;

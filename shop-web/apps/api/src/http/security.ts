@@ -15,13 +15,18 @@ export const CSP =
 export const MAX_BODY = 1024 * 1024;
 const TOO_BIG = 'Request too big.';
 
-/** no-store, nosniff, same-origin referrers on every reply; the CSP on HTML ones. */
+/** An SVG opened on its own (e.g. /shop-logo in a tab) is a document too: it may never run script or load anything. */
+export const SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'";
+
+/** no-store, nosniff, same-origin referrers on every reply; the CSP on HTML ones, a no-script one on SVG. */
 export const securityHeaders: RequestHandler = (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin'); // our own forms keep a real Origin
   beforeHeaders(res, () => {
-    if (String(res.getHeader('Content-Type') ?? '').startsWith('text/html')) res.setHeader('Content-Security-Policy', CSP);
+    const type = String(res.getHeader('Content-Type') ?? '');
+    if (type.startsWith('text/html')) res.setHeader('Content-Security-Policy', CSP);
+    else if (type.startsWith('image/svg+xml')) res.setHeader('Content-Security-Policy', SVG_CSP);
     else res.removeHeader('Content-Security-Policy');
   });
   next();

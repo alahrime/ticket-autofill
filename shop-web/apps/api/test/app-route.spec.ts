@@ -148,3 +148,46 @@ describe('/app/assets', () => {
     expect((await s.call('/app/assets/notes.exe')).status).toBe(404);
   });
 });
+
+describe('/shop-logo', () => {
+  const logo = (name: string, body: string): void => writeFileSync(join(s.config.root, name), body);
+
+  it('404 when the shop has no logo', async () => {
+    const r = await s.call('/shop-logo', undefined, a);
+    expect([r.status, r.body]).toEqual([404, { error: 'not found' }]);
+  });
+
+  it('serves logo.png to an admin as image/png', async () => {
+    logo('logo.png', 'PNGDATA1');
+    const r = await s.call('/shop-logo', undefined, a);
+    expect(r.status).toBe(200);
+    expect(r.text).toBe('PNGDATA1');
+    expect(r.headers['content-type']).toBe('image/png');
+    expect(r.headers['x-content-type-options']).toBe('nosniff');
+    expect(r.headers['cache-control']).toBe('no-cache');
+  });
+
+  it('logo.svg gets a no-script CSP', async () => {
+    logo('logo.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const r = await s.call('/shop-logo', undefined, a);
+    expect(r.status).toBe(200);
+    expect(r.headers['content-type']).toBe('image/svg+xml');
+    expect(r.headers['content-security-policy']).toContain("default-src 'none'");
+  });
+
+  it('not signed in or a mechanic: 303 to /admin', async () => {
+    logo('logo.png', 'PNGDATA1');
+    const r = await s.call('/shop-logo');
+    expect([r.status, r.headers.location]).toEqual([303, '/admin']);
+    const m = await s.tech('Al Fixit');
+    const rm = await s.call('/shop-logo', undefined, m);
+    expect([rm.status, rm.headers.location]).toEqual([303, '/admin']);
+  });
+
+  it('png wins over svg when both exist', async () => {
+    logo('logo.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    logo('logo.png', 'PNGDATA1');
+    const r = await s.call('/shop-logo', undefined, a);
+    expect([r.status, r.headers['content-type']]).toEqual([200, 'image/png']);
+  });
+});
