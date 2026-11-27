@@ -7,7 +7,8 @@ import { errorText } from '../lib/format';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { useQueryState } from '../lib/useQueryState';
 import * as text from './billText';
-import { chunks, LABOR_CPL, linesOf, PARTS_CPL, pageBudget, paginate } from './paginate';
+import { chunks, type HeaderText, LABOR_CPL, linesOf, PARTS_CPL, pageBudget, paginate } from './paginate';
+import { printPhone } from './printPhone';
 import './print.css';
 
 const COPIES = 2;
@@ -27,6 +28,17 @@ export function printTime(hhmm: string): string {
   if (!m) return hhmm;
   const h = Number(m[1]);
   return `${String(h % 12 || 12).padStart(2, '0')}:${m[2]} ${h < 12 ? 'am' : 'pm'}`;
+}
+
+/** The header's text as the new layout prints it (what pageBudget estimates from). */
+export function headerText(bill: BillSnapshot): HeaderText {
+  const { shop, customer: c, vehicle: v } = bill;
+  return {
+    addressLine: shop.address.join(' | '),
+    contactLine: `TEL ${printPhone(shop.phone)} HOURS ${shop.hours}`,
+    customer: [`${c.first} ${c.last}`.trim().toUpperCase(), printPhone(c.phone)],
+    vehicle: [`${v.year} ${v.make} ${v.model}`.trim(), v.plate, bill.mechanic, v.odometer, v.vin],
+  };
 }
 
 /** The header's three columns of lines: the customer, the shop and the vehicle (the mechanic last, no label). */
@@ -231,7 +243,7 @@ function Sheet({ bill, page, last, labor, parts }: SheetProps) {
 }
 
 function Copy({ bill, n }: { bill: BillSnapshot; n: number }) {
-  const budget = pageBudget(bill.shop.name, headerColumns(bill));
+  const budget = pageBudget(bill.shop.name, headerText(bill));
   const rows = rowsOf(bill, budget);
   const pages = paginate(
     rows.labor.map((r) => linesOf(r.desc, LABOR_CPL)),

@@ -2,50 +2,90 @@
 // A row that wraps onto more printed lines counts for more than one, so a page never outgrows the paper.
 
 /**
- * The most printed lines per column on a page (a one-line row is one line; a wrapped description takes more).
- * A bill's own budget can be lower: see pageBudget. Change it together with LABOR_CPL / PARTS_CPL below.
+ * The most printed lines per page (a one-line row is one line; a wrapped description takes more). Labor line N
+ * and parts line N share a row, so a page counts rows by the taller side. A bill's own budget can be lower: see
+ * pageBudget. Change it together with LABOR_CPL / PARTS_CPL below.
  */
-export const ROWS_PER_PAGE = 20;
+export const ROWS_PER_PAGE = 24;
 
 /**
- * Characters of a description that fit on one printed line of each column (9pt Arial, upper-case words breaking
+ * Characters of a description that fit on one printed line of each side (9pt Arial, upper-case words breaking
  * at spaces) in Chromium: the 3.3in labor description cell holds 40 and the 1.9in parts one 20 (measured with a
  * 120-character description of 8-letter words; lower-case holds more). The constants keep a margin for words
- * that break early.
+ * that break early. The print CSS keeps those two cell widths.
  */
 export const LABOR_CPL = 36;
 export const PARTS_CPL = 18;
 
 /**
- * The page height (letter, 0.4in margins: 10.2in; the sheet is 10.1in) is shared by the header, the column
- * headings, the rows (0.2in a line) and, on the last page, the bottom block (notices and totals, measured 3.42in).
- * The header grows with long shop strings (at most 80 characters, 5 address lines), so the page's row budget
- * shrinks to fit. The header is estimated from its text: a line of its columns is 0.15in; its three columns hold
- * at most HEAD_CPL characters a line (the widest letters, W, in the 1.9, 2.7 and 2.9in columns, so the estimate
- * errs high; measured at the caps: 4.15in for 80-character words, 5.5in for 80 unbroken W against estimates of 4.9 and 6.1in); the 20pt title is 0.31in a line, TITLE_CPL characters wide; the rest (numbers row, rules, gaps) is 0.5in.
+ * The page height (letter, 0.4in margins: 10.2in) is shared by the header, the column headings, the rows (0.2in
+ * a line) and, on the last page, the bottom block (approval, signature, fine print and totals). The header is
+ * estimated from its text: each piece's width is summed from rough per-letter widths (W and M widest), so long
+ * or wide values add lines and take rows from the page, never the other way round.
  */
-export const SHEET_IN = 10.1;
-export const BOTTOM_IN = 3.5;
+export const SHEET_IN = 10.2;
 export const ROW_IN = 0.2;
-export const HEAD_CPL = [16, 22, 24] as const;
-export const TITLE_CPL = 28;
-export const HEAD_LINE_IN = 0.15;
-export const TITLE_LINE_IN = 0.31;
-export const HEAD_REST_IN = 0.5 + 0.2 + 0.1 + 0.1; // + column headings, gap, safety
+export const BOTTOM_IN = 2.95;
 export const MIN_ROWS = 3;
 
-/** Lines a column of header strings takes, each wrapped at `cpl` characters. */
-const colLines = (strings: string[], cpl: number): number => strings.reduce((n, t) => n + Math.max(1, Math.ceil(t.length / cpl)), 0);
+/** Header geometry (inches), matching print.css. */
+const TEXT_COL_IN = 5.0; // the shop name, address and contact lines, left of the 2.4in logo box
+const CUST_VAL_IN = 1.3; // a customer value, right of its label
+const VEH_WIDE_VAL_IN = 3.4; // Year / Make / Model's value
+const VEH_LEFT_VAL_IN = 1.1; // License, Mechanic
+const VEH_RIGHT_VAL_IN = 1.9; // Odometer, VIN
+const TITLE_LINE_IN = 0.34;
+const SMALL_LINE_IN = 0.16;
+const KV_LINE_IN = 0.18;
+const LOGO_IN = 0.8;
+const TOP_EXTRA_IN = 0.12; // the rule under the name, its gap
+const INFO_EXTRA_IN = 0.12; // the info box's padding and borders
+const FIXED_IN = 0.3 + 0.27 + 0.3; // the invoice bar, the column headings, the gaps between blocks
 
-/**
- * How many lines each column may hold on a page of this bill: ROWS_PER_PAGE, less what a long header (the shop
- * `title`, then the three header columns of strings) takes from the page. Never below MIN_ROWS.
- */
-export function pageBudget(title: string, columns: readonly [string[], string[], string[]]): number {
-  const head =
-    Math.max(1, Math.ceil(title.length / TITLE_CPL)) * TITLE_LINE_IN +
-    Math.max(...columns.map((c, i) => colLines(c, HEAD_CPL[i]))) * HEAD_LINE_IN +
-    HEAD_REST_IN;
+/** A text: the shop's name (22pt Times bold, letter-spaced), the address and contact lines (10pt Arial) or values (9pt Arial bold). */
+type Font = { pt: number; spacingPt: number; capEm: number };
+const TITLE: Font = { pt: 22, spacingPt: 1.4, capEm: 0.68 }; // Times bold capitals: measured 310pt for JAPANESE AUTO SERVICE
+const ADDRESS: Font = { pt: 10, spacingPt: 1.2, capEm: 0.74 };
+const CONTACT: Font = { pt: 10, spacingPt: 0.5, capEm: 0.74 };
+const VALUE: Font = { pt: 9, spacingPt: 0, capEm: 0.74 };
+
+/** A rough width of one character in ems: generous, so the estimate errs high. */
+function em(c: string, capEm: number): number {
+  if (c === 'W' || c === 'M') return 0.95;
+  if (/[\s.,:;|()\-/'1Iij!]/.test(c)) return 0.35;
+  if (/[0-9]/.test(c)) return 0.56;
+  if (/[a-z]/.test(c)) return 0.56;
+  return capEm;
+}
+
+/** Lines `text` takes in a box `widthIn` wide (at least 1). */
+export function estLines(text: string, widthIn: number, font: Font): number {
+  let pt = 0;
+  for (const c of text) pt += em(c, font.capEm) * font.pt + font.spacingPt;
+  return Math.max(1, Math.ceil((pt * 1.05) / (widthIn * 72)));
+}
+
+/** The header's text, as printed: the address on one line, the contact line, and the values of the info box. */
+export type HeaderText = {
+  addressLine: string;
+  contactLine: string;
+  /** Name, phone. */
+  customer: string[];
+  /** Year / Make / Model, then License, Mechanic (left column), then Odometer, VIN (right column). */
+  vehicle: string[];
+};
+
+/** How many lines a page of this bill may hold: ROWS_PER_PAGE, less what a long header takes. Never below MIN_ROWS. */
+export function pageBudget(title: string, h: HeaderText): number {
+  const text =
+    estLines(title, TEXT_COL_IN, TITLE) * TITLE_LINE_IN +
+    (estLines(h.addressLine, TEXT_COL_IN, ADDRESS) + estLines(h.contactLine, TEXT_COL_IN, CONTACT)) * SMALL_LINE_IN +
+    TOP_EXTRA_IN;
+  const cust = h.customer.reduce((n, v) => n + estLines(v, CUST_VAL_IN, VALUE), 0);
+  const [ymm = '', lic = '', mech = '', odo = '', vin = ''] = h.vehicle;
+  const col = (w: number, a: string, b: string): number => estLines(a, w, VALUE) + estLines(b, w, VALUE);
+  const veh = estLines(ymm, VEH_WIDE_VAL_IN, VALUE) + Math.max(col(VEH_LEFT_VAL_IN, lic, mech), col(VEH_RIGHT_VAL_IN, odo, vin));
+  const head = Math.max(LOGO_IN, text) + Math.max(cust, veh) * KV_LINE_IN + INFO_EXTRA_IN + FIXED_IN;
   const rows = Math.floor((SHEET_IN - head - BOTTOM_IN) / ROW_IN);
   return Math.max(MIN_ROWS, Math.min(ROWS_PER_PAGE, rows));
 }
@@ -91,6 +131,16 @@ function column(weights: number[], perPage: number): Slice[] {
   });
   pages.push([from, weights.length]);
   return pages;
+}
+
+/**
+ * The page breaks of a bill's rows, each row a labor line beside a parts line: `weights[i]` is the printed lines
+ * the taller side of row i takes. A row that doesn't fit what is left of a page starts the next one; a row
+ * heavier than a page gets a page of its own. At least one page, even for an empty bill.
+ */
+export function paginatePairs(weights: number[], perPage: number): Slice[] {
+  if (!Number.isInteger(perPage) || perPage < 1) throw new RangeError('perPage must be a whole number of at least 1');
+  return column(weights, perPage);
 }
 
 /**
