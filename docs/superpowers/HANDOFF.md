@@ -2,6 +2,14 @@
 
 **Updated:** 2026-11-23. **Resume here: "Own billing — where it stands" just below.** This PC (Windows 10, user `Owner`) **is the shop PC**: InvoMax runs here with real customers. Live today: still `shop.py`; the switch to the TS server (checklist step 5) is the owner's call. Older notes follow further down.
 
+## Printed bill redesign — LIVE (2026-11-27 10:43)
+- **Merged to `main` (79241f6, fast-forward of `bill-print`), built, and the shop restarted with `start-shop.bat` (owner's yes).** The restart also turned on the 6 PM hours and the "(703) 522-3100" phone in the header.
+- Spec `docs/superpowers/specs/2026-11-27-bill-print-design.md`, plan `docs/superpowers/plans/2026-11-27-bill-print.md`. 24 lines a page (was 20); labor N and parts N share a row, so wrapped descriptions keep the rows level; signature box with an X, no date line; time kept in the records but not printed.
+- **Logo:** drop `logo.png` (or `.jpg` / `.svg`), about 3:1 wide, into the repo root (`C:\Users\Owner\Downloads\ticket-autofill`). It is served at `/shop-logo` to admins only, read fresh each time: no restart needed. The print window waits for it at most 1.5 s. Not git-ignored yet: don't commit it.
+- **Watch out:** the admin app's `styles.css` shares class names with the bill (`.top`, `.split`, `.lines`, `.totals`, `th`, `td`); `print.css` undoes them inside `.bill-print`. A new global rule with one of those names can leak into the bill again; the e2e print tests (sheet at most 10.2in, nothing overflows) catch size effects.
+- **Deferred minors (final review):** a continuation page (rare 2-page bill) spreads its rows; pairing slips after a description over ~860 characters; the bottom columns are 1.15/1.25/0.85 (spec said ~1.2/1/0.92) to fit 24 rows; SVG CSP test checks a substring; no e2e with the real-length shop strings (the trial showed 24 rows on one sheet).
+- **Next (owner's order):** 2. matching past InvoMax lines to jobs (rules drafted, admin accepts in bulk on Job mapping); 3. admin-only bills dashboard (Monthly report / Customers & cars / Bills tabs). Brainstorm each first.
+
 ## Own billing — trial done, go-live steps (2026-11-27)
 - **The live shop already runs the TS server** (from `shop-web\apps\api\dist\main.js` on `main`, via `start-shop.bat` → `run-shop.cmd`; seen 2026-11-27). Its build dated from Nov 23 09:35, before own billing merged. **Rebuilt on `main` on 2026-11-27 08:41.** The running server keeps the old code until it restarts. Tests: `nx run-many -t test` green.
 - **Trial (plan Task 7) done on `C:\Users\Owner\Downloads\shop-trial`, port 18082:**
