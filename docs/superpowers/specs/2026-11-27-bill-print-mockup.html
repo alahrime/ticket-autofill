@@ -1,0 +1,218 @@
+<style>
+  .sheetwrap { display:flex; gap:28px; flex-wrap:wrap; justify-content:center; }
+  .paper { width:612px; min-height:792px; background:#fff; color:#111; box-shadow:0 2px 12px rgba(0,0,0,.25);
+           padding:30px 32px; box-sizing:border-box; font:10px/1.35 Arial, Helvetica, sans-serif; display:flex; flex-direction:column; }
+  .paper p { margin:0; }
+  .lbl { font-size:7.5px; letter-spacing:.08em; text-transform:uppercase; color:#555; font-weight:bold; margin-bottom:2px !important; }
+  .logo { border:1.5px dashed #999; color:#888; display:flex; align-items:center; justify-content:center; font-size:9px; text-align:center; }
+  table { border-collapse:collapse; width:100%; }
+  .num { text-align:right; }
+  .cap { font-size:8px; color:#444; line-height:1.3; }
+  .tiny { font-size:7.2px; color:#333; line-height:1.3; }
+
+  /* A: classic, cleaned up */
+  .A .top { display:grid; grid-template-columns:1fr 150px; gap:16px; align-items:start; }
+  .A h1 { font:bold 22px/1.1 'Times New Roman', serif; margin:0 0 4px; }
+  .A .logo { height:78px; }
+  .A .info { display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px solid #111; margin-top:12px; }
+  .A .info > div { padding:7px 9px; }
+  .A .info > div + div { border-left:1px solid #111; }
+  .A .bar { display:flex; justify-content:space-between; background:#e8e8e8; border:1px solid #111; border-top:0; padding:5px 9px; font-weight:bold; }
+  .A .bar .inv { font-size:13px; }
+  .A .lines { display:grid; grid-template-columns:1.1fr 1fr; border:1px solid #111; margin-top:12px; }
+  .A .lines table + table, .A .lines .pcol { border-left:1px solid #111; }
+  .A .lines th { background:#e8e8e8; font-size:8px; text-align:left; padding:5px 7px; border-bottom:1px solid #111; }
+  .A .lines td { padding:5px 7px; height:16px; }
+  .A .lines tr.empty td { height:16px; }
+  .A .bottom { display:grid; grid-template-columns:1.5fr 1fr; gap:14px; margin-top:auto; padding-top:10px; }
+  .A .box { border:1px solid #111; padding:7px 9px; }
+  .A .stack { display:flex; flex-direction:column; gap:8px; } .A .stack .sig { flex:1; display:flex; flex-direction:column; } .A .stack .sig .sigline { margin-top:auto; padding-top:26px; } .A .stack > .cap { font-size:8.6px; line-height:1.4; }
+  .A .sig { border:1.5px solid #111; padding:9px 10px 8px; }
+  .A .sigline { display:grid; grid-template-columns:1fr 110px; gap:14px; margin-top:30px; }
+  .A .sigline div { border-top:1px solid #111; padding-top:3px; font-size:8px; font-weight:bold; letter-spacing:.12em; }
+  .A .totals td { padding:3px 9px; border-bottom:1px solid #111; }
+  .A .totals { border:1px solid #111; }
+  .A .totals .band td { background:#e8e8e8; }
+  .A .totals .big td { font-weight:bold; font-size:12.5px; padding:5px 9px; }
+  .A .totals .due td { font-weight:bold; font-size:14px; padding:6px 9px; background:#111; color:#fff; border-bottom:0; }
+
+  .A .lines tr:nth-child(odd):not(:first-child) td { background:#e9e9e9; } .A .lines td { height:16px; white-space:nowrap; }
+  .A .info { grid-template-columns:1fr 2.1fr; } .A .vcols { display:grid; grid-template-columns:.8fr 1.5fr; gap:16px; }
+  .A .kv dt { padding-right:10px !important; white-space:nowrap; }
+  .A .kv { display:grid; grid-template-columns:auto 1fr; margin:0; }
+  .A .kv dt { color:#444; padding:2px 0; }
+  .A .kv dd { margin:0; text-align:right; font-weight:bold; padding:2px 0; overflow-wrap:anywhere; }
+  .A .kv dt, .A .kv dd { border-bottom:1px dotted #bbb; }
+  .A .vcols .kv dt:nth-last-of-type(1), .A .vcols .kv dd:last-child { border-bottom:0; }
+  .A .shophead h1 { font:bold 25px/1.05 'Times New Roman', Georgia, serif; letter-spacing:.06em; margin:4px 0 8px; padding-bottom:7px; border-bottom:1.5px solid #111; display:inline-block; }
+  .A .shophead .addr { font-size:10px; letter-spacing:.12em; color:#222; margin-bottom:3px; }
+  .A .shophead .contact { font-size:10px; letter-spacing:.05em; color:#222; }
+  .A .shophead .k { font-size:7.5px; font-weight:bold; letter-spacing:.14em; color:#666; margin-right:3px; }
+  .A .shophead .sep { display:inline-block; width:1px; height:9px; background:#999; margin:0 9px; vertical-align:-1px; }
+  .A .fine { margin-top:7px; padding-top:5px; border-top:1px solid #111; column-count:2; column-gap:18px; font-size:7.4px; line-height:1.38; color:#222; text-align:justify; hyphens:auto; }
+  .A .fine p { margin:0 0 4px !important; }
+  
+  /* v14: compact, lines get the room */
+  .paper { padding:26px 30px !important; }
+  .A .shophead h1 { font-size:23px !important; margin:0 0 6px !important; padding-bottom:5px !important; }
+  .A .logo { height:70px !important; }
+  .A .info { margin-top:9px !important; }
+  .A .info > div { padding:5px 8px !important; }
+  .A .kv dt, .A .kv dd { padding:1.2px 0 !important; }
+  .A .bar { padding:4px 8px !important; }
+  .A .lines { margin-top:9px !important; flex:1; display:grid; grid-template-rows:auto; 
+              background:repeating-linear-gradient(#fff 0 14px, #efefef 14px 28px); background-position:0 20px; background-clip:content-box; }
+  .A .lines > table, .A .lines > .pcol { align-self:start; }
+  .A .lines .pcol { height:100%; }
+  .A .lines th { padding:4px 6px !important; height:12px; }
+  .A .lines td { padding:0 6px !important; height:14px !important; line-height:14px; }
+  .A .lines tr:nth-child(odd):not(:first-child) td { background:#e9e9e9; }
+  .A .lines tr:nth-child(even) td { background:#fff; }
+  .A .bottom { padding-top:8px !important; gap:12px !important; margin-top:8px !important; }
+  .A .stack { gap:6px !important; }
+  .A .box { padding:5px 8px !important; }
+  .A .stack .sig { flex:0 0 auto !important; height:72px; padding:7px 10px 6px !important; box-sizing:border-box; }
+  .A .stack .sig .sigline { padding-top:0 !important; }
+  .A .stack > .cap { font-size:8.2px !important; line-height:1.35 !important; }
+  .A .totals td { padding:2.2px 8px !important; font-size:9.5px; }
+  .A .totals .big td { padding:4px 8px !important; font-size:12px !important; }
+  .A .totals .due td { padding:5px 8px !important; font-size:13px !important; }
+  .A .fine { margin-top:6px !important; padding-top:4px !important; font-size:7.2px !important; line-height:1.32 !important; column-gap:16px !important; }
+  
+  /* v15 */
+  .A .lines { background:none !important; }
+  .A .lines td { height:15px !important; line-height:15px !important; }
+  .A .fine-left { column-count:1 !important; border-top:0 !important; margin-top:2px !important; padding-top:0 !important; text-align:left !important; }
+  
+  /* v17: beat today's 20 lines */
+  .A .top { grid-template-columns:1fr 172px !important; }
+  .A .logo { height:58px !important; }
+  .A .shophead h1 { font-size:22px !important; margin:0 0 5px !important; padding-bottom:4px !important; }
+  .A .info { margin-top:7px !important; }
+  .A .info > div { padding:4px 8px !important; }
+  .A .kv dt, .A .kv dd { padding:1px 0 !important; }
+  .A .bar { padding:3.5px 8px !important; }
+  .A .lines { margin-top:7px !important; }
+  .A .lines td { height:14.4px !important; line-height:14.4px !important; }
+  .A .bottom { grid-template-columns:2fr 1fr !important; margin-top:7px !important; padding-top:0 !important; }
+  .A .box { padding:4px 8px !important; }
+  .A .stack { gap:5px !important; }
+  .A .stack .sig { height:64px !important; }
+  .A .totals td { padding:1.6px 8px !important; }
+  .A .totals .big td { padding:3px 8px !important; }
+  .A .totals .due td { padding:4px 8px !important; }
+  .A .fine-left { font-size:7.1px !important; line-height:1.3 !important; text-align:justify !important; }
+  
+  /* v18: three columns at the bottom */
+  .A.paper .bottom{grid-template-columns:1.2fr 1fr .92fr !important; gap:10px !important}
+  .A.paper .fine-left{margin:0 !important; font-size:7.1px !important; line-height:1.3 !important; text-align:left !important}
+  .A.paper .stack .sig{height:auto !important; flex:1 1 auto !important; min-height:64px}
+  .A.paper .totals td{padding:1.3px 6px !important}
+  .A.paper .totals .due td{white-space:nowrap; font-size:12px !important}
+  .A.paper .sigline{grid-template-columns:1fr !important; gap:20px !important}
+  .A.paper .sigline div:last-child{width:45%}
+  /* v21: signature only */
+  .A.paper .sigline{grid-template-columns:1fr !important; margin-top:auto !important; padding-top:0 !important}
+  .A.paper .sigline div{width:auto !important}
+  /* B: modern */
+  .B .top { display:grid; grid-template-columns:1fr 160px; gap:16px; align-items:center; padding-bottom:12px; border-bottom:3px solid #111; }
+  .B h1 { font:800 20px/1.1 Arial, sans-serif; letter-spacing:.02em; margin:0 0 4px; }
+  .B .logo { height:84px; }
+  .B .cards { display:grid; grid-template-columns:1fr 1.15fr 1fr; gap:10px; margin-top:12px; }
+  .B .card { background:#f3f3f3; border-radius:5px; padding:8px 10px; }
+  .B .card .v { font-size:10.5px; font-weight:bold; }
+  .B .inv { font-size:16px; font-weight:800; }
+  .B .lines { margin-top:14px; }
+  .B .lines th { font-size:7.5px; letter-spacing:.08em; text-transform:uppercase; color:#444; text-align:left; padding:5px 7px; border-bottom:2px solid #111; }
+  .B .lines td { padding:6px 7px; border-bottom:1px solid #ddd; }
+  .B .lines .sec td { font-weight:bold; font-size:8px; letter-spacing:.1em; background:#f3f3f3; color:#333; }
+  .B .bottom { display:grid; grid-template-columns:1.45fr 1fr; gap:16px; margin-top:auto; padding-top:14px; }
+  .B .stack { display:grid; gap:7px; }
+  .B .note { border-left:3px solid #111; padding:3px 0 3px 8px; }
+  .B .totals td { padding:4px 4px; }
+  .B .totals tr td:first-child { color:#333; }
+  .B .totals .rule td { border-top:1px solid #bbb; }
+  .B .totals .big td { font-weight:800; font-size:13px; border-top:2px solid #111; padding-top:7px; }
+  .B .due { margin-top:6px; background:#111; color:#fff; border-radius:5px; display:flex; justify-content:space-between; padding:9px 11px; font-weight:800; font-size:14px; }
+  .B .sig { margin-top:8px; border:1.5px solid #111; border-radius:5px; padding:10px 12px; display:grid; grid-template-columns:2.2fr 1fr; gap:18px; }
+  .B .sig .line { border-top:1px solid #111; margin-top:34px; padding-top:3px; font-size:8px; font-weight:bold; letter-spacing:.12em; }
+</style>
+
+<h2>Bill A: more room for labor and parts</h2>
+<p class="subtitle"><b>24 lines fit in each table on page 1 (today's bill: 20).</b> 5 used here, the rest shown empty.</p>
+<p class="subtitle">The bottom is now three columns: approval, notes and signature | the full fine print | totals. The signature box has just the signature line now (the date is already in the bar at the top), so the customer gets the whole box to sign. The time no longer prints; the app still keeps it.</p>
+
+<div class="options" style="display:block">
+<div class="sheetwrap">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)" style="display:block;padding:12px">
+    <div class="letter">A</div>
+    <h3 style="margin:6px 0">Classic, cleaned up</h3>
+    <p style="margin:0 0 10px;max-width:600px">Same layout people know from InvoMax: boxes and rules, grey headings. Just more room, labels, and a proper signature box.</p>
+    <div class="paper A">
+      <div class="top">
+        <div class="shophead">
+          <h1>JAPANESE AUTO SERVICE</h1>
+          <p class="addr">3413 WILSON BLVD &nbsp;|&nbsp; ARLINGTON, VA 22201</p>
+          <p class="contact"><span class="k">TEL</span> (703) 522-3100 <span class="sep"></span> <span class="k">HOURS</span> MON&ndash;FRI &nbsp;8:00 AM &ndash; 7:00 PM</p>
+        </div>
+        <div class="logo">YOUR LOGO<br>(about 2.4 × 0.8 in)</div>
+      </div>
+      <div class="info">
+        <div>
+          <dl class="kv"><dt>Name</dt><dd>JANE DOE</dd><dt>Phone</dt><dd>(555) 010-0000</dd></dl></div>
+        <div>
+          <dl class="kv"><dt>Year / Make / Model</dt><dd>2019 CADILLAC XT5</dd></dl>
+          <div class="vcols"><dl class="kv"><dt>License</dt><dd>XKS-4827</dd><dt>Mechanic</dt><dd>Ed</dd></dl>
+          <dl class="kv"><dt>Odometer in / out</dt><dd>48,210 / 48,215</dd><dt>VIN</dt><dd>1GYKNCRS5KZ000000</dd></dl></div></div>
+      </div>
+      <div class="bar"><span>Date 11/27/26</span><span>Schedule 11/27/26</span><span class="inv">INVOICE : 8003185</span><span>Page 1 of 1</span></div>
+      <div class="lines">
+        <table><tr><th>REMARKS AND LABOR DESCRIPTIONS</th><th class="num">PRICE</th></tr>
+          <tr><td>FRONT BRAKE PADS - REPLACE</td><td class="num">100.00</td></tr>
+          <tr><td>BRAKE FLUID FLUSH</td><td class="num">80.00</td></tr>
+          <tr><td>OIL &amp; FILTER CHANGE</td><td class="num">30.00</td></tr>
+          <tr><td>TIRE ROTATION</td><td class="num">25.00</td></tr>
+          <tr><td>INSPECT SUSPENSION - NO CHARGE</td><td class="num">0.00</td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr><tr><td>&nbsp;</td><td></td></tr>
+          </table>
+        <div class="pcol"><table><tr><th>PARTS &amp; LUBRICANTS</th><th class="num">QTY</th><th class="num">PRICE</th><th class="num">TOTAL</th></tr>
+          <tr><td>FRONT BRAKE PADS</td><td class="num">1.00</td><td class="num">100.00</td><td class="num">100.00</td></tr>
+          <tr><td>BRAKE FLUID</td><td class="num">1.00</td><td class="num">25.00</td><td class="num">25.00</td></tr>
+          <tr><td>SYNTHETIC OIL</td><td class="num">5.00</td><td class="num">8.00</td><td class="num">40.00</td></tr>
+          <tr><td>OIL FILTER</td><td class="num">1.00</td><td class="num">10.00</td><td class="num">10.00</td></tr>
+          <tr><td>WIPER BLADES</td><td class="num">2.00</td><td class="num">15.00</td><td class="num">30.00</td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr><tr><td>&nbsp;</td><td></td><td></td><td></td></tr>
+          </table></div>
+      </div>
+      <div class="bottom">
+        <div class="stack">
+          <div class="box"><p style="display:flex;justify-content:space-between;font-weight:bold;font-size:8px;border-bottom:1px solid #111;padding-bottom:12px"><span>DATE</span><span>TIME</span><span>PHONE</span><span>APPROVED</span><span>AMOUNT</span></p><p class="cap" style="margin-top:3px">I acknowledge notice and oral approval of an increase in the original estimated price</p></div>
+          <p class="cap"><b>CHARGE</b> &nbsp;·&nbsp; All parts are new unless shown as (U) used. &nbsp;·&nbsp; Daily storage 24 hrs after job done $65.00. By signing I will not dispute the charges.</p>
+          <div class="sig">
+            <p class="lbl" style="color:#111">Acceptance signature</p>
+            <p class="cap">I accept the charges and terms of this agreement.</p>
+            <div class="sigline"><div>SIGNATURE</div></div>
+          </div>
+        </div>
+        <div class="fine fine-left"><p>Under no circumstances shall J.A.S. be liable for any damages resulting from the use or inability to use the vehicle. All parts are new unless specified as (u) used. Removed parts will be disposed of unless I initial here ________</p><p>I authorize the above repairs and materials. J.A.S. may operate vehicles for testing at my risk. J.A.S. is not responsible for loss or damage to vehicle or items left in it. I agree to pay reasonable storage fees on car if left more than 1 working day. I understand that labor is warranted for 90 days or 4000 miles. I agree that all warranty shall be void if corrective action is performed elsewhere. If J.A.S. is unable to repair warranted work performed under this invoice after undertaking reasonable efforts to do so, in its sole discretion, refund the original amount charged for labor under this invoice. My acceptance of such refund shall waive all warranty claims hereunder. In no event shall J.A.S. be responsible for indirect, consequential, or punitive damages.</p></div>
+        <div>
+          <table class="totals">
+            <tr><td>Parts &amp; Lubricants</td><td class="num">205.00</td></tr>
+            <tr><td>Labor</td><td class="num">235.00</td></tr>
+            <tr><td>Sublet</td><td class="num">0.00</td></tr>
+            <tr><td>Haz. Disposal</td><td class="num">0.00</td></tr>
+            <tr><td>Shop Supply</td><td class="num">20.00</td></tr>
+            <tr><td>Gasoline</td><td class="num">0.00</td></tr>
+            <tr><td>Sub Total</td><td class="num">460.00</td></tr>
+            <tr><td>Sales Tax</td><td class="num">13.50</td></tr>
+            <tr class="band"><td>Deposit</td><td class="num">0.00</td></tr>
+            <tr class="band"><td>Disc. Applied</td><td class="num">0.00</td></tr>
+            <tr class="big"><td>TOTAL</td><td class="num">473.50</td></tr>
+            <tr class="due"><td>BALANCE DUE</td><td class="num">$473.50</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </div>
+</div>
