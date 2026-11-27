@@ -1,7 +1,7 @@
 // The print page for one of our bills (/bills/<no>/print): the stored snapshot of its latest revision (or, with
 // ?rev=N, of that earlier one) on letter paper, twice (two copies), then the browser's print window. It only
 // shows the snapshot, never recomputes it, and never shows the revision: a reprint looks exactly like the original.
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { type BillSnapshot, type OwnBill, useGetOwnBill } from '@shop/api-client';
 import { errorText } from '../lib/format';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
@@ -33,22 +33,38 @@ export function headerText(bill: BillSnapshot): HeaderText {
   };
 }
 
-/** The shop's logo (GET /shop-logo), shown once it has loaded; with none, the box stays as blank space. */
+const LOGO_URL = '/shop-logo';
+/** The longest the print window waits for the logo: a slow one never holds printing up for longer. */
+export const LOGO_WAIT_MS = 1500;
+
+type LogoState = 'loading' | 'shown' | 'none';
+const LogoContext = createContext<LogoState>('none');
+
+/**
+ * The shop's logo (GET /shop-logo), loaded once for the page: 'shown' once it has loaded, 'none' when there is
+ * none (404), it is broken, or it takes longer than LOGO_WAIT_MS ('shown' still if it arrives later).
+ */
+function useShopLogo(): LogoState {
+  const [state, setState] = useState<LogoState>('loading');
+  useEffect(() => {
+    let live = true;
+    const img = new Image();
+    img.onload = () => live && setState('shown');
+    img.onerror = () => live && setState('none');
+    img.src = LOGO_URL;
+    const t = setTimeout(() => live && setState((s) => (s === 'loading' ? 'none' : s)), LOGO_WAIT_MS);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, []);
+  return state;
+}
+
+/** The logo spot: the logo once loaded (already in the browser's memory, so on paper too), else blank space. */
 function Logo() {
-  const [state, setState] = useState<'loading' | 'shown' | 'none'>('loading');
-  return (
-    <div className="logo">
-      {state !== 'none' && (
-        <img
-          src="/shop-logo"
-          alt=""
-          style={state === 'loading' ? { visibility: 'hidden' } : undefined}
-          onLoad={() => setState('shown')}
-          onError={() => setState('none')}
-        />
-      )}
-    </div>
-  );
+  const state = useContext(LogoContext);
+  return <div className="logo">{state === 'shown' && <img src={LOGO_URL} alt="" />}</div>;
 }
 
 /** A list of label / value pairs: the label on the left, the value on the right. */
@@ -320,17 +336,21 @@ export function BillPrint({ no }: { no: string }) {
   const { error } = q;
   const data = q.data?.data as OwnBill | undefined;
   const printed = useRef(false);
+  const logo = useShopLogo();
   const loaded = data !== undefined;
 
-  // Once the bill shows, open the print window once (not again for a refetch or a re-render).
+  // Once the bill shows and the logo has settled (loaded, none, or LOGO_WAIT_MS gone), open the print window
+  // once (not again for a refetch or a re-render): the print window stops the page, so a logo not yet in when it
+  // opens would be missing on paper.
+  const ready = loaded && logo !== 'loading';
   useEffect(() => {
-    if (!loaded || noprint || printed.current) return;
+    if (!ready || noprint || printed.current) return;
     const t = setTimeout(() => {
       printed.current = true;
       window.print();
     }, 0);
     return () => clearTimeout(t);
-  }, [loaded, noprint]);
+  }, [ready, noprint]);
 
   if (error && !data) {
     return (
@@ -353,10 +373,12 @@ export function BillPrint({ no }: { no: string }) {
     );
   }
   return (
-    <main className="bill-print">
-      {Array.from({ length: COPIES }, (_, i) => (
-        <Copy key={i} bill={data.bill} n={i + 1} />
-      ))}
-    </main>
+    <LogoContext.Provider value={logo}>
+      <main className="bill-print">
+        {Array.from({ length: COPIES }, (_, i) => (
+          <Copy key={i} bill={data.bill} n={i + 1} />
+        ))}
+      </main>
+    </LogoContext.Provider>
   );
 }

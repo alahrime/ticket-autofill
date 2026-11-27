@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BillSnapshot, OwnBill } from '@shop/api-client';
 import { mockFetch, renderWithClient } from '../test-utils';
-import { BillPrint } from './BillPrint';
+import { BillPrint, LOGO_WAIT_MS } from './BillPrint';
 import * as text from './billText';
 import { ROWS_PER_PAGE } from './paginate';
 
@@ -36,8 +36,25 @@ function api(bill: BillSnapshot | number): string[] {
 }
 
 const print = vi.fn();
+
+/** The logo the page asks for (new Image()): a test fires its onload / onerror; by default it fails at once (no logo). */
+let logos: Array<{ src: string; onload: ((e: Event) => void) | null; onerror: ((e: Event) => void) | null }> = [];
+let noLogo = false;
+class FakeImage {
+  src = '';
+  onload: ((e: Event) => void) | null = null;
+  onerror: ((e: Event) => void) | null = null;
+  constructor() {
+    logos.push(this);
+    if (noLogo) setTimeout(() => this.onerror?.(new Event('error')), 0);
+  }
+}
+
 beforeEach(() => {
   print.mockReset();
+  logos = [];
+  noLogo = !expect.getState().currentTestName?.match(/logo/i);
+  vi.stubGlobal('Image', FakeImage);
   vi.stubGlobal('print', print);
   window.history.replaceState(null, '', '/bills/9000010/print');
 });
@@ -106,24 +123,42 @@ describe('BillPrint', () => {
     expect(sig.textContent).not.toMatch(/DATE/);
   });
 
-  it('the logo spot: /shop-logo, hidden until it loads, gone when there is none; printing never waits for it', async () => {
+  it('no logo (or a broken one): the space stays blank, no image, and printing goes ahead', async () => {
     api(SNAPSHOT);
     const { container } = show();
     await screen.findAllByText('INVOICE : 9000010');
-    const imgs = container.querySelectorAll<HTMLImageElement>('.logo img');
-    expect(imgs).toHaveLength(2); // one per copy
-    expect(imgs[0].getAttribute('src')).toBe('/shop-logo');
-    expect(imgs[0].getAttribute('alt')).toBe('');
-    expect(imgs[0].style.visibility).toBe('hidden');
-    imgs[0].dispatchEvent(new Event('load'));
-    await waitFor(() => expect(container.querySelectorAll<HTMLImageElement>('.logo img')[0].style.visibility).toBe(''));
-    container.querySelectorAll<HTMLImageElement>('.logo img').forEach((i) => i.dispatchEvent(new Event('error')));
-    await waitFor(() => expect(container.querySelectorAll('.logo img')).toHaveLength(0));
-    expect(container.querySelectorAll('.logo')).toHaveLength(2); // the space stays
+    expect(logos.map((i) => i.src)).toEqual(['/shop-logo']); // asked for once, up front
+    logos[0].onerror?.(new Event('error'));
     await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    expect(container.querySelectorAll('.logo img')).toHaveLength(0);
+    expect(container.querySelectorAll('.logo')).toHaveLength(2); // the space stays, one per copy
   });
 
-  it('a typical header prints at full size; one too tall for a page prints smaller (never clipped)', async () => {
+  it('a logo on file: printing waits for it, and it is on the page when the print window opens', async () => {
+    api(SNAPSHOT);
+    const { container } = show();
+    await screen.findAllByText('INVOICE : 9000010');
+    await wait(50);
+    expect(print).not.toHaveBeenCalled(); // still loading
+    logos[0].onload?.(new Event('load'));
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    const imgs = [...container.querySelectorAll<HTMLImageElement>('.logo img')];
+    expect(imgs.map((i) => [i.getAttribute('src'), i.getAttribute('alt')])).toEqual([
+      ['/shop-logo', ''],
+      ['/shop-logo', ''],
+    ]);
+  });
+
+  it('a logo that hangs never holds printing up for more than LOGO_WAIT_MS', async () => {
+    api(SNAPSHOT);
+    show();
+    await screen.findAllByText('INVOICE : 9000010');
+    expect(print).not.toHaveBeenCalled();
+    await wait(LOGO_WAIT_MS + 100);
+    expect(print).toHaveBeenCalledTimes(1);
+  });
+
+  it('a header too tall for a page prints smaller (never clipped)', async () => {
     const W = 'W'.repeat(80);
     api({ ...SNAPSHOT, shop: { name: W, address: [W, W, W, W, W], phone: W, hours: W } });
     show();
