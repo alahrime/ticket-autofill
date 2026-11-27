@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunks, type HeaderText, linesOf, MIN_ROWS, pageBudget, paginatePairs, ROWS_PER_PAGE } from './paginate';
+import { chunks, type HeaderText, headScale, linesOf, rowsLeft, MIN_ROWS, pageBudget, paginatePairs, ROWS_PER_PAGE } from './paginate';
 
 describe('paginatePairs', () => {
   const ones = (n: number): number[] => Array<number>(n).fill(1);
@@ -86,6 +86,23 @@ describe('pageBudget', () => {
     const n = pageBudget(W, caps);
     expect(n).toBeLessThan(ROWS_PER_PAGE);
     expect(n).toBeGreaterThanOrEqual(MIN_ROWS);
+  });
+
+  it('a header too tall for a page at full size prints smaller, so the page still holds MIN_ROWS rows', () => {
+    const caps: HeaderText = {
+      addressLine: Array(5).fill(W).join(' | '),
+      contactLine: `TEL ${W} HOURS ${W}`,
+      customer: [`${W.slice(0, 30)} ${W.slice(0, 30)}`, '(555) 010-0000'],
+      vehicle: [`2015 ${W.slice(0, 30)} ${W.slice(0, 30)}`, 'XKS-4827', W, '123456', W.slice(0, 17)],
+    };
+    expect(headScale('JAPANESE AUTO SERVICE', typical)).toBe(1);
+    const k = headScale(W, caps);
+    expect(k).toBeLessThan(1);
+    expect(k).toBeGreaterThanOrEqual(0.5);
+    // at that scale the estimate leaves room for MIN_ROWS without the clamp: header and bottom fit the sheet
+    expect(pageBudget(W, caps, k)).toBeGreaterThanOrEqual(MIN_ROWS);
+    expect(rowsLeft(W, caps, k)).toBeGreaterThanOrEqual(MIN_ROWS);
+    expect(rowsLeft(W, caps, 1)).toBeLessThan(MIN_ROWS); // at full size it would not fit
   });
 
   it('a longer shop name costs rows only when it wraps', () => {

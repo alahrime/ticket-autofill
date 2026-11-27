@@ -123,6 +123,24 @@ describe('BillPrint', () => {
     await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
   });
 
+  it('a typical header prints at full size; one too tall for a page prints smaller (never clipped)', async () => {
+    const W = 'W'.repeat(80);
+    api({ ...SNAPSHOT, shop: { name: W, address: [W, W, W, W, W], phone: W, hours: W } });
+    show();
+    await screen.findAllByText(/^Page 1 of/);
+    const zooms = [...document.querySelectorAll<HTMLElement>('.head')].map((h) => h.style.zoom);
+    expect(zooms.length).toBeGreaterThan(0);
+    for (const z of zooms) expect(Number(z || 1)).toBeLessThan(1);
+    expect(screen.getAllByText(W).length).toBeGreaterThan(0); // the text itself is all there
+  });
+
+  it('a typical header prints at full size', async () => {
+    api(SNAPSHOT);
+    show();
+    await screen.findAllByText(/^Page 1 of/);
+    for (const h of document.querySelectorAll<HTMLElement>('.head')) expect(h.style.zoom).toBe('');
+  });
+
   it('prints every total, the zero rows too, with 2 decimals', async () => {
     api(SNAPSHOT);
     show();

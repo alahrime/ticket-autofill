@@ -7,7 +7,7 @@ import { errorText } from '../lib/format';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { useQueryState } from '../lib/useQueryState';
 import * as text from './billText';
-import { chunks, type HeaderText, LABOR_CPL, linesOf, PARTS_CPL, pageBudget, paginatePairs } from './paginate';
+import { chunks, type HeaderText, headScale, LABOR_CPL, linesOf, PARTS_CPL, pageBudget, paginatePairs } from './paginate';
 import { printPhone } from './printPhone';
 import './print.css';
 
@@ -65,13 +65,14 @@ function Pairs({ rows }: { rows: Array<[string, string]> }) {
   );
 }
 
-function Header({ bill, page, pages }: { bill: BillSnapshot; page: number; pages: number }) {
+/** The header of every sheet; `scale` below 1 (see headScale) prints it smaller, all of it still there. */
+function Header({ bill, page, pages, scale }: { bill: BillSnapshot; page: number; pages: number; scale: number }) {
   const date = printDate(bill.date);
   const h = headerText(bill);
   const [name = '', phone = ''] = h.customer;
   const [ymm = '', plate = '', mechanic = '', odometer = '', vin = ''] = h.vehicle;
   return (
-    <header className="head">
+    <header className="head" style={scale < 1 ? { zoom: scale } : undefined}>
       <div className="top">
         <div className="shop">
           <h1 className="title">{bill.shop.name}</h1>
@@ -215,13 +216,13 @@ function pairsOf(bill: BillSnapshot, budget: number): Pair[] {
 const weightOf = (p: Pair): number =>
   Math.max(p.labor ? linesOf(p.labor.desc, LABOR_CPL) : 1, p.parts ? linesOf(p.parts.desc, PARTS_CPL) : 1);
 
-type SheetProps = { bill: BillSnapshot; page: number; pages: number; pairs: Pair[]; blank: number };
+type SheetProps = { bill: BillSnapshot; page: number; pages: number; pairs: Pair[]; blank: number; scale: number };
 
-function Sheet({ bill, page, pages, pairs, blank }: SheetProps) {
+function Sheet({ bill, page, pages, pairs, blank, scale }: SheetProps) {
   const last = page === pages;
   return (
     <article className="sheet">
-      <Header bill={bill} page={page} pages={pages} />
+      <Header bill={bill} page={page} pages={pages} scale={scale} />
       <div className="lines-box">
         <table className="lines">
           <colgroup>
@@ -280,7 +281,9 @@ function Sheet({ bill, page, pages, pairs, blank }: SheetProps) {
 }
 
 function Copy({ bill, n }: { bill: BillSnapshot; n: number }) {
-  const budget = pageBudget(bill.shop.name, headerText(bill));
+  const h = headerText(bill);
+  const scale = headScale(bill.shop.name, h);
+  const budget = pageBudget(bill.shop.name, h, scale);
   const pairs = pairsOf(bill, budget);
   const weights = pairs.map(weightOf);
   const pages = paginatePairs(weights, budget);
@@ -296,6 +299,7 @@ function Copy({ bill, n }: { bill: BillSnapshot; n: number }) {
             pages={pages.length}
             pairs={pairs.slice(from, to)}
             blank={Math.max(0, budget - used)}
+            scale={scale}
           />
         );
       })}

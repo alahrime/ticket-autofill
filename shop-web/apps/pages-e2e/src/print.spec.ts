@@ -35,8 +35,20 @@ test('print page: not a bill number is 404; signed out goes to /admin', async ({
 type Row = { desc: string; amount: number };
 type Snapshot = ReturnType<typeof snapshot>;
 
-function snapshot(over: { labor?: Row[]; parts?: Array<{ desc: string; qty: number; price: number; total: number }>; text?: (n: number) => string }) {
+/** A made-up shop and car like the real ones: the typical header the 24-row page is measured against. */
+const TYPICAL_SHOP = { name: 'TEST AUTO SERVICE', address: ['100 MAIN ST', 'ANYTOWN, VA 22000'], phone: '(555)010-0001', hours: 'MON–FRI 8:00 AM – 6:00 PM' };
+const TYPICAL_CAR = { year: '2019', make: 'CADILLAC', model: 'XT5', plate: 'XKS-4827', vin: '1GYKNCRS5KZ000000', odometer: '48215' };
+
+function snapshot(over: {
+  labor?: Row[];
+  parts?: Array<{ desc: string; qty: number; price: number; total: number }>;
+  text?: (n: number) => string;
+  typical?: boolean;
+}) {
   const t = over.text ?? ((n: number) => 'JANE DOE'.slice(0, n));
+  const typical = over.typical
+    ? { shop: TYPICAL_SHOP, vehicle: TYPICAL_CAR, customer: { first: 'JANE', last: 'DOE', phone: '(555)010-0000' }, mechanic: 'AL FIXIT' }
+    : {};
   return {
     invoice_no: '9000010',
     revision: 1,
@@ -54,6 +66,7 @@ function snapshot(over: { labor?: Row[]; parts?: Array<{ desc: string; qty: numb
       phone: t(80),
       hours: t(80),
     },
+    ...typical,
   };
 }
 
@@ -73,18 +86,77 @@ const long = (n: number, i: number): string =>
   Array.from({ length: Math.ceil(n / 5) }, (_, k) => WORDS[(k + i) % WORDS.length]).join(' ').slice(0, n);
 const words80 = (n: number): string => Array.from({ length: 12 }, (_, k) => WORDS[(k + n) % WORDS.length]).join(' ').slice(0, 80);
 
+/** The PDF's pages and the bill's sheets; every sheet, laid out for paper, is no taller than the page (10.2in). */
 async function printed(page: Page): Promise<{ sheets: number; pdf: number; copy: number }> {
   const pdf = pdfPages(await page.pdf({ format: 'Letter', preferCSSPageSize: true }));
+  await page.emulateMedia({ media: 'print' });
+  await page.setViewportSize({ width: Math.round(7.7 * 96), height: Math.round(10.2 * 96) });
+  const tallest = await page.locator('.sheet').evaluateAll((s) => Math.max(...s.map((e) => e.getBoundingClientRect().height)));
+  expect(tallest).toBeLessThanOrEqual(10.2 * 96);
   const sheets = await page.locator('.sheet').count();
   const copy = await page.locator('.copy').first().locator('.sheet').count();
   return { sheets, pdf, copy };
 }
 
-test('printed to PDF: a plain 20/20 bill is exactly 2 pages (one a copy)', async ({ page }) => {
-  const labor = Array.from({ length: 20 }, (_, i) => ({ desc: `LABOR LINE ${i}`, amount: 10 }));
-  const parts = Array.from({ length: 20 }, (_, i) => ({ desc: `PART ${i}`, qty: 1, price: 5, total: 5 }));
-  await openBill(page, snapshot({ labor, parts }));
+const plain = (n: number) => ({
+  labor: Array.from({ length: n }, (_, i) => ({ desc: `LABOR LINE ${i}`, amount: 10 })),
+  parts: Array.from({ length: n }, (_, i) => ({ desc: `PART ${i}`, qty: 1, price: 5, total: 5 })),
+});
+
+test('printed to PDF: a plain 24/24 bill with a typical header is exactly 2 pages (one a copy)', async ({ page }) => {
+  await openBill(page, snapshot({ ...plain(24), typical: true }));
   expect(await printed(page)).toEqual({ sheets: 2, pdf: 2, copy: 1 });
+  await expect(page.getByText('Page 1 of 1').first()).toBeVisible();
+});
+
+test('printed to PDF: 25 pairs take a second sheet, Page 2 of 2', async ({ page }) => {
+  await openBill(page, snapshot({ ...plain(25), typical: true }));
+  expect(await printed(page)).toEqual({ sheets: 4, pdf: 4, copy: 2 });
+  await expect(page.getByText('Page 2 of 2').first()).toBeVisible();
+});
+
+test('rows stay level: a 3-line labor description beside a 1-line part', async ({ page }) => {
+  const labor = [
+    { desc: 'REPLACE FRONT BRAKE PADS AND ROTORS, CLEAN AND LUBE THE SLIDES, BLEED THE BRAKES AND ROAD TEST', amount: 300 },
+    { desc: 'TIRE ROTATION', amount: 25 },
+  ];
+  const parts = [
+    { desc: 'PADS', qty: 1, price: 100, total: 100 },
+    { desc: 'ROTORS', qty: 2, price: 70, total: 140 },
+  ];
+  await openBill(page, snapshot({ labor, parts, typical: true }));
+  const copy = page.locator('.copy').first();
+  const lab = await copy.locator('td.ld').nth(1).boundingBox();
+  const par = await copy.locator('td.pd').nth(1).boundingBox();
+  expect(await copy.locator('td.pd').nth(1).textContent()).toBe('ROTORS');
+  expect(lab && par ? Math.abs(lab.y - par.y) : 99).toBeLessThan(1);
+});
+
+/** Elements in the first sheet whose content is wider or taller than the element: anything clipped or spilling. */
+async function overflowing(page: Page): Promise<string[]> {
+  await page.emulateMedia({ media: 'print' });
+  return page
+    .locator('.sheet')
+    .first()
+    .evaluate((sheet) =>
+      Array.from(sheet.querySelectorAll<HTMLElement>('*'))
+        .filter((e) => getComputedStyle(e).display !== 'inline')
+        .filter((e) => e.scrollWidth > e.clientWidth + 1 || e.scrollHeight > e.clientHeight + 1)
+        .map((e) => `${e.tagName.toLowerCase()}.${e.className}`),
+    );
+}
+
+test('nothing overflows: a 24/24 bill, and one with the header at its caps', async ({ page }) => {
+  await openBill(page, snapshot({ ...plain(24), typical: true }));
+  expect(await overflowing(page)).toEqual([]);
+  await page.unroute('**/api/own-bills/*');
+  await page.route('**/api/own-bills/*', (route) =>
+    route.fulfill({ json: { bill: snapshot({ ...plain(24), text: words80 }), revisions: [], ticket_id: 1 } }),
+  );
+  await page.emulateMedia({ media: 'screen' });
+  await page.reload();
+  await expect(page.locator('.sheet').first()).toBeVisible();
+  expect(await overflowing(page)).toEqual([]);
 });
 
 test('printed to PDF: 20 labor and 20 part rows of 120 characters, shop and header values at their caps', async ({ page }) => {
@@ -95,7 +167,7 @@ test('printed to PDF: 20 labor and 20 part rows of 120 characters, shop and head
   expect(r.copy).toBeGreaterThan(1);
   expect(r.pdf).toBe(2 * r.copy); // every sheet is one paper page: nothing spills over
   expect(r.sheets).toBe(2 * r.copy);
-  await expect(page.getByText('Page 1').first()).toBeVisible();
+  await expect(page.getByText(/^Page 1 of \d+$/).first()).toBeVisible();
 });
 
 test('printed to PDF: the same with unbroken 80-character values (the widest letters) in the header', async ({ page }) => {
@@ -111,7 +183,7 @@ test('printed to PDF: one description far too long for a page still prints, all 
   const r = await printed(page);
   expect(r.pdf).toBe(r.sheets);
   expect(r.copy).toBeGreaterThan(1);
-  const text = (await page.locator('.copy').first().locator('.labor tbody td:first-child').allTextContents()).join(' ');
+  const text = (await page.locator('.copy').first().locator('td.ld').allTextContents()).join(' ');
   expect(text).toBe(desc);
 });
 
@@ -140,6 +212,6 @@ test('the bill itself has no axe violations: a short bill, and a 40-line bill', 
     route.fulfill({ json: { bill: snapshot({ labor, parts }), revisions: [], ticket_id: 1 }, status: 200 }),
   );
   await page.reload();
-  await expect(page.getByText('Page 2').first()).toBeVisible();
+  await expect(page.getByText(/^Page 2 of \d+$/).first()).toBeVisible();
   await noViolations(page);
 });
