@@ -50,7 +50,7 @@ Our app prints the shop's bills since 2026-11-27 (own billing went live). The fi
    - **Left:**
      - The price-increase approval box (DATE TIME PHONE APPROVED AMOUNT, with a write-in line and its sentence).
      - The CHARGE line, with the parts-new and storage notes in about 8 pt.
-     - The **signature box**, which takes all the height left in the column. It holds the "ACCEPTANCE SIGNATURE" heading, the acceptance sentence, and one signature line about 2.5 in wide at the bottom, with about 0.7 in of clear space above it. **There is no date line** (owner): the date is already in the bar.
+     - The **signature box**, which takes all the height left in the column. It holds the "ACCEPTANCE SIGNATURE" heading, the acceptance sentence, and one signature line about 2.5 in wide at the bottom, with about 0.7 in of clear space above it. A bold **"X"** sits at the left end of the signature line, where the customer signs (owner, 2026-11-27). **There is no date line** (owner): the date is already in the bar.
    - **Middle:** the **full** liability and authorization paragraphs, unshortened, at about 7.1 pt, left-aligned.
    - **Right:** all of today's total rows, unchanged (Parts & Lubricants, Labor, Sublet, Haz. Disposal, Shop Supply, Gasoline, Sub Total, Sales Tax, Deposit, Disc. Applied). Deposit and Disc. Applied keep the grey band. TOTAL is bold. **BALANCE DUE** is a black bar with white text, kept on one line.
 6. **Phone numbers:** printed as `(703) 522-3100`, with a space after the area code. This applies to the shop's phone and the customer's, whatever way they were typed. A number that isn't 10 digits (or 11 starting with 1) prints as typed.
